@@ -17,4 +17,12 @@ impl Editor {
                 .desired_rows(30),
         );
     }
+
+    pub fn get_content(&self) -> String {
+        self.content.clone()
+    }
+
+    pub fn set_content(&mut self, content: String) {
+        self.content = content;
+    }
 }

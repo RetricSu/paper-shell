@@ -1,10 +1,24 @@
+use crate::saver::{spawn_saver, SaverMessage, SaverResponse};
 use crate::style::configure_style;
 use crate::ui::editor::Editor;
-use crate::ui::sidebar::Sidebar;
+use crate::ui::sidebar::{Sidebar, SidebarAction};
+use std::sync::mpsc::{Receiver, Sender};
 
-#[derive(Default)]
 pub struct PaperShellApp {
     editor: Editor,
+    saver_sender: Sender<SaverMessage>,
+    saver_receiver: Receiver<SaverResponse>,
+}
+
+impl Default for PaperShellApp {
+    fn default() -> Self {
+        let (sender, receiver) = spawn_saver();
+        Self {
+            editor: Editor::default(),
+            saver_sender: sender,
+            saver_receiver: receiver,
+        }
+    }
 }
 
 impl PaperShellApp {
@@ -16,6 +30,15 @@ impl PaperShellApp {
 
 impl eframe::App for PaperShellApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        // Check for loaded content
+        if let Ok(response) = self.saver_receiver.try_recv() {
+            match response {
+                SaverResponse::Loaded(content) => {
+                    self.editor.set_content(content);
+                }
+            }
+        }
+
         ctx.style_mut(|style| {
             // Set the width of the blinking text cursor
             style.visuals.text_cursor.stroke.width = 1.0; // Default is usually 2.0
@@ -31,7 +54,33 @@ impl eframe::App for PaperShellApp {
             .resizable(false)
             .default_width(40.0)
             .show(ctx, |ui| {
-                Sidebar::show(ui);
+                if let Some(action) = Sidebar::show(ui) {
+                    match action {
+                        SidebarAction::Save => {
+                            let content = self.editor.get_content();
+                            if let Err(e) = self.saver_sender.send(SaverMessage::Save(content)) {
+                                eprintln!("Failed to send save message: {}", e);
+                            }
+                        }
+                        SidebarAction::Open => {
+                            let sender = self.saver_sender.clone();
+                            std::thread::spawn(move || {
+                                if let Some(path) = rfd::FileDialog::new()
+                                    .set_directory("data")
+                                    .add_filter("Text", &["txt"])
+                                    .pick_file()
+                                {
+                                    if let Err(e) = sender.send(SaverMessage::Open(path)) {
+                                        eprintln!("Failed to send open message: {}", e);
+                                    }
+                                }
+                            });
+                        }
+                        SidebarAction::Settings => {
+                            // TODO: Settings logic
+                        }
+                    }
+                }
             });
 
         // Main Content

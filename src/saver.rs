@@ -1,6 +1,7 @@
 use chrono::Local;
+use directories::ProjectDirs;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender};
 use std::thread;
 
@@ -28,9 +29,18 @@ impl Saver {
 
     pub fn run(&self) {
         // Ensure data directory exists
-        let data_dir = Path::new("data");
-        if !data_dir.exists() {
-            let _ = fs::create_dir(data_dir);
+        let data_dir = if let Some(proj_dirs) = ProjectDirs::from("com", "RetricSu", "Paper Shell")
+        {
+            proj_dirs.data_dir().to_path_buf()
+        } else {
+            PathBuf::from("data")
+        };
+
+        if !data_dir.exists()
+            && let Err(e) = fs::create_dir_all(&data_dir)
+        {
+            eprintln!("Failed to create data directory: {}", e);
+            return;
         }
 
         while let Ok(message) = self.receiver.recv() {
@@ -45,19 +55,14 @@ impl Saver {
                         println!("File saved successfully to {:?}", file_path);
                     }
                 }
-                SaverMessage::Open(path) => {
-                    match fs::read_to_string(&path) {
-                        Ok(content) => {
-                            if let Err(e) = self
-                                .response_sender
-                                .send(SaverResponse::Loaded(content))
-                            {
-                                eprintln!("Failed to send loaded content: {}", e);
-                            }
+                SaverMessage::Open(path) => match fs::read_to_string(&path) {
+                    Ok(content) => {
+                        if let Err(e) = self.response_sender.send(SaverResponse::Loaded(content)) {
+                            eprintln!("Failed to send loaded content: {}", e);
                         }
-                        Err(e) => eprintln!("Failed to read file {:?}: {}", path, e),
                     }
-                }
+                    Err(e) => eprintln!("Failed to read file {:?}: {}", path, e),
+                },
             }
         }
     }

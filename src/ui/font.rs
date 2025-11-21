@@ -72,9 +72,10 @@ fn try_load_font(
     {
         // Register the font with egui
         const SYSTEM_FONT_NAME: &str = "SystemCJKFont";
-        fonts
-            .font_data
-            .insert(SYSTEM_FONT_NAME.to_owned(), FontData::from_owned(font_data));
+        fonts.font_data.insert(
+            SYSTEM_FONT_NAME.to_owned(),
+            FontData::from_owned(font_data).into(),
+        );
 
         // Add as primary font for proportional text (at the beginning)
         fonts
@@ -107,9 +108,10 @@ fn load_fallback_font(fonts: &mut FontDefinitions, source: &font_kit::source::Sy
             font_kit::handle::Handle::Path { path, .. } => std::fs::read(&path),
         } {
             const SYSTEM_FONT_NAME: &str = "SystemFont";
-            fonts
-                .font_data
-                .insert(SYSTEM_FONT_NAME.to_owned(), FontData::from_owned(font_data));
+            fonts.font_data.insert(
+                SYSTEM_FONT_NAME.to_owned(),
+                FontData::from_owned(font_data).into(),
+            );
 
             // Add as primary font
             fonts

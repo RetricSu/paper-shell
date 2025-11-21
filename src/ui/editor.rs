@@ -11,7 +11,7 @@ impl Editor {
         // For now, just a simple text edit
         let response = ui.add(
             egui::TextEdit::multiline(&mut self.content)
-                .frame(false) // No border for that clean look
+                //.frame(false) // No border for that clean look
                 .desired_width(f32::INFINITY)
                 .desired_rows(30),
         );

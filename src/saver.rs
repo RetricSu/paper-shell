@@ -46,13 +46,8 @@ impl Saver {
         while let Ok(message) = self.receiver.recv() {
             match message {
                 SaverMessage::Save(content) => {
-                    let timestamp = Local::now().format("%Y-%m-%d_%H-%M-%S");
-                    let filename = format!("{}.txt", timestamp);
-                    let file_path = data_dir.join(filename);
-                    if let Err(e) = fs::write(&file_path, content) {
+                    if let Err(e) = save_content(&content) {
                         eprintln!("Failed to save file: {}", e);
-                    } else {
-                        println!("File saved successfully to {:?}", file_path);
                     }
                 }
                 SaverMessage::Open(path) => match fs::read_to_string(&path) {
@@ -66,6 +61,28 @@ impl Saver {
             }
         }
     }
+}
+
+pub fn save_content(content: &str) -> std::io::Result<PathBuf> {
+    // Ensure data directory exists
+    let data_dir = if let Some(proj_dirs) = ProjectDirs::from("com", "RetricSu", "Paper Shell") {
+        proj_dirs.data_dir().to_path_buf()
+    } else {
+        PathBuf::from("data")
+    };
+
+    if !data_dir.exists() {
+        fs::create_dir_all(&data_dir)?;
+    }
+
+    let timestamp = Local::now().format("%Y-%m-%d_%H-%M-%S");
+    let filename = format!("{}.txt", timestamp);
+    let file_path = data_dir.join(filename);
+
+    fs::write(&file_path, content)?;
+    println!("File saved successfully to {:?}", file_path);
+
+    Ok(file_path)
 }
 
 pub fn spawn_saver() -> (Sender<SaverMessage>, Receiver<SaverResponse>) {

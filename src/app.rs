@@ -99,4 +99,12 @@ impl eframe::App for PaperShellApp {
             });
         });
     }
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        let content = self.editor.get_content();
+        if !content.trim().is_empty()
+            && let Err(e) = crate::saver::save_content(&content)
+        {
+            eprintln!("Failed to save on exit: {}", e);
+        }
+    }
 }

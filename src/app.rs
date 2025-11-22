@@ -39,11 +39,6 @@ impl eframe::App for PaperShellApp {
             }
         }
 
-        ctx.style_mut(|style| {
-            // Set the width of the blinking text cursor
-            style.visuals.text_cursor.stroke.width = 1.0; // Default is usually 2.0
-        });
-
         // Title Bar
         egui::TopBottomPanel::top("title_bar_panel").show(ctx, |ui| {
             crate::ui::title_bar::TitleBar::show(ui, frame, crate::constant::DEFAULT_WINDOW_TITLE);

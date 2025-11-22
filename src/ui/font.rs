@@ -46,7 +46,7 @@ pub fn setup_fonts() -> FontDefinitions {
 /// Get preferred font names based on the current operating system
 fn get_preferred_font_names() -> Vec<&'static str> {
     match std::env::consts::OS {
-        "macos" => vec!["PingFang SC", "Hiragino Sans GB", "STSong", "Heiti SC"],
+        "macos" => vec!["Hiragino Sans GB", "PingFang SC", "Heiti SC", "STSong"],
         "windows" => vec!["Microsoft YaHei", "SimSun", "SimHei", "MS Gothic"],
         "linux" => vec!["Noto Sans CJK TC"],
         _ => vec![], // Empty for other OSes - we'll use generic fallback

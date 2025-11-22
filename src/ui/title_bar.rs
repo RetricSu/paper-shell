@@ -56,31 +56,28 @@ impl TitleBar {
                 ui.spacing_mut().item_spacing.x = 8.0;
 
                 // Close button
-                if ui.button("X").on_hover_text("Close").clicked() {
+                if ui.button("❌").on_hover_text("Close").clicked() {
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                 }
 
                 // Maximize/Restore button
                 let is_maximized = ui.input(|i| i.viewport().maximized.unwrap_or(false));
-                let maximize_icon = if is_maximized { "❐" } else { "☐" };
-                if ui
-                    .button(maximize_icon)
-                    .on_hover_text("Maximize/Restore")
-                    .clicked()
-                {
+                if ui.button("⛶").on_hover_text("Maximize/Restore").clicked() {
                     ui.ctx()
                         .send_viewport_cmd(egui::ViewportCommand::Maximized(!is_maximized));
                 }
 
                 // Minimize button
-                if ui.button("—").on_hover_text("Minimize").clicked() {
+                if ui.button("➖").on_hover_text("Minimize").clicked() {
                     ui.ctx()
                         .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
                 }
 
                 // Stats
                 ui.add_space(16.0);
-                ui.label(format!("{} / {}", cursor_word_count, word_count));
+                ui.label(
+                    egui::RichText::new(format!("{} / {}", cursor_word_count, word_count)).small(),
+                );
             });
         });
 

@@ -1,5 +1,11 @@
 use egui::{Align, Layout, Ui};
 
+pub enum TitleBarAction {
+    Save,
+    Open,
+    Settings,
+}
+
 pub struct TitleBar;
 
 impl TitleBar {
@@ -9,7 +15,8 @@ impl TitleBar {
         title: &str,
         word_count: usize,
         cursor_word_count: usize,
-    ) {
+    ) -> Option<TitleBarAction> {
+        let mut action = None;
         let title_bar_rect = ui.available_rect_before_wrap();
 
         // Dragging logic - registered BEFORE widgets so they can steal input
@@ -28,9 +35,20 @@ impl TitleBar {
         }
 
         ui.horizontal(|ui| {
-            // Title label
+            // Title label and actions
             ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                 ui.label(title);
+                ui.add_space(16.0);
+
+                if ui.button("💾").on_hover_text("Save").clicked() {
+                    action = Some(TitleBarAction::Save);
+                }
+                if ui.button("📂").on_hover_text("Open").clicked() {
+                    action = Some(TitleBarAction::Open);
+                }
+                if ui.button("⚙").on_hover_text("Settings").clicked() {
+                    action = Some(TitleBarAction::Settings);
+                }
             });
 
             // Window Controls
@@ -65,5 +83,7 @@ impl TitleBar {
                 ui.label(format!("{} / {}", cursor_word_count, word_count));
             });
         });
+
+        action
     }
 }

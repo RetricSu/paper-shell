@@ -1,7 +1,7 @@
 use crate::saver::{SaverMessage, SaverResponse, spawn_saver};
 use crate::style::configure_style;
 use crate::ui::editor::Editor;
-use crate::ui::sidebar::{Sidebar, SidebarAction};
+
 use std::sync::mpsc::{Receiver, Sender};
 
 pub struct PaperShellApp {
@@ -42,55 +42,47 @@ impl eframe::App for PaperShellApp {
         // Title Bar
         egui::TopBottomPanel::top("title_bar_panel").show(ctx, |ui| {
             let (total_words, cursor_words) = self.editor.get_stats();
-            crate::ui::title_bar::TitleBar::show(
+            if let Some(action) = crate::ui::title_bar::TitleBar::show(
                 ui,
                 frame,
                 crate::constant::DEFAULT_WINDOW_TITLE,
                 total_words,
                 cursor_words,
-            );
-        });
-
-        // Sidebar
-        egui::SidePanel::left("sidebar_panel")
-            .resizable(false)
-            .default_width(40.0)
-            .show(ctx, |ui| {
-                if let Some(action) = Sidebar::show(ui) {
-                    match action {
-                        SidebarAction::Save => {
-                            let content = self.editor.get_content();
-                            if let Err(e) = self.saver_sender.send(SaverMessage::Save(content)) {
-                                eprintln!("Failed to send save message: {}", e);
-                            }
-                        }
-                        SidebarAction::Open => {
-                            let sender = self.saver_sender.clone();
-                            std::thread::spawn(move || {
-                                let data_dir = if let Some(proj_dirs) =
-                                    directories::ProjectDirs::from("com", "RetricSu", "Paper Shell")
-                                {
-                                    proj_dirs.data_dir().to_path_buf()
-                                } else {
-                                    std::path::PathBuf::from("data")
-                                };
-
-                                if let Some(path) = rfd::FileDialog::new()
-                                    .set_directory(&data_dir)
-                                    .add_filter("Text", &["txt"])
-                                    .pick_file()
-                                    && let Err(e) = sender.send(SaverMessage::Open(path))
-                                {
-                                    eprintln!("Failed to send open message: {}", e);
-                                }
-                            });
-                        }
-                        SidebarAction::Settings => {
-                            // TODO: Settings logic
+            ) {
+                match action {
+                    crate::ui::title_bar::TitleBarAction::Save => {
+                        let content = self.editor.get_content();
+                        if let Err(e) = self.saver_sender.send(SaverMessage::Save(content)) {
+                            eprintln!("Failed to send save message: {}", e);
                         }
                     }
+                    crate::ui::title_bar::TitleBarAction::Open => {
+                        let sender = self.saver_sender.clone();
+                        std::thread::spawn(move || {
+                            let data_dir = if let Some(proj_dirs) =
+                                directories::ProjectDirs::from("com", "RetricSu", "Paper Shell")
+                            {
+                                proj_dirs.data_dir().to_path_buf()
+                            } else {
+                                std::path::PathBuf::from("data")
+                            };
+
+                            if let Some(path) = rfd::FileDialog::new()
+                                .set_directory(&data_dir)
+                                .add_filter("Text", &["txt"])
+                                .pick_file()
+                                && let Err(e) = sender.send(SaverMessage::Open(path))
+                            {
+                                eprintln!("Failed to send open message: {}", e);
+                            }
+                        });
+                    }
+                    crate::ui::title_bar::TitleBarAction::Settings => {
+                        // TODO: Settings logic
+                    }
                 }
-            });
+            }
+        });
 
         // Main Content
         egui::CentralPanel::default().show(ctx, |ui| {

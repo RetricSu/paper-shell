@@ -41,7 +41,14 @@ impl eframe::App for PaperShellApp {
 
         // Title Bar
         egui::TopBottomPanel::top("title_bar_panel").show(ctx, |ui| {
-            crate::ui::title_bar::TitleBar::show(ui, frame, crate::constant::DEFAULT_WINDOW_TITLE);
+            let (total_words, cursor_words) = self.editor.get_stats();
+            crate::ui::title_bar::TitleBar::show(
+                ui,
+                frame,
+                crate::constant::DEFAULT_WINDOW_TITLE,
+                total_words,
+                cursor_words,
+            );
         });
 
         // Sidebar

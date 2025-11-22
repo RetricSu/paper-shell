@@ -3,7 +3,13 @@ use egui::{Align, Layout, Ui};
 pub struct TitleBar;
 
 impl TitleBar {
-    pub fn show(ui: &mut Ui, _frame: &mut eframe::Frame, title: &str) {
+    pub fn show(
+        ui: &mut Ui,
+        _frame: &mut eframe::Frame,
+        title: &str,
+        word_count: usize,
+        cursor_word_count: usize,
+    ) {
         let title_bar_rect = ui.available_rect_before_wrap();
 
         // Dragging logic - registered BEFORE widgets so they can steal input
@@ -53,6 +59,10 @@ impl TitleBar {
                     ui.ctx()
                         .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
                 }
+
+                // Stats
+                ui.add_space(16.0);
+                ui.label(format!("{} / {}", cursor_word_count, word_count));
             });
         });
     }

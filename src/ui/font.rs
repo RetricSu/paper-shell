@@ -74,7 +74,12 @@ fn try_load_font(
         const SYSTEM_FONT_NAME: &str = "SystemCJKFont";
         fonts.font_data.insert(
             SYSTEM_FONT_NAME.to_owned(),
-            FontData::from_owned(font_data).into(),
+            FontData::from_owned(font_data)
+                .tweak(eframe::egui::FontTweak {
+                    y_offset_factor: 0.3, // Adjust this value to fix vertical alignment (e.g. -0.2 or 0.2)
+                    ..Default::default()
+                })
+                .into(),
         );
 
         // Add as primary font for proportional text (at the beginning)
@@ -110,7 +115,12 @@ fn load_fallback_font(fonts: &mut FontDefinitions, source: &font_kit::source::Sy
             const SYSTEM_FONT_NAME: &str = "SystemFont";
             fonts.font_data.insert(
                 SYSTEM_FONT_NAME.to_owned(),
-                FontData::from_owned(font_data).into(),
+                FontData::from_owned(font_data)
+                    .tweak(eframe::egui::FontTweak {
+                        y_offset_factor: 0.0, // Adjust this value to fix vertical alignment (e.g. -0.2 or 0.2)
+                        ..Default::default()
+                    })
+                    .into(),
             );
 
             // Add as primary font

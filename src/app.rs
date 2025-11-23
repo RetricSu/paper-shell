@@ -50,6 +50,14 @@ impl eframe::App for PaperShellApp {
                 cursor_words,
             ) {
                 match action {
+                    crate::ui::title_bar::TitleBarAction::NewWindow => {
+                        // Spawn a new instance of the application
+                        if let Err(e) =
+                            std::process::Command::new(std::env::current_exe().unwrap()).spawn()
+                        {
+                            eprintln!("Failed to spawn new window: {}", e);
+                        }
+                    }
                     crate::ui::title_bar::TitleBarAction::Save => {
                         let content = self.editor.get_content();
                         if let Err(e) = self.saver_sender.send(SaverMessage::Save(content)) {

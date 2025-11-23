@@ -1,6 +1,7 @@
 use egui::{Align, Layout, Ui};
 
 pub enum TitleBarAction {
+    NewWindow,
     Save,
     Open,
     Settings,
@@ -40,6 +41,9 @@ impl TitleBar {
                 ui.label(title);
                 ui.add_space(16.0);
 
+                if ui.button("➕").on_hover_text("New Window").clicked() {
+                    action = Some(TitleBarAction::NewWindow);
+                }
                 if ui.button("💾").on_hover_text("Save").clicked() {
                     action = Some(TitleBarAction::Save);
                 }

@@ -46,7 +46,7 @@ pub fn setup_fonts() -> FontDefinitions {
 /// Get preferred font names based on the current operating system
 fn get_preferred_font_names() -> Vec<&'static str> {
     match std::env::consts::OS {
-        "macos" => vec!["PingFang SC", "Hiragino Sans GB", "STSong", "Heiti SC"],
+        "macos" => vec!["Hiragino Sans GB", "PingFang SC", "Heiti SC", "STSong"],
         "windows" => vec!["Microsoft YaHei", "SimSun", "SimHei", "MS Gothic"],
         "linux" => vec!["Noto Sans CJK TC"],
         _ => vec![], // Empty for other OSes - we'll use generic fallback
@@ -72,9 +72,15 @@ fn try_load_font(
     {
         // Register the font with egui
         const SYSTEM_FONT_NAME: &str = "SystemCJKFont";
-        fonts
-            .font_data
-            .insert(SYSTEM_FONT_NAME.to_owned(), FontData::from_owned(font_data));
+        fonts.font_data.insert(
+            SYSTEM_FONT_NAME.to_owned(),
+            FontData::from_owned(font_data)
+                .tweak(eframe::egui::FontTweak {
+                    y_offset_factor: 0.3, // Adjust this value to fix vertical alignment (e.g. -0.2 or 0.2)
+                    ..Default::default()
+                })
+                .into(),
+        );
 
         // Add as primary font for proportional text (at the beginning)
         fonts
@@ -107,9 +113,15 @@ fn load_fallback_font(fonts: &mut FontDefinitions, source: &font_kit::source::Sy
             font_kit::handle::Handle::Path { path, .. } => std::fs::read(&path),
         } {
             const SYSTEM_FONT_NAME: &str = "SystemFont";
-            fonts
-                .font_data
-                .insert(SYSTEM_FONT_NAME.to_owned(), FontData::from_owned(font_data));
+            fonts.font_data.insert(
+                SYSTEM_FONT_NAME.to_owned(),
+                FontData::from_owned(font_data)
+                    .tweak(eframe::egui::FontTweak {
+                        y_offset_factor: 0.0, // Adjust this value to fix vertical alignment (e.g. -0.2 or 0.2)
+                        ..Default::default()
+                    })
+                    .into(),
+            );
 
             // Add as primary font
             fonts

@@ -8,7 +8,7 @@ pub fn configure_style(ctx: &Context) {
 
     // Increase spacing for elegance
     style.spacing.item_spacing = egui::vec2(10.0, 10.0);
-    style.spacing.window_margin = egui::Margin::same(15.0);
+    style.spacing.window_margin = egui::Margin::same(15);
 
     ctx.set_style(style);
 

@@ -2,11 +2,25 @@
 name = "paper-shell"
 version = "0.1.0"
 edition = "2024"
+description = "A simple, concise and informative text editor for everyday writing."
+
+[package.metadata.bundle]
+name = "Paper Shell"
+identifier = "paper.shell.app"
+category = "Productivity"
+copyright = "© 2025 RetricSu"
+short_description = "A writing editor"
+long_description = """
+A simple, concise and informative text editor for everyday writing.
+"""
 
 [dependencies]
-egui = "0.29.1"
-eframe = "0.29.1"
+egui = "0.33.2"
+eframe = "0.33.2"
 serde = { version = "1.0", features = ["derive"] }
 tracing = "0.1.41"
 tracing-subscriber = "0.3.20"
 font-kit = "0.14.3"
+rfd = "0.15"
+chrono = "0.4"
+directories = "5.0"

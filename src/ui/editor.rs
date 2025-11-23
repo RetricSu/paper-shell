@@ -1,20 +1,190 @@
-use egui::Ui;
+use egui::{FontId, Galley, Sense, TextFormat, Ui, Vec2, text::LayoutJob};
+use std::sync::Arc;
+
+use super::sidebar::Sidebar;
 
 #[derive(Default)]
 pub struct Editor {
     content: String,
+    cursor_index: Option<usize>,
+    last_galley: Option<Arc<Galley>>,
+    sidebar: Sidebar,
 }
 
 impl Editor {
     pub fn show(&mut self, ui: &mut Ui) {
-        // We want the editor to take up the available space and look like a paper
-        // For now, just a simple text edit
-        ui.add(
-            egui::TextEdit::multiline(&mut self.content)
-                .frame(false) // No border for that clean look
-                .lock_focus(true) // Keep focus
-                .desired_width(f32::INFINITY)
-                .desired_rows(30),
-        );
+        let mut content = self.content.clone();
+        let id = ui.make_persistent_id("main_editor");
+
+        // Sidebar width
+        let sidebar_width = 20.0;
+        let available_width = ui.available_width() - sidebar_width;
+
+        ui.horizontal(|ui| {
+            // 1. Sidebar Area
+            // Calculate height based on content or available space (but handle infinity)
+            let sidebar_height = if let Some(galley) = &self.last_galley {
+                galley.rect.height().max(ui.available_height().min(2000.0))
+            } else {
+                ui.available_height().min(2000.0) // Fallback for first frame
+            };
+
+            // Ensure we don't allocate infinite height
+            let sidebar_height = if sidebar_height.is_infinite() {
+                800.0 // Reasonable default if everything else fails
+            } else {
+                sidebar_height
+            };
+
+            let (response, _painter) =
+                ui.allocate_painter(Vec2::new(sidebar_width, sidebar_height), Sense::click());
+
+            let sidebar_rect = response.rect;
+
+            // 2. Editor Area with custom layouter
+            let mut layouter = |ui: &Ui, string: &dyn egui::TextBuffer, wrap_width: f32| {
+                let mut layout_job = LayoutJob::default();
+                let font_id = FontId::monospace(14.0);
+                layout_job.append(
+                    string.as_str(),
+                    0.0,
+                    TextFormat {
+                        font_id,
+                        color: ui.visuals().text_color(),
+                        ..Default::default()
+                    },
+                );
+                layout_job.wrap.max_width = wrap_width;
+                ui.fonts_mut(|f| f.layout_job(layout_job))
+            };
+
+            let output = egui::TextEdit::multiline(&mut content)
+                .id(id)
+                .frame(false)
+                .desired_width(available_width)
+                .desired_rows(30)
+                .layouter(&mut layouter)
+                .show(ui);
+
+            let editor_response = output.response;
+
+            // Capture the galley from the editor output
+            self.last_galley = Some(output.galley);
+
+            if let Some(state) = egui::TextEdit::load_state(ui.ctx(), id) {
+                if let Some(range) = state.cursor.char_range() {
+                    self.cursor_index = Some(range.primary.index);
+                } else {
+                    self.cursor_index = None;
+                }
+            }
+
+            // Update content if changed
+            if editor_response.changed() {
+                self.content = content;
+            }
+
+            if editor_response.clicked() {
+                editor_response.request_focus();
+            }
+
+            // 3. Delegate sidebar rendering to Sidebar component
+            if let Some(galley) = &self.last_galley {
+                self.sidebar.show(
+                    ui,
+                    &self.content,
+                    galley,
+                    editor_response.rect,
+                    sidebar_rect,
+                );
+            }
+        });
+    }
+
+    pub fn get_content(&self) -> String {
+        self.content.clone()
+    }
+
+    pub fn set_content(&mut self, content: String) {
+        self.content = content;
+    }
+
+    pub fn get_word_count(&self) -> usize {
+        let mut count = 0;
+        let mut in_word = false;
+        for c in self.content.chars() {
+            if c.is_whitespace() {
+                in_word = false;
+            } else if is_cjk(c) {
+                count += 1;
+                in_word = false;
+            } else if !in_word {
+                count += 1;
+                in_word = true;
+            }
+        }
+        count
+    }
+
+    pub fn get_cursor_word_count(&self) -> Option<usize> {
+        let cursor_index = self.cursor_index?;
+
+        // Convert character index to byte index safely
+        let byte_index = self
+            .content
+            .char_indices()
+            .nth(cursor_index)
+            .map(|(byte_idx, _)| byte_idx)
+            .unwrap_or(self.content.len());
+
+        let text_before_cursor = &self.content[..byte_index];
+
+        let mut count = 0;
+        let mut in_word = false;
+        for c in text_before_cursor.chars() {
+            if c.is_whitespace() {
+                in_word = false;
+            } else if is_cjk(c) {
+                count += 1;
+                in_word = false;
+            } else if !in_word {
+                count += 1;
+                in_word = true;
+            }
+        }
+        Some(count)
+    }
+
+    pub fn get_stats(&self) -> (usize, usize) {
+        (
+            self.get_word_count(),
+            self.get_cursor_word_count().unwrap_or(0),
+        )
+    }
+}
+
+fn is_cjk(c: char) -> bool {
+    ('\u{4E00}'..='\u{9FFF}').contains(&c)
+        || ('\u{3400}'..='\u{4DBF}').contains(&c)
+        || ('\u{20000}'..='\u{2A6DF}').contains(&c)
+        || ('\u{F900}'..='\u{FAFF}').contains(&c)
+        || ('\u{2F800}'..='\u{2FA1F}').contains(&c)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_word_count() {
+        let mut editor = Editor::default();
+        editor.set_content("Hello world".to_string());
+        assert_eq!(editor.get_word_count(), 2);
+
+        editor.set_content("你好世界".to_string());
+        assert_eq!(editor.get_word_count(), 4);
+
+        editor.set_content("Hello 世界".to_string());
+        assert_eq!(editor.get_word_count(), 3);
     }
 }

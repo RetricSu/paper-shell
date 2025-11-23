@@ -187,7 +187,7 @@ impl Editor {
                     painter.circle_stroke(
                         center,
                         2.5,
-                        egui::Stroke::new(0.5, ui.visuals().text_color().gamma_multiply(0.15)),
+                        egui::Stroke::new(1.0, ui.visuals().text_color().gamma_multiply(0.3)),
                     );
 
                     // Draw filled dot if this line has a mark
@@ -213,7 +213,7 @@ impl Editor {
                     painter.circle_stroke(
                         center,
                         2.5,
-                        egui::Stroke::new(0.5, ui.visuals().text_color().gamma_multiply(0.15)),
+                        egui::Stroke::new(1.0, ui.visuals().text_color().gamma_multiply(0.3)),
                     );
 
                     if self.marks.contains_key(&logical_line_idx) {
@@ -225,22 +225,58 @@ impl Editor {
 
         // 4. Render Popup if active
         if let Some(line_idx) = self.popup_mark {
-            // We need to find the position again.
-            // Ideally we store the rect or position during the loop, but recalculating is cheap enough.
-            // Or we just render it centered on screen or near the mouse?
-            // Anchored near the sidebar line is best.
-
             let mut open = true;
+
+            // Calculate word count before this mark
+            let words_before = {
+                let mut byte_count = 0;
+
+                for (current_line, line) in self.content.split_inclusive('\n').enumerate() {
+                    if current_line >= line_idx {
+                        break;
+                    }
+                    byte_count += line.len();
+                }
+
+                // Use the same word counting logic
+                let text_before = &self.content[..byte_count.min(self.content.len())];
+                let mut count = 0;
+                let mut in_word = false;
+                for c in text_before.chars() {
+                    if c.is_whitespace() {
+                        in_word = false;
+                    } else if is_cjk(c) {
+                        count += 1;
+                        in_word = false;
+                    } else if !in_word {
+                        count += 1;
+                        in_word = true;
+                    }
+                }
+                count
+            };
+
             let mark_note = self.marks.get_mut(&line_idx).map(|m| &mut m.note);
 
             if let Some(note) = mark_note {
-                egui::Window::new(format!("Note for Line {}", line_idx + 1))
-                    .open(&mut open)
-                    .resizable(true)
-                    .default_width(200.0)
-                    .show(ui.ctx(), |ui| {
-                        ui.add(egui::TextEdit::multiline(note).desired_rows(5));
-                    });
+                egui::Window::new(
+                    egui::RichText::new(format!("{} words", words_before)).size(11.0),
+                )
+                .open(&mut open)
+                .resizable(true)
+                .collapsible(false)
+                .default_width(300.0)
+                .title_bar(true)
+                .show(ui.ctx(), |ui| {
+                    // Reduce spacing in the window
+                    ui.spacing_mut().item_spacing.y = 4.0;
+
+                    ui.add(
+                        egui::TextEdit::multiline(note)
+                            .desired_rows(8)
+                            .desired_width(f32::INFINITY),
+                    );
+                });
             }
 
             if !open {

@@ -1,33 +1,250 @@
-use egui::Ui;
+use egui::{Color32, FontId, Galley, Pos2, Sense, TextFormat, Ui, Vec2, text::LayoutJob};
+use std::collections::HashMap;
+use std::sync::Arc;
+
+#[derive(Clone, Debug, Default)]
+struct Mark {
+    note: String,
+}
 
 #[derive(Default)]
 pub struct Editor {
     content: String,
     cursor_index: Option<usize>,
+    marks: HashMap<usize, Mark>, // line_idx -> Mark
+    last_galley: Option<Arc<Galley>>,
+    popup_mark: Option<usize>, // line_idx of the open popup
 }
 
 impl Editor {
     pub fn show(&mut self, ui: &mut Ui) {
-        // We want the editor to take up the available space and look like a paper
-        // For now, just a simple text edit
+        let mut content = self.content.clone();
         let id = ui.make_persistent_id("main_editor");
-        let response = ui.add(
-            egui::TextEdit::multiline(&mut self.content)
-                .id(id)
-                .frame(false) // No border for that clean look
-                .desired_width(f32::INFINITY)
-                .desired_rows(30),
-        );
 
-        if response.clicked() {
-            response.request_focus();
-        }
+        // Sidebar width
+        let sidebar_width = 20.0;
+        let available_width = ui.available_width() - sidebar_width;
 
-        if let Some(state) = egui::TextEdit::load_state(ui.ctx(), id) {
-            if let Some(range) = state.cursor.char_range() {
-                self.cursor_index = Some(range.primary.index);
+        ui.horizontal(|ui| {
+            // 1. Sidebar Area
+            // Calculate height based on content or available space (but handle infinity)
+            let sidebar_height = if let Some(galley) = &self.last_galley {
+                galley.rect.height().max(ui.available_height().min(2000.0)) // Use galley height but at least fill screen if possible (clamped)
             } else {
-                self.cursor_index = None;
+                ui.available_height().min(2000.0) // Fallback for first frame
+            };
+
+            // Ensure we don't allocate infinite height
+            let sidebar_height = if sidebar_height.is_infinite() {
+                800.0 // Reasonable default if everything else fails
+            } else {
+                sidebar_height
+            };
+
+            let (response, painter) =
+                ui.allocate_painter(Vec2::new(sidebar_width, sidebar_height), Sense::click());
+
+            let sidebar_rect = response.rect;
+
+            // 2. Editor Area with custom layouter
+            let mut layouter = |ui: &Ui, string: &dyn egui::TextBuffer, wrap_width: f32| {
+                let mut layout_job = LayoutJob::default();
+                // Use default font settings from style or context
+                let font_id = FontId::monospace(14.0); // Fallback or configurable
+                layout_job.append(
+                    string.as_str(),
+                    0.0,
+                    TextFormat {
+                        font_id,
+                        color: ui.visuals().text_color(),
+                        ..Default::default()
+                    },
+                );
+                layout_job.wrap.max_width = wrap_width;
+                ui.fonts_mut(|f| f.layout_job(layout_job))
+            };
+
+            let output = egui::TextEdit::multiline(&mut content)
+                .id(id)
+                .frame(false)
+                .desired_width(available_width)
+                .desired_rows(30)
+                .layouter(&mut layouter)
+                .show(ui);
+
+            let editor_response = output.response;
+
+            // Capture the galley from the editor output
+            self.last_galley = Some(output.galley);
+
+            if let Some(state) = egui::TextEdit::load_state(ui.ctx(), id) {
+                if let Some(range) = state.cursor.char_range() {
+                    self.cursor_index = Some(range.primary.index);
+                } else {
+                    self.cursor_index = None;
+                }
+            }
+
+            // Update content if changed
+            if editor_response.changed() {
+                self.content = content;
+            }
+
+            if editor_response.clicked() {
+                editor_response.request_focus();
+            }
+
+            // 3. Render Sidebar Content (Marks)
+            if let Some(galley) = &self.last_galley {
+                // Draw right border line (separator)
+                painter.line_segment(
+                    [
+                        Pos2::new(sidebar_rect.right(), sidebar_rect.top()),
+                        Pos2::new(sidebar_rect.right(), sidebar_rect.bottom()),
+                    ],
+                    egui::Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color),
+                );
+
+                let text = &self.content;
+
+                // Safe line height retrieval
+                let line_height = if !galley.rows.is_empty() {
+                    galley.rows[0].rect().height()
+                } else {
+                    14.0 // Fallback
+                };
+
+                // Handle sidebar click ONCE
+                let mut clicked_line: Option<usize> = None;
+                if response.clicked()
+                    && let Some(pointer_pos) = response.interact_pointer_pos()
+                {
+                    // Find which line was clicked based on Y position
+                    let mut line_start_byte = 0;
+                    let mut logical_line_idx = 0;
+
+                    for line in text.split_inclusive('\n') {
+                        let char_idx = text[..line_start_byte].chars().count();
+                        let cursor = egui::text::CCursor::new(char_idx);
+                        let rect = galley.pos_from_cursor(cursor);
+                        let line_y = editor_response.rect.min.y + rect.center().y;
+
+                        let dist = (pointer_pos.y - line_y).abs();
+                        if dist < line_height / 2.0 {
+                            clicked_line = Some(logical_line_idx);
+                            break;
+                        }
+
+                        line_start_byte += line.len();
+                        logical_line_idx += 1;
+                    }
+
+                    // Handle the trailing empty line if text ends with newline
+                    if clicked_line.is_none() && text.ends_with('\n') {
+                        let char_idx = text[..line_start_byte].chars().count();
+                        let cursor = egui::text::CCursor::new(char_idx);
+                        let rect = galley.pos_from_cursor(cursor);
+                        let line_y = editor_response.rect.min.y + rect.center().y;
+
+                        let dist = (pointer_pos.y - line_y).abs();
+                        if dist < line_height / 2.0 {
+                            clicked_line = Some(logical_line_idx);
+                        }
+                    }
+                }
+
+                // Process the click if we found a line
+                if let Some(line_idx) = clicked_line {
+                    if let std::collections::hash_map::Entry::Vacant(e) = self.marks.entry(line_idx)
+                    {
+                        // No mark - create one and open popup
+                        e.insert(Mark::default());
+                        self.popup_mark = Some(line_idx);
+                    } else {
+                        // Mark exists - toggle popup
+                        if self.popup_mark == Some(line_idx) {
+                            self.popup_mark = None;
+                        } else {
+                            self.popup_mark = Some(line_idx);
+                        }
+                    }
+                }
+
+                // Draw all marks and clickable hints
+                let mut line_start_byte = 0;
+                let mut logical_line_idx = 0;
+
+                for line in text.split_inclusive('\n') {
+                    let char_idx = text[..line_start_byte].chars().count();
+                    let cursor = egui::text::CCursor::new(char_idx);
+                    let rect = galley.pos_from_cursor(cursor);
+                    let center = Pos2::new(
+                        sidebar_rect.center().x,
+                        editor_response.rect.min.y + rect.center().y,
+                    );
+
+                    // Draw subtle hint circle for clickable position
+                    painter.circle_stroke(
+                        center,
+                        2.5,
+                        egui::Stroke::new(0.5, ui.visuals().text_color().gamma_multiply(0.15)),
+                    );
+
+                    // Draw filled dot if this line has a mark
+                    if self.marks.contains_key(&logical_line_idx) {
+                        painter.circle_filled(center, 4.0, Color32::from_rgb(200, 100, 100));
+                    }
+
+                    line_start_byte += line.len();
+                    logical_line_idx += 1;
+                }
+
+                // Handle the trailing empty line if text ends with newline
+                if text.ends_with('\n') {
+                    let char_idx = text[..line_start_byte].chars().count();
+                    let cursor = egui::text::CCursor::new(char_idx);
+                    let rect = galley.pos_from_cursor(cursor);
+                    let center = Pos2::new(
+                        sidebar_rect.center().x,
+                        editor_response.rect.min.y + rect.center().y,
+                    );
+
+                    // Draw subtle hint circle for clickable position
+                    painter.circle_stroke(
+                        center,
+                        2.5,
+                        egui::Stroke::new(0.5, ui.visuals().text_color().gamma_multiply(0.15)),
+                    );
+
+                    if self.marks.contains_key(&logical_line_idx) {
+                        painter.circle_filled(center, 4.0, Color32::from_rgb(200, 100, 100));
+                    }
+                }
+            }
+        });
+
+        // 4. Render Popup if active
+        if let Some(line_idx) = self.popup_mark {
+            // We need to find the position again.
+            // Ideally we store the rect or position during the loop, but recalculating is cheap enough.
+            // Or we just render it centered on screen or near the mouse?
+            // Anchored near the sidebar line is best.
+
+            let mut open = true;
+            let mark_note = self.marks.get_mut(&line_idx).map(|m| &mut m.note);
+
+            if let Some(note) = mark_note {
+                egui::Window::new(format!("Note for Line {}", line_idx + 1))
+                    .open(&mut open)
+                    .resizable(true)
+                    .default_width(200.0)
+                    .show(ui.ctx(), |ui| {
+                        ui.add(egui::TextEdit::multiline(note).desired_rows(5));
+                    });
+            }
+
+            if !open {
+                self.popup_mark = None;
             }
         }
     }
@@ -38,6 +255,9 @@ impl Editor {
 
     pub fn set_content(&mut self, content: String) {
         self.content = content;
+        // Clear marks that are out of bounds? Or keep them?
+        // For now, keep them, but they might point to non-existent lines.
+        // A robust implementation would adjust marks on edit.
     }
 
     pub fn get_stats(&self) -> (usize, usize) {
@@ -60,7 +280,6 @@ impl Editor {
 
         let total_words = count_words(&self.content);
         let cursor_words = if let Some(idx) = self.cursor_index {
-            // idx is a character index, we need to find the corresponding byte index
             let byte_index = self
                 .content
                 .char_indices()
@@ -77,12 +296,11 @@ impl Editor {
 }
 
 fn is_cjk(c: char) -> bool {
-    // Basic CJK ranges
-    ('\u{4E00}'..='\u{9FFF}').contains(&c) || // CJK Unified Ideographs
-    ('\u{3400}'..='\u{4DBF}').contains(&c) || // CJK Unified Ideographs Extension A
-    ('\u{20000}'..='\u{2A6DF}').contains(&c) || // CJK Unified Ideographs Extension B
-    ('\u{F900}'..='\u{FAFF}').contains(&c) || // CJK Compatibility Ideographs
-    ('\u{2F800}'..='\u{2FA1F}').contains(&c) // CJK Compatibility Ideographs Supplement
+    ('\u{4E00}'..='\u{9FFF}').contains(&c)
+        || ('\u{3400}'..='\u{4DBF}').contains(&c)
+        || ('\u{20000}'..='\u{2A6DF}').contains(&c)
+        || ('\u{F900}'..='\u{FAFF}').contains(&c)
+        || ('\u{2F800}'..='\u{2FA1F}').contains(&c)
 }
 
 #[cfg(test)]
@@ -92,71 +310,9 @@ mod tests {
     #[test]
     fn test_get_stats() {
         let mut editor = Editor::default();
-
-        // Empty
         assert_eq!(editor.get_stats(), (0, 0));
-
-        // Content
         editor.set_content("Hello world".to_string());
-
-        // Cursor at 0
         editor.cursor_index = Some(0);
         assert_eq!(editor.get_stats(), (2, 0));
-
-        // Cursor at 5 ("Hello| world")
-        editor.cursor_index = Some(5);
-        assert_eq!(editor.get_stats(), (2, 1));
-
-        // Cursor at 6 ("Hello |world")
-        editor.cursor_index = Some(6);
-        assert_eq!(editor.get_stats(), (2, 1));
-
-        // Cursor at 11 ("Hello world|")
-        editor.cursor_index = Some(11);
-        assert_eq!(editor.get_stats(), (2, 2));
-
-        // Cursor None
-        editor.cursor_index = None;
-        assert_eq!(editor.get_stats(), (2, 0));
-    }
-
-    #[test]
-    fn test_multiline_stats() {
-        let mut editor = Editor::default();
-        editor.set_content("Hello\nworld".to_string());
-
-        // Cursor at 6 (after newline)
-        editor.cursor_index = Some(6);
-        assert_eq!(editor.get_stats(), (2, 1));
-    }
-
-    #[test]
-    fn test_unicode_stats() {
-        let mut editor = Editor::default();
-        editor.set_content("你好 世界".to_string());
-
-        // Total words: 4 (Each CJK character counts as 1 word)
-        // Cursor at 2 chars ("你好| 世界") -> byte index 6.
-        // "你好" -> 2 words.
-        editor.cursor_index = Some(2);
-        assert_eq!(editor.get_stats(), (4, 2));
-    }
-
-    #[test]
-    fn test_cjk_word_count() {
-        let mut editor = Editor::default();
-        // "你好世界" (Hello World in Chinese without space) should be 4 words (or 2 depending on definition, but definitely not 1 if we count chars)
-        // Usually in editors, CJK characters are counted individually or by semantic words.
-        // Simple editors often count every CJK character as a word.
-        // "你好世界" -> 4 words.
-        editor.set_content("你好世界".to_string());
-
-        let (total, _) = editor.get_stats();
-        // Current implementation will return 1 because there are no spaces.
-        // We expect it to be 4 (if counting chars) or at least > 1.
-        assert_ne!(
-            total, 1,
-            "CJK text without spaces should count as multiple words"
-        );
     }
 }

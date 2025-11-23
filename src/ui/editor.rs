@@ -1,19 +1,14 @@
-use egui::{Color32, FontId, Galley, Pos2, Sense, TextFormat, Ui, Vec2, text::LayoutJob};
-use std::collections::HashMap;
+use egui::{FontId, Galley, Sense, TextFormat, Ui, Vec2, text::LayoutJob};
 use std::sync::Arc;
 
-#[derive(Clone, Debug, Default)]
-struct Mark {
-    note: String,
-}
+use super::sidebar::Sidebar;
 
 #[derive(Default)]
 pub struct Editor {
     content: String,
     cursor_index: Option<usize>,
-    marks: HashMap<usize, Mark>, // line_idx -> Mark
     last_galley: Option<Arc<Galley>>,
-    popup_mark: Option<usize>, // line_idx of the open popup
+    sidebar: Sidebar,
 }
 
 impl Editor {
@@ -29,7 +24,7 @@ impl Editor {
             // 1. Sidebar Area
             // Calculate height based on content or available space (but handle infinity)
             let sidebar_height = if let Some(galley) = &self.last_galley {
-                galley.rect.height().max(ui.available_height().min(2000.0)) // Use galley height but at least fill screen if possible (clamped)
+                galley.rect.height().max(ui.available_height().min(2000.0))
             } else {
                 ui.available_height().min(2000.0) // Fallback for first frame
             };
@@ -41,7 +36,7 @@ impl Editor {
                 sidebar_height
             };
 
-            let (response, painter) =
+            let (response, _painter) =
                 ui.allocate_painter(Vec2::new(sidebar_width, sidebar_height), Sense::click());
 
             let sidebar_rect = response.rect;
@@ -49,8 +44,7 @@ impl Editor {
             // 2. Editor Area with custom layouter
             let mut layouter = |ui: &Ui, string: &dyn egui::TextBuffer, wrap_width: f32| {
                 let mut layout_job = LayoutJob::default();
-                // Use default font settings from style or context
-                let font_id = FontId::monospace(14.0); // Fallback or configurable
+                let font_id = FontId::monospace(14.0);
                 layout_job.append(
                     string.as_str(),
                     0.0,
@@ -94,195 +88,17 @@ impl Editor {
                 editor_response.request_focus();
             }
 
-            // 3. Render Sidebar Content (Marks)
+            // 3. Delegate sidebar rendering to Sidebar component
             if let Some(galley) = &self.last_galley {
-                // Draw right border line (separator)
-                painter.line_segment(
-                    [
-                        Pos2::new(sidebar_rect.right(), sidebar_rect.top()),
-                        Pos2::new(sidebar_rect.right(), sidebar_rect.bottom()),
-                    ],
-                    egui::Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color),
+                self.sidebar.show(
+                    ui,
+                    &self.content,
+                    galley,
+                    editor_response.rect,
+                    sidebar_rect,
                 );
-
-                let text = &self.content;
-
-                // Safe line height retrieval
-                let line_height = if !galley.rows.is_empty() {
-                    galley.rows[0].rect().height()
-                } else {
-                    14.0 // Fallback
-                };
-
-                // Handle sidebar click ONCE
-                let mut clicked_line: Option<usize> = None;
-                if response.clicked()
-                    && let Some(pointer_pos) = response.interact_pointer_pos()
-                {
-                    // Find which line was clicked based on Y position
-                    let mut line_start_byte = 0;
-                    let mut logical_line_idx = 0;
-
-                    for line in text.split_inclusive('\n') {
-                        let char_idx = text[..line_start_byte].chars().count();
-                        let cursor = egui::text::CCursor::new(char_idx);
-                        let rect = galley.pos_from_cursor(cursor);
-                        let line_y = editor_response.rect.min.y + rect.center().y;
-
-                        let dist = (pointer_pos.y - line_y).abs();
-                        if dist < line_height / 2.0 {
-                            clicked_line = Some(logical_line_idx);
-                            break;
-                        }
-
-                        line_start_byte += line.len();
-                        logical_line_idx += 1;
-                    }
-
-                    // Handle the trailing empty line if text ends with newline
-                    if clicked_line.is_none() && text.ends_with('\n') {
-                        let char_idx = text[..line_start_byte].chars().count();
-                        let cursor = egui::text::CCursor::new(char_idx);
-                        let rect = galley.pos_from_cursor(cursor);
-                        let line_y = editor_response.rect.min.y + rect.center().y;
-
-                        let dist = (pointer_pos.y - line_y).abs();
-                        if dist < line_height / 2.0 {
-                            clicked_line = Some(logical_line_idx);
-                        }
-                    }
-                }
-
-                // Process the click if we found a line
-                if let Some(line_idx) = clicked_line {
-                    if let std::collections::hash_map::Entry::Vacant(e) = self.marks.entry(line_idx)
-                    {
-                        // No mark - create one and open popup
-                        e.insert(Mark::default());
-                        self.popup_mark = Some(line_idx);
-                    } else {
-                        // Mark exists - toggle popup
-                        if self.popup_mark == Some(line_idx) {
-                            self.popup_mark = None;
-                        } else {
-                            self.popup_mark = Some(line_idx);
-                        }
-                    }
-                }
-
-                // Draw all marks and clickable hints
-                let mut line_start_byte = 0;
-                let mut logical_line_idx = 0;
-
-                for line in text.split_inclusive('\n') {
-                    let char_idx = text[..line_start_byte].chars().count();
-                    let cursor = egui::text::CCursor::new(char_idx);
-                    let rect = galley.pos_from_cursor(cursor);
-                    let center = Pos2::new(
-                        sidebar_rect.center().x,
-                        editor_response.rect.min.y + rect.center().y,
-                    );
-
-                    // Draw subtle hint circle for clickable position
-                    painter.circle_stroke(
-                        center,
-                        2.5,
-                        egui::Stroke::new(1.0, ui.visuals().text_color().gamma_multiply(0.3)),
-                    );
-
-                    // Draw filled dot if this line has a mark
-                    if self.marks.contains_key(&logical_line_idx) {
-                        painter.circle_filled(center, 4.0, Color32::from_rgb(200, 100, 100));
-                    }
-
-                    line_start_byte += line.len();
-                    logical_line_idx += 1;
-                }
-
-                // Handle the trailing empty line if text ends with newline
-                if text.ends_with('\n') {
-                    let char_idx = text[..line_start_byte].chars().count();
-                    let cursor = egui::text::CCursor::new(char_idx);
-                    let rect = galley.pos_from_cursor(cursor);
-                    let center = Pos2::new(
-                        sidebar_rect.center().x,
-                        editor_response.rect.min.y + rect.center().y,
-                    );
-
-                    // Draw subtle hint circle for clickable position
-                    painter.circle_stroke(
-                        center,
-                        2.5,
-                        egui::Stroke::new(1.0, ui.visuals().text_color().gamma_multiply(0.3)),
-                    );
-
-                    if self.marks.contains_key(&logical_line_idx) {
-                        painter.circle_filled(center, 4.0, Color32::from_rgb(200, 100, 100));
-                    }
-                }
             }
         });
-
-        // 4. Render Popup if active
-        if let Some(line_idx) = self.popup_mark {
-            let mut open = true;
-
-            // Calculate word count before this mark
-            let words_before = {
-                let mut byte_count = 0;
-
-                for (current_line, line) in self.content.split_inclusive('\n').enumerate() {
-                    if current_line >= line_idx {
-                        break;
-                    }
-                    byte_count += line.len();
-                }
-
-                // Use the same word counting logic
-                let text_before = &self.content[..byte_count.min(self.content.len())];
-                let mut count = 0;
-                let mut in_word = false;
-                for c in text_before.chars() {
-                    if c.is_whitespace() {
-                        in_word = false;
-                    } else if is_cjk(c) {
-                        count += 1;
-                        in_word = false;
-                    } else if !in_word {
-                        count += 1;
-                        in_word = true;
-                    }
-                }
-                count
-            };
-
-            let mark_note = self.marks.get_mut(&line_idx).map(|m| &mut m.note);
-
-            if let Some(note) = mark_note {
-                egui::Window::new(
-                    egui::RichText::new(format!("{} words", words_before)).size(11.0),
-                )
-                .open(&mut open)
-                .resizable(true)
-                .collapsible(false)
-                .default_width(300.0)
-                .title_bar(true)
-                .show(ui.ctx(), |ui| {
-                    // Reduce spacing in the window
-                    ui.spacing_mut().item_spacing.y = 4.0;
-
-                    ui.add(
-                        egui::TextEdit::multiline(note)
-                            .desired_rows(8)
-                            .desired_width(f32::INFINITY),
-                    );
-                });
-            }
-
-            if !open {
-                self.popup_mark = None;
-            }
-        }
     }
 
     pub fn get_content(&self) -> String {
@@ -291,43 +107,59 @@ impl Editor {
 
     pub fn set_content(&mut self, content: String) {
         self.content = content;
-        // Clear marks that are out of bounds? Or keep them?
-        // For now, keep them, but they might point to non-existent lines.
-        // A robust implementation would adjust marks on edit.
+    }
+
+    pub fn get_word_count(&self) -> usize {
+        let mut count = 0;
+        let mut in_word = false;
+        for c in self.content.chars() {
+            if c.is_whitespace() {
+                in_word = false;
+            } else if is_cjk(c) {
+                count += 1;
+                in_word = false;
+            } else if !in_word {
+                count += 1;
+                in_word = true;
+            }
+        }
+        count
+    }
+
+    pub fn get_cursor_word_count(&self) -> Option<usize> {
+        let cursor_index = self.cursor_index?;
+
+        // Convert character index to byte index safely
+        let byte_index = self
+            .content
+            .char_indices()
+            .nth(cursor_index)
+            .map(|(byte_idx, _)| byte_idx)
+            .unwrap_or(self.content.len());
+
+        let text_before_cursor = &self.content[..byte_index];
+
+        let mut count = 0;
+        let mut in_word = false;
+        for c in text_before_cursor.chars() {
+            if c.is_whitespace() {
+                in_word = false;
+            } else if is_cjk(c) {
+                count += 1;
+                in_word = false;
+            } else if !in_word {
+                count += 1;
+                in_word = true;
+            }
+        }
+        Some(count)
     }
 
     pub fn get_stats(&self) -> (usize, usize) {
-        let count_words = |text: &str| -> usize {
-            let mut count = 0;
-            let mut in_word = false;
-            for c in text.chars() {
-                if c.is_whitespace() {
-                    in_word = false;
-                } else if is_cjk(c) {
-                    count += 1;
-                    in_word = false;
-                } else if !in_word {
-                    count += 1;
-                    in_word = true;
-                }
-            }
-            count
-        };
-
-        let total_words = count_words(&self.content);
-        let cursor_words = if let Some(idx) = self.cursor_index {
-            let byte_index = self
-                .content
-                .char_indices()
-                .map(|(i, _)| i)
-                .nth(idx)
-                .unwrap_or(self.content.len());
-
-            count_words(&self.content[..byte_index])
-        } else {
-            0
-        };
-        (total_words, cursor_words)
+        (
+            self.get_word_count(),
+            self.get_cursor_word_count().unwrap_or(0),
+        )
     }
 }
 
@@ -344,11 +176,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_get_stats() {
+    fn test_word_count() {
         let mut editor = Editor::default();
-        assert_eq!(editor.get_stats(), (0, 0));
         editor.set_content("Hello world".to_string());
-        editor.cursor_index = Some(0);
-        assert_eq!(editor.get_stats(), (2, 0));
+        assert_eq!(editor.get_word_count(), 2);
+
+        editor.set_content("你好世界".to_string());
+        assert_eq!(editor.get_word_count(), 4);
+
+        editor.set_content("Hello 世界".to_string());
+        assert_eq!(editor.get_word_count(), 3);
     }
 }

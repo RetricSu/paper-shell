@@ -373,76 +373,68 @@ impl HistoryWindow {
     fn show_diff_static(ui: &mut Ui, diff_lines: &[DiffLine]) {
         ui.style_mut().spacing.item_spacing.y = 1.0;
 
-        // Convert flat diff_lines into rows that are either full-width unchanged or paired blocks
         let rows = Self::group_into_rows(diff_lines);
 
+        // Calculate column width based on current available space
         let total_available = ui.available_width();
-        let col_w = (total_available / 2.0).max(200.0);
+        // Subtract a little padding to prevent horizontal scrollbar jitter
+        let col_w = (total_available / 2.0 - 10.0).max(100.0);
 
-        for row in rows {
+        for (row_idx, row) in rows.iter().enumerate() {
             match row {
                 DiffRow::Unchanged(text) => {
-                    // full-width single row for unchanged content
-                    ui.add(egui::Label::new(RichText::new(text).monospace()).wrap());
+                    // Render unchanged text slightly dimmer to make changes pop
+                    let mut job = LayoutJob::default();
+                    job.append(
+                        &format!("  {}", text),
+                        0.0,
+                        TextFormat {
+                            font_id: FontId::monospace(14.0),
+                            color: ui.visuals().text_color().gamma_multiply(0.6), // Dimmer
+                            ..Default::default()
+                        },
+                    );
+                    ui.add(egui::Label::new(job).wrap());
                 }
                 DiffRow::Pair(left_block, right_block) => {
-                    // render a side-by-side grid portion: align by index
-                    let max = left_block.len().max(right_block.len());
-                    egui::Grid::new("diff_pair")
-                        .spacing(Vec2::new(4.0, 1.0))
-                        .show(ui, |ui| {
-                            for i in 0..max {
-                                // left
-                                if let Some(left) = left_block.get(i) {
-                                    // if there's a matching right and contents are non-empty, do a word-level inline highlight
-                                    if let Some(right) = right_block.get(i) {
-                                        Self::render_word_highlight(
-                                            ui,
-                                            Some(&left.content),
-                                            Some(&right.content),
-                                            true,
-                                            col_w,
-                                        );
-                                    } else {
-                                        // left-only
-                                        Self::render_word_highlight(
-                                            ui,
-                                            Some(&left.content),
-                                            None,
-                                            true,
-                                            col_w,
-                                        );
-                                    }
-                                } else {
-                                    ui.add_sized(Vec2::new(col_w, 0.0), egui::Label::new(""));
-                                }
+                    // CRITICAL FIX: Use push_id to ensure every Grid has a unique ID
+                    ui.push_id(row_idx, |ui| {
+                        egui::Grid::new("diff_pair_grid")
+                            .num_columns(2)
+                            .min_col_width(col_w)
+                            .max_col_width(col_w)
+                            .spacing(Vec2::new(0.0, 0.0)) // Tight spacing
+                            .show(ui, |ui| {
+                                let max = left_block.len().max(right_block.len());
 
-                                // right
-                                if let Some(right) = right_block.get(i) {
-                                    if let Some(left) = left_block.get(i) {
-                                        Self::render_word_highlight(
-                                            ui,
-                                            Some(&left.content),
-                                            Some(&right.content),
-                                            false,
-                                            col_w,
-                                        );
-                                    } else {
-                                        Self::render_word_highlight(
-                                            ui,
-                                            None,
-                                            Some(&right.content),
-                                            false,
-                                            col_w,
-                                        );
-                                    }
-                                } else {
-                                    ui.add_sized(Vec2::new(col_w, 0.0), egui::Label::new(""));
-                                }
+                                for i in 0..max {
+                                    let left_content =
+                                        left_block.get(i).map(|l| l.content.as_str());
+                                    let right_content =
+                                        right_block.get(i).map(|r| r.content.as_str());
 
-                                ui.end_row();
-                            }
-                        });
+                                    // Left Column
+                                    Self::render_word_highlight(
+                                        ui,
+                                        left_content,
+                                        right_content,
+                                        true, // is_left
+                                        col_w,
+                                    );
+
+                                    // Right Column
+                                    Self::render_word_highlight(
+                                        ui,
+                                        left_content,
+                                        right_content,
+                                        false, // is_right
+                                        col_w,
+                                    );
+
+                                    ui.end_row();
+                                }
+                            });
+                    });
                 }
             }
         }
@@ -458,95 +450,129 @@ impl HistoryWindow {
         let mut job = LayoutJob::default();
         let font_id = FontId::monospace(14.0);
 
-        // prefix
-        let prefix = if is_left { "- " } else { "+ " };
+        // IMPROVED COLORS: Higher contrast
+        // Backgrounds for the full line (Pale)
+        let removed_line_bg = Color32::from_rgb(255, 230, 230);
+        let added_line_bg = Color32::from_rgb(230, 255, 230);
+
+        // Backgrounds for the specific changed words (Saturated)
+        let removed_word_bg = Color32::from_rgb(255, 170, 170);
+        let added_word_bg = Color32::from_rgb(170, 255, 170);
+
+        // Text colors
+        let base_text_color = ui.visuals().text_color();
+        let removed_text_color = Color32::from_rgb(150, 0, 0);
+        let added_text_color = Color32::from_rgb(0, 100, 0);
+
+        let (line_bg, prefix) = if is_left {
+            (removed_line_bg, "- ")
+        } else {
+            (added_line_bg, "+ ")
+        };
+
+        // Determine if we should draw the prefix and background line
+        // If this side (left/right) is empty for this row, we might render an empty grey block or nothing.
+        let has_content = if is_left {
+            left.is_some()
+        } else {
+            right.is_some()
+        };
+
+        if !has_content {
+            // Render empty placeholder space
+            ui.add_sized(Vec2::new(width, 0.0), egui::Label::new(""));
+            return;
+        }
+
+        // Add Prefix
         job.append(
             prefix,
             0.0,
             TextFormat {
                 font_id: font_id.clone(),
-                color: ui.visuals().text_color(),
+                color: base_text_color.gamma_multiply(0.5),
+                background: line_bg,
                 ..Default::default()
             },
         );
 
         match (left, right) {
             (Some(l), Some(r)) => {
-                let diff = TextDiff::from_words(l, r);
+                // Perform character-level diff (better for CJK)
+                let diff = TextDiff::from_chars(l, r);
+
                 for change in diff.iter_all_changes() {
-                    let seg = change.to_string();
+                    let text = change.value();
                     match change.tag() {
-                        ChangeTag::Equal => job.append(
-                            &seg,
-                            0.0,
-                            TextFormat {
-                                font_id: font_id.clone(),
-                                color: ui.visuals().text_color(),
-                                ..Default::default()
-                            },
-                        ),
+                        ChangeTag::Equal => {
+                            job.append(
+                                text,
+                                0.0,
+                                TextFormat {
+                                    font_id: font_id.clone(),
+                                    color: base_text_color,
+                                    background: line_bg,
+                                    ..Default::default()
+                                },
+                            );
+                        }
                         ChangeTag::Delete => {
                             if is_left {
                                 job.append(
-                                    &seg,
+                                    text,
                                     0.0,
                                     TextFormat {
                                         font_id: font_id.clone(),
-                                        color: Color32::from_rgb(170, 0, 0),
+                                        color: removed_text_color,
+                                        background: removed_word_bg, // High contrast highlight
                                         ..Default::default()
                                     },
-                                )
+                                );
                             }
                         }
                         ChangeTag::Insert => {
                             if !is_left {
                                 job.append(
-                                    &seg,
+                                    text,
                                     0.0,
                                     TextFormat {
                                         font_id: font_id.clone(),
-                                        color: Color32::from_rgb(0, 130, 0),
+                                        color: added_text_color,
+                                        background: added_word_bg, // High contrast highlight
                                         ..Default::default()
                                     },
-                                )
+                                );
                             }
                         }
                     }
                 }
             }
-            (Some(l), None) => {
+            // Fallback for purely added or purely removed lines (no pair match)
+            (Some(l), None) if is_left => {
                 job.append(
                     l,
                     0.0,
                     TextFormat {
                         font_id: font_id.clone(),
-                        color: Color32::from_rgb(170, 0, 0),
+                        color: base_text_color,
+                        background: line_bg,
                         ..Default::default()
                     },
                 );
             }
-            (None, Some(r)) => {
+            (None, Some(r)) if !is_left => {
                 job.append(
                     r,
                     0.0,
                     TextFormat {
                         font_id: font_id.clone(),
-                        color: Color32::from_rgb(0, 130, 0),
+                        color: base_text_color,
+                        background: line_bg,
                         ..Default::default()
                     },
                 );
             }
-            (None, None) => {
-                job.append(
-                    "",
-                    0.0,
-                    TextFormat {
-                        font_id: font_id.clone(),
-                        color: ui.visuals().text_color(),
-                        ..Default::default()
-                    },
-                );
-            }
+            _ => {}
         }
 
         job.wrap.max_width = width;

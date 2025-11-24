@@ -1,6 +1,51 @@
 use crate::backend::{EditorBackend, HistoryEntry};
-use egui::{Color32, Context, RichText, ScrollArea, Ui};
+use egui::{Color32, Context, FontId, RichText, ScrollArea, TextFormat, Ui, Vec2, text::LayoutJob};
 use similar::{ChangeTag, TextDiff};
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn grouping_unchanged_lines() {
+        let old = "a\nb\n";
+        let new = "a\nb\n";
+        let diff = HistoryWindow::compute_diff(old, new);
+        let rows = HistoryWindow::group_into_rows(&diff);
+        assert_eq!(rows.len(), 2);
+        match &rows[0] {
+            DiffRow::Unchanged(s) => assert_eq!(s, "a"),
+            _ => panic!(),
+        }
+        match &rows[1] {
+            DiffRow::Unchanged(s) => assert_eq!(s, "b"),
+            _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn grouping_removed_added_pair() {
+        let old = "a\nold\nc\n";
+        let new = "a\nnew\nc\n";
+        let diff = HistoryWindow::compute_diff(old, new);
+        let rows = HistoryWindow::group_into_rows(&diff);
+        // rows: a (unchanged), pair(old,new), c (unchanged)
+        assert_eq!(rows.len(), 3);
+        match &rows[1] {
+            DiffRow::Pair(l, r) => {
+                assert_eq!(l.len(), 1);
+                assert_eq!(r.len(), 1);
+            }
+            _ => panic!(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+enum DiffRow {
+    Unchanged(String),
+    Pair(Vec<DiffLine>, Vec<DiffLine>),
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum DiffLineType {
@@ -113,6 +158,57 @@ impl HistoryWindow {
         }
 
         diff_lines
+    }
+
+    // Group raw diff lines into rows where unchanged identical lines are single rows,
+    // and contiguous removed/added blocks become paired rows.
+    fn group_into_rows(diff_lines: &[DiffLine]) -> Vec<DiffRow> {
+        let mut rows = Vec::new();
+        let mut i = 0usize;
+
+        while i < diff_lines.len() {
+            match &diff_lines[i].line_type {
+                DiffLineType::Unchanged => {
+                    // Collect contiguous unchanged lines and emit each as Unchanged row
+                    rows.push(DiffRow::Unchanged(diff_lines[i].content.clone()));
+                    i += 1;
+                }
+                DiffLineType::Removed => {
+                    // collect removed block
+                    let mut removed_block = Vec::new();
+                    removed_block.push(diff_lines[i].clone());
+                    i += 1;
+                    while i < diff_lines.len() && diff_lines[i].line_type == DiffLineType::Removed {
+                        removed_block.push(diff_lines[i].clone());
+                        i += 1;
+                    }
+
+                    // collect following added block (if any)
+                    let mut added_block = Vec::new();
+                    let mut j = i;
+                    while j < diff_lines.len() && diff_lines[j].line_type == DiffLineType::Added {
+                        added_block.push(diff_lines[j].clone());
+                        j += 1;
+                    }
+
+                    if !added_block.is_empty() {
+                        // pair removed and added blocks
+                        rows.push(DiffRow::Pair(removed_block, added_block));
+                        i = j;
+                    } else {
+                        // no added block - show removed lines as left-only pairs
+                        rows.push(DiffRow::Pair(removed_block, Vec::new()));
+                    }
+                }
+                DiffLineType::Added => {
+                    // added without preceding removal -> right-only
+                    rows.push(DiffRow::Pair(Vec::new(), vec![diff_lines[i].clone()]));
+                    i += 1;
+                }
+            }
+        }
+
+        rows
     }
 
     fn has_meaningful_changes(diff_lines: &[DiffLine]) -> bool {
@@ -277,33 +373,183 @@ impl HistoryWindow {
     fn show_diff_static(ui: &mut Ui, diff_lines: &[DiffLine]) {
         ui.style_mut().spacing.item_spacing.y = 1.0;
 
-        for line in diff_lines {
-            let (prefix, color, bg_color) = match line.line_type {
-                DiffLineType::Added => (
-                    "+ ",
-                    Color32::from_rgb(0, 130, 0),
-                    Some(Color32::from_rgb(225, 255, 225)),
-                ),
-                DiffLineType::Removed => (
-                    "- ",
-                    Color32::from_rgb(170, 0, 0),
-                    Some(Color32::from_rgb(255, 225, 225)),
-                ),
-                DiffLineType::Unchanged => ("  ", ui.visuals().text_color(), None),
-            };
+        // Convert flat diff_lines into rows that are either full-width unchanged or paired blocks
+        let rows = Self::group_into_rows(diff_lines);
 
-            let text = format!("{}{}", prefix, line.content);
+        let total_available = ui.available_width();
+        let col_w = (total_available / 2.0).max(200.0);
 
-            // Use standard egui layout for left alignment
-            if let Some(bg) = bg_color {
-                // For changed lines with background, create a frame
-                egui::Frame::NONE.fill(bg).show(ui, |ui| {
-                    ui.label(RichText::new(text).color(color).monospace());
-                });
-            } else {
-                // For unchanged lines, just use a regular label
-                ui.label(RichText::new(text).color(color).monospace());
+        for row in rows {
+            match row {
+                DiffRow::Unchanged(text) => {
+                    // full-width single row for unchanged content
+                    ui.add(egui::Label::new(RichText::new(text).monospace()).wrap());
+                }
+                DiffRow::Pair(left_block, right_block) => {
+                    // render a side-by-side grid portion: align by index
+                    let max = left_block.len().max(right_block.len());
+                    egui::Grid::new("diff_pair")
+                        .spacing(Vec2::new(4.0, 1.0))
+                        .show(ui, |ui| {
+                            for i in 0..max {
+                                // left
+                                if let Some(left) = left_block.get(i) {
+                                    // if there's a matching right and contents are non-empty, do a word-level inline highlight
+                                    if let Some(right) = right_block.get(i) {
+                                        Self::render_word_highlight(
+                                            ui,
+                                            Some(&left.content),
+                                            Some(&right.content),
+                                            true,
+                                            col_w,
+                                        );
+                                    } else {
+                                        // left-only
+                                        Self::render_word_highlight(
+                                            ui,
+                                            Some(&left.content),
+                                            None,
+                                            true,
+                                            col_w,
+                                        );
+                                    }
+                                } else {
+                                    ui.add_sized(Vec2::new(col_w, 0.0), egui::Label::new(""));
+                                }
+
+                                // right
+                                if let Some(right) = right_block.get(i) {
+                                    if let Some(left) = left_block.get(i) {
+                                        Self::render_word_highlight(
+                                            ui,
+                                            Some(&left.content),
+                                            Some(&right.content),
+                                            false,
+                                            col_w,
+                                        );
+                                    } else {
+                                        Self::render_word_highlight(
+                                            ui,
+                                            None,
+                                            Some(&right.content),
+                                            false,
+                                            col_w,
+                                        );
+                                    }
+                                } else {
+                                    ui.add_sized(Vec2::new(col_w, 0.0), egui::Label::new(""));
+                                }
+
+                                ui.end_row();
+                            }
+                        });
+                }
             }
         }
+    }
+
+    fn render_word_highlight(
+        ui: &mut Ui,
+        left: Option<&str>,
+        right: Option<&str>,
+        is_left: bool,
+        width: f32,
+    ) {
+        let mut job = LayoutJob::default();
+        let font_id = FontId::monospace(14.0);
+
+        // prefix
+        let prefix = if is_left { "- " } else { "+ " };
+        job.append(
+            prefix,
+            0.0,
+            TextFormat {
+                font_id: font_id.clone(),
+                color: ui.visuals().text_color(),
+                ..Default::default()
+            },
+        );
+
+        match (left, right) {
+            (Some(l), Some(r)) => {
+                let diff = TextDiff::from_words(l, r);
+                for change in diff.iter_all_changes() {
+                    let seg = change.to_string();
+                    match change.tag() {
+                        ChangeTag::Equal => job.append(
+                            &seg,
+                            0.0,
+                            TextFormat {
+                                font_id: font_id.clone(),
+                                color: ui.visuals().text_color(),
+                                ..Default::default()
+                            },
+                        ),
+                        ChangeTag::Delete => {
+                            if is_left {
+                                job.append(
+                                    &seg,
+                                    0.0,
+                                    TextFormat {
+                                        font_id: font_id.clone(),
+                                        color: Color32::from_rgb(170, 0, 0),
+                                        ..Default::default()
+                                    },
+                                )
+                            }
+                        }
+                        ChangeTag::Insert => {
+                            if !is_left {
+                                job.append(
+                                    &seg,
+                                    0.0,
+                                    TextFormat {
+                                        font_id: font_id.clone(),
+                                        color: Color32::from_rgb(0, 130, 0),
+                                        ..Default::default()
+                                    },
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            (Some(l), None) => {
+                job.append(
+                    l,
+                    0.0,
+                    TextFormat {
+                        font_id: font_id.clone(),
+                        color: Color32::from_rgb(170, 0, 0),
+                        ..Default::default()
+                    },
+                );
+            }
+            (None, Some(r)) => {
+                job.append(
+                    r,
+                    0.0,
+                    TextFormat {
+                        font_id: font_id.clone(),
+                        color: Color32::from_rgb(0, 130, 0),
+                        ..Default::default()
+                    },
+                );
+            }
+            (None, None) => {
+                job.append(
+                    "",
+                    0.0,
+                    TextFormat {
+                        font_id: font_id.clone(),
+                        color: ui.visuals().text_color(),
+                        ..Default::default()
+                    },
+                );
+            }
+        }
+
+        job.wrap.max_width = width;
+        ui.add_sized(Vec2::new(width, 0.0), egui::Label::new(job).wrap());
     }
 }

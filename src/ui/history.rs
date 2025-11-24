@@ -378,32 +378,22 @@ impl HistoryWindow {
         // Calculate column width based on current available space
         let total_available = ui.available_width();
         // Subtract a little padding to prevent horizontal scrollbar jitter
-        let col_w = (total_available / 2.0 - 10.0).max(100.0);
+        // We need space for 2 columns + separator (approx 1.0 width + spacing)
+        let col_w = (total_available / 2.0 - 15.0).max(100.0);
 
         for (row_idx, row) in rows.iter().enumerate() {
             match row {
                 DiffRow::Unchanged(text) => {
-                    // Render unchanged text slightly dimmer to make changes pop
-                    let mut job = LayoutJob::default();
-                    job.append(
-                        &format!("  {}", text),
-                        0.0,
-                        TextFormat {
-                            font_id: FontId::monospace(14.0),
-                            color: ui.visuals().text_color().gamma_multiply(0.6), // Dimmer
-                            ..Default::default()
-                        },
-                    );
-                    ui.add(egui::Label::new(job).wrap());
+                    // full-width single row for unchanged content
+                    ui.add(egui::Label::new(RichText::new(text).monospace()).wrap());
                 }
                 DiffRow::Pair(left_block, right_block) => {
                     // CRITICAL FIX: Use push_id to ensure every Grid has a unique ID
                     ui.push_id(row_idx, |ui| {
                         egui::Grid::new("diff_pair_grid")
-                            .num_columns(2)
-                            .min_col_width(col_w)
-                            .max_col_width(col_w)
-                            .spacing(Vec2::new(0.0, 0.0)) // Tight spacing
+                            .num_columns(3) // Left, Separator, Right
+                            .min_col_width(0.0)
+                            .spacing(Vec2::new(0.0, 0.0)) // Tight spacing, we handle padding in Frame
                             .show(ui, |ui| {
                                 let max = left_block.len().max(right_block.len());
 
@@ -447,7 +437,6 @@ impl HistoryWindow {
         is_left: bool,
         width: f32,
     ) {
-        let mut job = LayoutJob::default();
         let font_id = FontId::monospace(14.0);
 
         // IMPROVED COLORS: Higher contrast
@@ -471,111 +460,126 @@ impl HistoryWindow {
         };
 
         // Determine if we should draw the prefix and background line
-        // If this side (left/right) is empty for this row, we might render an empty grey block or nothing.
         let has_content = if is_left {
             left.is_some()
         } else {
             right.is_some()
         };
 
-        if !has_content {
-            // Render empty placeholder space
-            ui.add_sized(Vec2::new(width, 0.0), egui::Label::new(""));
-            return;
-        }
+        // Use Frame for solid cell background
+        egui::Frame::default()
+            .fill(if has_content {
+                line_bg
+            } else {
+                Color32::TRANSPARENT
+            })
+            .inner_margin(8.0) // Increased padding
+            .show(ui, |ui| {
+                // Ensure the frame takes up the full width
+                ui.set_min_width(width - 16.0); // Subtract padding (8.0 * 2)
 
-        // Add Prefix
-        job.append(
-            prefix,
-            0.0,
-            TextFormat {
-                font_id: font_id.clone(),
-                color: base_text_color.gamma_multiply(0.5),
-                background: line_bg,
-                ..Default::default()
-            },
-        );
+                if !has_content {
+                    ui.label(""); // Empty label to maintain height if needed, or just return
+                    return;
+                }
 
-        match (left, right) {
-            (Some(l), Some(r)) => {
-                // Perform character-level diff (better for CJK)
-                let diff = TextDiff::from_chars(l, r);
+                let mut job = LayoutJob::default();
 
-                for change in diff.iter_all_changes() {
-                    let text = change.value();
-                    match change.tag() {
-                        ChangeTag::Equal => {
-                            job.append(
-                                text,
-                                0.0,
-                                TextFormat {
-                                    font_id: font_id.clone(),
-                                    color: base_text_color,
-                                    background: line_bg,
-                                    ..Default::default()
-                                },
-                            );
-                        }
-                        ChangeTag::Delete => {
-                            if is_left {
-                                job.append(
-                                    text,
-                                    0.0,
-                                    TextFormat {
-                                        font_id: font_id.clone(),
-                                        color: removed_text_color,
-                                        background: removed_word_bg, // High contrast highlight
-                                        ..Default::default()
-                                    },
-                                );
-                            }
-                        }
-                        ChangeTag::Insert => {
-                            if !is_left {
-                                job.append(
-                                    text,
-                                    0.0,
-                                    TextFormat {
-                                        font_id: font_id.clone(),
-                                        color: added_text_color,
-                                        background: added_word_bg, // High contrast highlight
-                                        ..Default::default()
-                                    },
-                                );
+                // Add Prefix
+                job.append(
+                    prefix,
+                    0.0,
+                    TextFormat {
+                        font_id: font_id.clone(),
+                        color: base_text_color.gamma_multiply(0.5),
+                        line_height: Some(24.0), // Add line height for better spacing
+                        ..Default::default()
+                    },
+                );
+
+                match (left, right) {
+                    (Some(l), Some(r)) => {
+                        // Perform character-level diff (better for CJK)
+                        let diff = TextDiff::from_chars(l, r);
+
+                        for change in diff.iter_all_changes() {
+                            let text = change.value();
+                            match change.tag() {
+                                ChangeTag::Equal => {
+                                    job.append(
+                                        text,
+                                        0.0,
+                                        TextFormat {
+                                            font_id: font_id.clone(),
+                                            color: base_text_color,
+                                            line_height: Some(24.0), // Add line height
+                                            ..Default::default()
+                                        },
+                                    );
+                                }
+                                ChangeTag::Delete => {
+                                    if is_left {
+                                        job.append(
+                                            text,
+                                            0.0,
+                                            TextFormat {
+                                                font_id: font_id.clone(),
+                                                color: removed_text_color,
+                                                background: removed_word_bg, // High contrast highlight ON TOP of frame
+                                                line_height: Some(24.0),     // Add line height
+                                                ..Default::default()
+                                            },
+                                        );
+                                    }
+                                }
+                                ChangeTag::Insert => {
+                                    if !is_left {
+                                        job.append(
+                                            text,
+                                            0.0,
+                                            TextFormat {
+                                                font_id: font_id.clone(),
+                                                color: added_text_color,
+                                                background: added_word_bg, // High contrast highlight ON TOP of frame
+                                                line_height: Some(24.0),   // Add line height
+                                                ..Default::default()
+                                            },
+                                        );
+                                    }
+                                }
                             }
                         }
                     }
+                    // Fallback for purely added or purely removed lines (no pair match)
+                    (Some(l), None) if is_left => {
+                        job.append(
+                            l,
+                            0.0,
+                            TextFormat {
+                                font_id: font_id.clone(),
+                                color: base_text_color,
+                                line_height: Some(24.0), // Add line height
+                                ..Default::default()
+                            },
+                        );
+                    }
+                    (None, Some(r)) if !is_left => {
+                        job.append(
+                            r,
+                            0.0,
+                            TextFormat {
+                                font_id: font_id.clone(),
+                                color: base_text_color,
+                                line_height: Some(24.0), // Add line height
+                                ..Default::default()
+                            },
+                        );
+                    }
+                    _ => {}
                 }
-            }
-            // Fallback for purely added or purely removed lines (no pair match)
-            (Some(l), None) if is_left => {
-                job.append(
-                    l,
-                    0.0,
-                    TextFormat {
-                        font_id: font_id.clone(),
-                        color: base_text_color,
-                        background: line_bg,
-                        ..Default::default()
-                    },
-                );
-            }
-            (None, Some(r)) if !is_left => {
-                job.append(
-                    r,
-                    0.0,
-                    TextFormat {
-                        font_id: font_id.clone(),
-                        color: base_text_color,
-                        background: line_bg,
-                        ..Default::default()
-                    },
-                );
-            }
-            _ => {}
-        }
 
-        job.wrap.max_width = width;
-        ui.add_sized(Vec2::new(width, 0.0), egui::Label::new(job).wrap());
+                job.wrap.max_width = width - 16.0; // Adjust wrap width for padding
+                ui.add(egui::Label::new(job).wrap());
+            });
     }
 }

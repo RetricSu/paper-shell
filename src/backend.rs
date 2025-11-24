@@ -190,7 +190,6 @@ impl EditorBackend {
     }
 
     /// Load version history for a file
-    #[allow(dead_code)]
     pub fn load_history(&self, file_path: &Path) -> Result<Vec<HistoryEntry>, BackendError> {
         // Get UUID from xattr
         let uuid = get_file_id_wrapper(file_path)?
@@ -200,7 +199,6 @@ impl EditorBackend {
     }
 
     /// Restore content from a specific hash
-    #[allow(dead_code)]
     pub fn restore_version(&self, hash: &str) -> Result<String, BackendError> {
         let blob_path = self.blobs_dir.join(hash);
 

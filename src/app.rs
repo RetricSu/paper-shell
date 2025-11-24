@@ -1,6 +1,7 @@
 use crate::backend::EditorBackend;
 use crate::style::configure_style;
 use crate::ui::editor::Editor;
+use crate::ui::history::HistoryWindow;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -10,6 +11,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 pub enum BackendResponse {
     SaveComplete(Result<PathBuf, String>),
     LoadComplete(Result<(PathBuf, String), String>),
+    HistoryLoaded(Result<Vec<crate::backend::HistoryEntry>, String>),
 }
 
 pub struct PaperShellApp {
@@ -18,6 +20,7 @@ pub struct PaperShellApp {
     current_file: Option<PathBuf>,
     response_receiver: Receiver<BackendResponse>,
     response_sender: Sender<BackendResponse>,
+    history_window: HistoryWindow,
 }
 
 impl Default for PaperShellApp {
@@ -29,6 +32,7 @@ impl Default for PaperShellApp {
             current_file: None,
             response_receiver: receiver,
             response_sender: sender,
+            history_window: HistoryWindow::new(),
         }
     }
 }
@@ -60,6 +64,14 @@ impl eframe::App for PaperShellApp {
                     }
                     Err(e) => eprintln!("Failed to load file: {}", e),
                 },
+                BackendResponse::HistoryLoaded(result) => match result {
+                    Ok(entries) => {
+                        if let Err(e) = self.history_window.set_history(entries, &self.backend) {
+                            eprintln!("Failed to set history: {}", e);
+                        }
+                    }
+                    Err(e) => eprintln!("Failed to load history: {}", e),
+                },
             }
         }
 
@@ -72,6 +84,7 @@ impl eframe::App for PaperShellApp {
                 crate::constant::DEFAULT_WINDOW_TITLE,
                 total_words,
                 cursor_words,
+                self.current_file.is_some(),
             ) {
                 match action {
                     crate::ui::title_bar::TitleBarAction::NewWindow => {
@@ -165,6 +178,20 @@ impl eframe::App for PaperShellApp {
                             }
                         });
                     }
+                    crate::ui::title_bar::TitleBarAction::History => {
+                        if let Some(ref path) = self.current_file {
+                            let backend = Arc::clone(&self.backend);
+                            let sender = self.response_sender.clone();
+                            let path = path.clone();
+
+                            std::thread::spawn(move || {
+                                let result = backend.load_history(&path).map_err(|e| e.to_string());
+                                let _ = sender.send(BackendResponse::HistoryLoaded(result));
+                            });
+
+                            self.history_window.open();
+                        }
+                    }
                     crate::ui::title_bar::TitleBarAction::Settings => {
                         // TODO: Settings logic
                     }
@@ -180,6 +207,9 @@ impl eframe::App for PaperShellApp {
                 });
             });
         });
+
+        // History Window
+        self.history_window.show(ctx);
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {

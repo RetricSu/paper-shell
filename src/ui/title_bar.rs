@@ -4,6 +4,7 @@ pub enum TitleBarAction {
     NewWindow,
     Save,
     Open,
+    History,
     Settings,
 }
 
@@ -16,6 +17,7 @@ impl TitleBar {
         title: &str,
         word_count: usize,
         cursor_word_count: usize,
+        has_current_file: bool,
     ) -> Option<TitleBarAction> {
         let mut action = None;
         let title_bar_rect = ui.available_rect_before_wrap();
@@ -49,6 +51,14 @@ impl TitleBar {
                 }
                 if ui.button("📂").on_hover_text("Open").clicked() {
                     action = Some(TitleBarAction::Open);
+                }
+                if ui
+                    .add_enabled(has_current_file, egui::Button::new("📜"))
+                    .on_hover_text("History")
+                    .on_disabled_hover_text("No file opened")
+                    .clicked()
+                {
+                    action = Some(TitleBarAction::History);
                 }
                 if ui.button("⚙").on_hover_text("Settings").clicked() {
                     action = Some(TitleBarAction::Settings);

@@ -1,5 +1,5 @@
+use crate::config::Config;
 use chrono::{DateTime, Utc};
-use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io;
@@ -56,12 +56,8 @@ pub struct EditorBackend {
 impl EditorBackend {
     /// Initialize the backend and create necessary directories
     pub fn new() -> Result<Self, BackendError> {
-        let data_dir = if let Some(proj_dirs) = ProjectDirs::from("com", "RetricSu", "Paper Shell")
-        {
-            proj_dirs.data_dir().to_path_buf()
-        } else {
-            PathBuf::from("data")
-        };
+        let config = Config::default();
+        let data_dir = config.data_dir();
 
         let blobs_dir = data_dir.join(BLOB_DIR);
         let history_dir = data_dir.join(HISTORY_DIR);

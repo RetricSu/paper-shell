@@ -273,20 +273,14 @@ impl HistoryWindow {
 
             let text = format!("{}{}", prefix, line.content);
 
+            // Use standard egui layout for left alignment
             if let Some(bg) = bg_color {
-                // Draw background for changed lines
-                let rect = ui.available_rect_before_wrap();
-                let height = ui.text_style_height(&egui::TextStyle::Monospace) + 2.0;
-                let response = ui.allocate_rect(
-                    egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), height)),
-                    egui::Sense::hover(),
-                );
-                ui.painter().rect_filled(response.rect, 0.0, bg);
-                ui.put(
-                    response.rect.shrink2(egui::vec2(4.0, 0.0)),
-                    egui::Label::new(RichText::new(text).color(color).monospace()),
-                );
+                // For changed lines with background, create a frame
+                egui::Frame::NONE.fill(bg).show(ui, |ui| {
+                    ui.label(RichText::new(text).color(color).monospace());
+                });
             } else {
+                // For unchanged lines, just use a regular label
                 ui.label(RichText::new(text).color(color).monospace());
             }
         }

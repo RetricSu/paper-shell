@@ -1,22 +1,34 @@
-use crate::saver::{SaverMessage, SaverResponse, spawn_saver};
+use crate::backend::EditorBackend;
 use crate::style::configure_style;
 use crate::ui::editor::Editor;
 
-use std::sync::mpsc::{Receiver, Sender};
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::mpsc::{Receiver, Sender, channel};
+
+/// Response messages from background operations
+pub enum BackendResponse {
+    SaveComplete(Result<PathBuf, String>),
+    LoadComplete(Result<(PathBuf, String), String>),
+}
 
 pub struct PaperShellApp {
     editor: Editor,
-    saver_sender: Sender<SaverMessage>,
-    saver_receiver: Receiver<SaverResponse>,
+    backend: Arc<EditorBackend>,
+    current_file: Option<PathBuf>,
+    response_receiver: Receiver<BackendResponse>,
+    response_sender: Sender<BackendResponse>,
 }
 
 impl Default for PaperShellApp {
     fn default() -> Self {
-        let (sender, receiver) = spawn_saver();
+        let (sender, receiver) = channel();
         Self {
             editor: Editor::default(),
-            saver_sender: sender,
-            saver_receiver: receiver,
+            backend: Arc::new(EditorBackend::default()),
+            current_file: None,
+            response_receiver: receiver,
+            response_sender: sender,
         }
     }
 }
@@ -30,12 +42,24 @@ impl PaperShellApp {
 
 impl eframe::App for PaperShellApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        // Check for loaded content
-        if let Ok(response) = self.saver_receiver.try_recv() {
+        // Check for backend operation responses
+        if let Ok(response) = self.response_receiver.try_recv() {
             match response {
-                SaverResponse::Loaded(content) => {
-                    self.editor.set_content(content);
-                }
+                BackendResponse::SaveComplete(result) => match result {
+                    Ok(path) => {
+                        println!("File saved successfully to {:?}", path);
+                        self.current_file = Some(path);
+                    }
+                    Err(e) => eprintln!("Failed to save file: {}", e),
+                },
+                BackendResponse::LoadComplete(result) => match result {
+                    Ok((path, content)) => {
+                        self.editor.set_content(content);
+                        self.current_file = Some(path.clone());
+                        println!("File opened: {:?}", path);
+                    }
+                    Err(e) => eprintln!("Failed to load file: {}", e),
+                },
             }
         }
 
@@ -60,28 +84,84 @@ impl eframe::App for PaperShellApp {
                     }
                     crate::ui::title_bar::TitleBarAction::Save => {
                         let content = self.editor.get_content();
-                        if let Err(e) = self.saver_sender.send(SaverMessage::Save(content)) {
-                            eprintln!("Failed to send save message: {}", e);
+                        let backend = Arc::clone(&self.backend);
+                        let sender = self.response_sender.clone();
+
+                        if let Some(ref path) = self.current_file {
+                            // Save to existing file in background thread
+                            let path = path.clone();
+                            std::thread::spawn(move || {
+                                // First write the actual file content
+                                if let Err(e) = std::fs::write(&path, &content) {
+                                    let _ = sender.send(BackendResponse::SaveComplete(Err(
+                                        format!("Failed to write file: {}", e),
+                                    )));
+                                    return;
+                                }
+
+                                // Then track with backend (CAS + history)
+                                let result = backend
+                                    .save(&path, &content)
+                                    .map(|_| path.clone())
+                                    .map_err(|e| e.to_string());
+                                let _ = sender.send(BackendResponse::SaveComplete(result));
+                            });
+                        } else {
+                            // Show save dialog for new file
+                            let data_dir = backend.data_dir().to_path_buf();
+                            std::thread::spawn(move || {
+                                if let Some(path) = rfd::FileDialog::new()
+                                    .set_directory(&data_dir)
+                                    .add_filter("Text", &["txt"])
+                                    .save_file()
+                                {
+                                    // First write the actual file content
+                                    if let Err(e) = std::fs::write(&path, &content) {
+                                        let _ = sender.send(BackendResponse::SaveComplete(Err(
+                                            format!("Failed to write file: {}", e),
+                                        )));
+                                        return;
+                                    }
+
+                                    // Then track with backend (CAS + history)
+                                    let result = backend
+                                        .save(&path, &content)
+                                        .map(|_| path.clone())
+                                        .map_err(|e| e.to_string());
+                                    let _ = sender.send(BackendResponse::SaveComplete(result));
+                                }
+                            });
                         }
                     }
                     crate::ui::title_bar::TitleBarAction::Open => {
-                        let sender = self.saver_sender.clone();
-                        std::thread::spawn(move || {
-                            let data_dir = if let Some(proj_dirs) =
-                                directories::ProjectDirs::from("com", "RetricSu", "Paper Shell")
-                            {
-                                proj_dirs.data_dir().to_path_buf()
-                            } else {
-                                std::path::PathBuf::from("data")
-                            };
+                        let backend = Arc::clone(&self.backend);
+                        let sender = self.response_sender.clone();
+                        let data_dir = backend.data_dir().to_path_buf();
 
+                        std::thread::spawn(move || {
                             if let Some(path) = rfd::FileDialog::new()
                                 .set_directory(&data_dir)
                                 .add_filter("Text", &["txt"])
                                 .pick_file()
-                                && let Err(e) = sender.send(SaverMessage::Open(path))
                             {
-                                eprintln!("Failed to send open message: {}", e);
+                                // Read file content
+                                match std::fs::read_to_string(&path) {
+                                    Ok(content) => {
+                                        // Establish UUID tracking by saving
+                                        if let Err(e) = backend.save(&path, &content) {
+                                            eprintln!("Failed to track file with backend: {}", e);
+                                        }
+
+                                        let _ = sender.send(BackendResponse::LoadComplete(Ok((
+                                            path, content,
+                                        ))));
+                                    }
+                                    Err(e) => {
+                                        let _ = sender.send(BackendResponse::LoadComplete(Err(
+                                            format!("Failed to read file {:?}: {}", path, e),
+                                        )));
+                                    }
+                                }
                             }
                         });
                     }
@@ -101,12 +181,34 @@ impl eframe::App for PaperShellApp {
             });
         });
     }
+
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         let content = self.editor.get_content();
-        if !content.trim().is_empty()
-            && let Err(e) = crate::saver::save_content(&content)
-        {
-            eprintln!("Failed to save on exit: {}", e);
+        if content.trim().is_empty() {
+            return;
+        }
+
+        // Auto-save to current file or create new timestamped file
+        // This is blocking, but acceptable since the app is closing
+        let save_path = if let Some(ref path) = self.current_file {
+            path.clone()
+        } else {
+            // Create timestamped file in data directory
+            let timestamp = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S");
+            self.backend.data_dir().join(format!("{}.txt", timestamp))
+        };
+
+        // First write the actual file content
+        if let Err(e) = std::fs::write(&save_path, &content) {
+            eprintln!("Failed to write file on exit: {}", e);
+            return;
+        }
+
+        // Then track with backend (CAS + history)
+        if let Err(e) = self.backend.save(&save_path, &content) {
+            eprintln!("Failed to track with backend on exit: {}", e);
+        } else {
+            println!("Auto-saved to {:?}", save_path);
         }
     }
 }

@@ -132,12 +132,15 @@ impl HistoryWindow {
         ctx.show_viewport_immediate(
             viewport_id,
             egui::ViewportBuilder::default()
-                .with_title("📜 File History")
-                .with_inner_size([1200.0, 800.0])
-                .with_min_inner_size([900.0, 600.0])
+                .with_decorations(false)
                 .with_resizable(true)
-                .with_close_button(true),
+                .with_transparent(true),
             |ctx, _class| {
+                // Title bar
+                egui::TopBottomPanel::top("history_title_bar").show(ctx, |ui| {
+                    self.show_title_bar(ui);
+                });
+
                 egui::CentralPanel::default().show(ctx, |ui| {
                     self.show_content(ui);
                 });
@@ -147,6 +150,55 @@ impl HistoryWindow {
                 }
             },
         );
+    }
+
+    fn show_title_bar(&mut self, ui: &mut Ui) {
+        let title_bar_rect = ui.available_rect_before_wrap();
+
+        // Dragging logic - registered BEFORE widgets so they can steal input
+        let interact = ui.interact(
+            title_bar_rect,
+            ui.id().with("history_title_bar_drag"),
+            egui::Sense::click_and_drag(),
+        );
+        if interact.dragged() {
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+        }
+        if interact.double_clicked() {
+            let is_maximized = ui.input(|i| i.viewport().maximized.unwrap_or(false));
+            ui.ctx()
+                .send_viewport_cmd(egui::ViewportCommand::Maximized(!is_maximized));
+        }
+
+        ui.horizontal(|ui| {
+            // Title
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                ui.label("📜 History");
+            });
+
+            // Window Controls
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+
+                // Close button
+                if ui.button("❌").on_hover_text("Close").clicked() {
+                    self.open = false;
+                }
+
+                // Maximize/Restore button
+                let is_maximized = ui.input(|i| i.viewport().maximized.unwrap_or(false));
+                if ui.button("⛶").on_hover_text("Maximize/Restore").clicked() {
+                    ui.ctx()
+                        .send_viewport_cmd(egui::ViewportCommand::Maximized(!is_maximized));
+                }
+
+                // Minimize button
+                if ui.button("➖").on_hover_text("Minimize").clicked() {
+                    ui.ctx()
+                        .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+                }
+            });
+        });
     }
 
     fn show_content(&mut self, ui: &mut Ui) {
@@ -163,54 +215,31 @@ impl HistoryWindow {
 
             // Use SidePanel for better layout (left panel for versions)
             egui::SidePanel::left("version_list_panel")
-                .min_width(300.0)
-                .default_width(350.0)
                 .resizable(true)
                 .show_inside(ui, |ui| {
-                    ui.heading("📚 Versions");
-                    ui.add_space(5.0);
-                    ui.separator();
-                    ui.add_space(5.0);
+                    ScrollArea::vertical().show(ui, |ui| {
+                        // Show in reverse order (newest first)
+                        for (i, version_data) in history_data.iter().enumerate().rev() {
+                            let is_selected = self.selected_index == Some(i);
+                            let timestamp = version_data
+                                .entry
+                                .timestamp
+                                .format("%Y-%m-%d %H:%M:%S")
+                                .to_string();
 
-                    ScrollArea::vertical()
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| {
-                            // Show in reverse order (newest first)
-                            for (i, version_data) in history_data.iter().enumerate().rev() {
-                                let is_selected = self.selected_index == Some(i);
-                                let timestamp = version_data
-                                    .entry
-                                    .timestamp
-                                    .format("%Y-%m-%d %H:%M:%S")
-                                    .to_string();
+                            let version_label = timestamp.to_string();
 
-                                let version_label = format!("Version  {} - {}", i + 1, timestamp);
-
-                                if ui.selectable_label(is_selected, version_label).clicked() {
-                                    self.selected_index = Some(i);
-                                }
+                            if ui.selectable_label(is_selected, version_label).clicked() {
+                                self.selected_index = Some(i);
                             }
-                        });
+                        }
+                    });
                 });
 
             // Central panel for diff view
             egui::CentralPanel::default().show_inside(ui, |ui| {
                 if let Some(selected_idx) = self.selected_index {
                     if let Some(version_data) = history_data.get(selected_idx) {
-                        ui.heading(format!("Version {} Details", selected_idx + 1));
-                        ui.add_space(8.0);
-
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new("⏰ Timestamp:").strong());
-                            ui.label(
-                                version_data
-                                    .entry
-                                    .timestamp
-                                    .format("%Y-%m-%d %H:%M:%S")
-                                    .to_string(),
-                            );
-                        });
-
                         ui.horizontal(|ui| {
                             ui.label(RichText::new("🔑 Hash:").strong());
                             ui.label(RichText::new(&version_data.entry.hash).monospace());
@@ -218,14 +247,6 @@ impl HistoryWindow {
 
                         ui.add_space(8.0);
                         ui.separator();
-                        ui.add_space(8.0);
-
-                        if selected_idx == 0 {
-                            ui.heading("📄 Initial Version");
-                        } else {
-                            ui.heading(format!("📝 Changes from Version {}", selected_idx));
-                        }
-
                         ui.add_space(8.0);
 
                         ScrollArea::vertical()

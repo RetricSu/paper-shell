@@ -385,7 +385,7 @@ impl HistoryWindow {
             match row {
                 DiffRow::Unchanged(text) => {
                     // full-width single row for unchanged content
-                    ui.add(egui::Label::new(RichText::new(text).monospace()).wrap());
+                    ui.add(egui::Label::new(RichText::new(text).monospace().size(14.0)).wrap());
                 }
                 DiffRow::Pair(left_block, right_block) => {
                     // CRITICAL FIX: Use push_id to ensure every Grid has a unique ID

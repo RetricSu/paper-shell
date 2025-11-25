@@ -20,22 +20,14 @@ impl Editor {
         let sidebar_width = 20.0;
         let available_width = ui.available_width() - sidebar_width;
 
-        ui.horizontal(|ui| {
-            // 1. Sidebar Area
-            // Calculate height based on content or available space (but handle infinity)
-            let sidebar_height = if let Some(galley) = &self.last_galley {
-                galley.rect.height().max(ui.available_height().min(2000.0))
-            } else {
-                ui.available_height().min(2000.0) // Fallback for first frame
-            };
+        // Get the full available size for proper layout
+        let full_size = ui.available_size();
+        let min_height = 600.0; // Minimum height to ensure border visibility
+        let sidebar_height = full_size.y.max(min_height);
 
-            // Ensure we don't allocate infinite height
-            let sidebar_height = if sidebar_height.is_infinite() {
-                800.0 // Reasonable default if everything else fails
-            } else {
-                sidebar_height
-            };
-
+        // Use horizontal layout with top-to-bottom alignment
+        ui.horizontal_top(|ui| {
+            // 1. Sidebar Area - allocate with explicit height
             let (response, _painter) =
                 ui.allocate_painter(Vec2::new(sidebar_width, sidebar_height), Sense::click());
 

@@ -2,7 +2,8 @@ use egui::{FontId, Galley, Rect, Sense, TextFormat, Ui, Vec2, text::LayoutJob};
 use std::sync::Arc;
 
 use super::sidebar::Sidebar;
-use crate::sidebar_backend::SidebarBackend;
+use crate::sidebar_backend::Mark;
+use std::collections::HashMap;
 
 #[derive(Default)]
 pub struct Editor {
@@ -159,12 +160,28 @@ impl Editor {
         )
     }
 
-    pub fn set_sidebar_backend(&mut self, backend: Arc<SidebarBackend>) {
-        self.sidebar.set_backend(backend);
-    }
-
     pub fn set_uuid(&mut self, uuid: String) {
         self.sidebar.set_uuid(uuid);
+    }
+
+    pub fn marks_changed(&self) -> bool {
+        self.sidebar.marks_changed()
+    }
+
+    pub fn get_marks(&self) -> &HashMap<usize, Mark> {
+        self.sidebar.get_marks()
+    }
+
+    pub fn get_sidebar_uuid(&self) -> Option<&String> {
+        self.sidebar.get_uuid()
+    }
+
+    pub fn apply_marks(&mut self, marks: HashMap<usize, Mark>) {
+        self.sidebar.apply_marks(marks);
+    }
+
+    pub fn reset_marks_changed(&mut self) {
+        self.sidebar.reset_marks_changed();
     }
 }
 

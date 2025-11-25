@@ -1,4 +1,4 @@
-use crate::sidebar_backend::{Mark, SidebarBackend};
+use crate::sidebar_backend::Mark;
 use egui::{Color32, Galley, Pos2, Rect, Sense, Ui};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -7,40 +7,39 @@ use std::sync::Arc;
 pub struct Sidebar {
     marks: HashMap<usize, Mark>,
     popup_mark: Option<usize>,
-    backend: Option<Arc<SidebarBackend>>,
     current_uuid: Option<String>,
+    marks_changed: bool,
 }
 
 impl Sidebar {
-    pub fn set_backend(&mut self, backend: Arc<SidebarBackend>) {
-        self.backend = Some(backend);
-    }
-
     pub fn set_uuid(&mut self, uuid: String) {
         if self.current_uuid.as_ref() != Some(&uuid) {
-            self.current_uuid = Some(uuid.clone());
-            self.load_marks();
+            self.current_uuid = Some(uuid);
+            // Clear marks when UUID changes - they will be loaded by App
+            self.marks.clear();
+            self.marks_changed = false;
         }
     }
 
-    fn load_marks(&mut self) {
-        if let Some(backend) = &self.backend
-            && let Some(uuid) = &self.current_uuid
-        {
-            match backend.load_marks(uuid) {
-                Ok(marks) => self.marks = marks,
-                Err(e) => eprintln!("Failed to load marks: {}", e),
-            }
-        }
+    pub fn apply_marks(&mut self, marks: HashMap<usize, Mark>) {
+        self.marks = marks;
+        self.marks_changed = false;
     }
 
-    fn save_marks(&self) {
-        if let Some(backend) = &self.backend
-            && let Some(uuid) = &self.current_uuid
-            && let Err(e) = backend.save_marks(uuid, &self.marks)
-        {
-            eprintln!("Failed to save marks: {}", e);
-        }
+    pub fn marks_changed(&self) -> bool {
+        self.marks_changed
+    }
+
+    pub fn get_marks(&self) -> &HashMap<usize, Mark> {
+        &self.marks
+    }
+
+    pub fn get_uuid(&self) -> Option<&String> {
+        self.current_uuid.as_ref()
+    }
+
+    pub fn reset_marks_changed(&mut self) {
+        self.marks_changed = false;
     }
 
     pub fn show(
@@ -118,7 +117,7 @@ impl Sidebar {
                 // No mark - create one and open popup
                 e.insert(Mark::default());
                 self.popup_mark = Some(line_idx);
-                self.save_marks();
+                self.marks_changed = true;
             } else {
                 // Mark exists - toggle popup
                 if self.popup_mark == Some(line_idx) {
@@ -219,7 +218,7 @@ impl Sidebar {
             }
 
             if changed {
-                self.save_marks();
+                self.marks_changed = true;
             }
 
             if !open {

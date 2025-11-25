@@ -1,4 +1,5 @@
 use crate::backend::EditorBackend;
+use crate::sidebar_backend::SidebarBackend;
 use crate::style::configure_style;
 use crate::ui::editor::Editor;
 use crate::ui::history::HistoryWindow;
@@ -26,8 +27,15 @@ pub struct PaperShellApp {
 impl Default for PaperShellApp {
     fn default() -> Self {
         let (sender, receiver) = channel();
+        let mut editor = Editor::default();
+        if let Ok(sidebar_backend) = SidebarBackend::new() {
+            editor.set_sidebar_backend(Arc::new(sidebar_backend));
+        } else {
+            eprintln!("Failed to initialize SidebarBackend");
+        }
+
         Self {
-            editor: Editor::default(),
+            editor,
             backend: Arc::new(EditorBackend::default()),
             current_file: None,
             response_receiver: receiver,
@@ -52,14 +60,25 @@ impl eframe::App for PaperShellApp {
                 BackendResponse::SaveComplete(result) => match result {
                     Ok(path) => {
                         println!("File saved successfully to {:?}", path);
+                        // Update UUID for the saved file
+                        let content = self.editor.get_content();
+                        if let Ok(uuid) = self.backend.get_uuid(&path, &content) {
+                            self.editor.set_uuid(uuid);
+                        }
                         self.current_file = Some(path);
                     }
                     Err(e) => eprintln!("Failed to save file: {}", e),
                 },
                 BackendResponse::LoadComplete(result) => match result {
                     Ok((path, content)) => {
-                        self.editor.set_content(content);
+                        self.editor.set_content(content.clone());
                         self.current_file = Some(path.clone());
+
+                        // Update UUID for the loaded file
+                        if let Ok(uuid) = self.backend.get_uuid(&path, &content) {
+                            self.editor.set_uuid(uuid);
+                        }
+
                         println!("File opened: {:?}", path);
                     }
                     Err(e) => eprintln!("Failed to load file: {}", e),

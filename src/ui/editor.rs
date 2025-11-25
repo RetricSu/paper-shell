@@ -2,6 +2,7 @@ use egui::{FontId, Galley, Rect, Sense, TextFormat, Ui, Vec2, text::LayoutJob};
 use std::sync::Arc;
 
 use super::sidebar::Sidebar;
+use crate::sidebar_backend::SidebarBackend;
 
 #[derive(Default)]
 pub struct Editor {
@@ -156,6 +157,14 @@ impl Editor {
             self.get_word_count(),
             self.get_cursor_word_count().unwrap_or(0),
         )
+    }
+
+    pub fn set_sidebar_backend(&mut self, backend: Arc<SidebarBackend>) {
+        self.sidebar.set_backend(backend);
+    }
+
+    pub fn set_uuid(&mut self, uuid: String) {
+        self.sidebar.set_uuid(uuid);
     }
 }
 

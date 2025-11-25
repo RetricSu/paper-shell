@@ -39,6 +39,48 @@ mod tests {
             _ => panic!(),
         }
     }
+
+    #[test]
+    fn stats_counting_english() {
+        let old = "hello cat";
+        let new = "hello dog";
+        // diff: "hello " (equal), "cat" (delete), "dog" (insert)
+        // removed: 3 chars ("cat"), added: 3 chars ("dog")
+
+        let diff = TextDiff::from_chars(old, new);
+        let mut added = 0;
+        let mut removed = 0;
+        for change in diff.iter_all_changes() {
+            match change.tag() {
+                ChangeTag::Insert => added += change.value().chars().count(),
+                ChangeTag::Delete => removed += change.value().chars().count(),
+                _ => {}
+            }
+        }
+        assert_eq!(added, 3);
+        assert_eq!(removed, 3);
+    }
+
+    #[test]
+    fn stats_counting_chinese() {
+        let old = "我爱你";
+        let new = "我不爱你";
+        // diff: "我" (equal), "不" (insert), "爱你" (equal)
+        // added: 1 char ("不")
+
+        let diff = TextDiff::from_chars(old, new);
+        let mut added = 0;
+        let mut removed = 0;
+        for change in diff.iter_all_changes() {
+            match change.tag() {
+                ChangeTag::Insert => added += change.value().chars().count(),
+                ChangeTag::Delete => removed += change.value().chars().count(),
+                _ => {}
+            }
+        }
+        assert_eq!(added, 1);
+        assert_eq!(removed, 0);
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -65,6 +107,8 @@ pub struct HistoryVersionData {
     pub entry: HistoryEntry,
     pub content: String,
     pub diff_lines: Vec<DiffLine>,
+    pub added_count: usize,
+    pub removed_count: usize,
 }
 
 pub struct HistoryWindow {
@@ -126,10 +170,42 @@ impl HistoryWindow {
             let has_changes = history_data.is_empty() || Self::has_meaningful_changes(&diff_lines);
 
             if has_changes {
+                // Calculate stats
+                let mut added_count = 0;
+                let mut removed_count = 0;
+
+                let rows = Self::group_into_rows(&diff_lines);
+                for row in rows {
+                    match row {
+                        DiffRow::Pair(left, right) => {
+                            let left_str: String =
+                                left.iter().map(|l| l.content.as_str()).collect();
+                            let right_str: String =
+                                right.iter().map(|r| r.content.as_str()).collect();
+
+                            let diff = TextDiff::from_chars(&left_str, &right_str);
+                            for change in diff.iter_all_changes() {
+                                match change.tag() {
+                                    ChangeTag::Insert => {
+                                        added_count += change.value().chars().count()
+                                    }
+                                    ChangeTag::Delete => {
+                                        removed_count += change.value().chars().count()
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                        DiffRow::Unchanged(_) => {}
+                    }
+                }
+
                 history_data.push(HistoryVersionData {
                     entry: entry.clone(),
                     content,
                     diff_lines,
+                    added_count,
+                    removed_count,
                 });
             }
         }
@@ -339,6 +415,22 @@ impl HistoryWindow {
                         ui.horizontal(|ui| {
                             ui.label(RichText::new("🔑 Hash:").strong());
                             ui.label(RichText::new(&version_data.entry.hash).monospace());
+
+                            ui.add_space(16.0);
+
+                            // Stats
+                            if version_data.added_count > 0 {
+                                ui.label(
+                                    RichText::new(format!("+{}", version_data.added_count))
+                                        .color(Color32::from_rgb(0, 100, 0)),
+                                );
+                            }
+                            if version_data.removed_count > 0 {
+                                ui.label(
+                                    RichText::new(format!("-{}", version_data.removed_count))
+                                        .color(Color32::from_rgb(150, 0, 0)),
+                                );
+                            }
                         });
 
                         ui.add_space(8.0);

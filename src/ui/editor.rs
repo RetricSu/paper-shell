@@ -59,14 +59,37 @@ impl Editor {
             let editor_response = output.response;
 
             // Capture the galley from the editor output
-            self.last_galley = Some(output.galley);
+            self.last_galley = Some(output.galley.clone());
 
-            if let Some(state) = egui::TextEdit::load_state(ui.ctx(), id) {
-                if let Some(range) = state.cursor.char_range() {
-                    self.cursor_index = Some(range.primary.index);
-                } else {
-                    self.cursor_index = None;
+            // 3. Handle State & Draw Decoration
+            if let Some(cursor_range) = output.cursor_range {
+                self.cursor_index = Some(cursor_range.primary.index);
+
+                // Draw Underline
+                if editor_response.has_focus() {
+                    let cursor_rect_in_galley = output.galley.pos_from_cursor(cursor_range.primary);
+
+                    // Translate relative galley coordinates to screen coordinates
+                    let screen_cursor_rect =
+                        cursor_rect_in_galley.translate(output.galley_pos.to_vec2());
+
+                    // Define underline position
+                    let underline_y = screen_cursor_rect.max.y;
+                    let min_x = editor_response.rect.min.x;
+                    let max_x = editor_response.rect.max.x;
+
+                    ui.painter().add(egui::Shape::dashed_line(
+                        &[
+                            egui::pos2(min_x, underline_y),
+                            egui::pos2(max_x, underline_y),
+                        ],
+                        egui::Stroke::new(1.0, ui.visuals().weak_text_color()),
+                        4.0, // dash_length
+                        2.0, // gap_length
+                    ));
                 }
+            } else {
+                self.cursor_index = None;
             }
 
             // Update content if changed

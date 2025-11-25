@@ -1,4 +1,4 @@
-use egui::{FontId, Galley, Sense, TextFormat, Ui, Vec2, text::LayoutJob};
+use egui::{FontId, Galley, Rect, Sense, TextFormat, Ui, Vec2, text::LayoutJob};
 use std::sync::Arc;
 
 use super::sidebar::Sidebar;
@@ -20,18 +20,14 @@ impl Editor {
         let sidebar_width = 20.0;
         let available_width = ui.available_width() - sidebar_width;
 
-        // Get the full available size for proper layout
-        let full_size = ui.available_size();
-        let min_height = 600.0; // Minimum height to ensure border visibility
-        let sidebar_height = full_size.y.max(min_height);
-
         // Use horizontal layout with top-to-bottom alignment
         ui.horizontal_top(|ui| {
-            // 1. Sidebar Area - allocate with explicit height
-            let (response, _painter) =
-                ui.allocate_painter(Vec2::new(sidebar_width, sidebar_height), Sense::click());
-
-            let sidebar_rect = response.rect;
+            // 1. Reserve space for sidebar (so editor is pushed right)
+            let sidebar_origin = ui.cursor().min;
+            ui.allocate_rect(
+                Rect::from_min_size(sidebar_origin, Vec2::new(sidebar_width, 0.0)),
+                Sense::hover(),
+            );
 
             // 2. Editor Area with custom layouter
             let mut layouter = |ui: &Ui, string: &dyn egui::TextBuffer, wrap_width: f32| {
@@ -81,6 +77,14 @@ impl Editor {
             }
 
             // 3. Delegate sidebar rendering to Sidebar component
+            // Calculate height based on content height and visible area
+            let content_height = editor_response.rect.height();
+            let min_height = ui.clip_rect().height().max(600.0);
+            let sidebar_height = content_height.max(min_height);
+
+            let sidebar_rect =
+                Rect::from_min_size(sidebar_origin, Vec2::new(sidebar_width, sidebar_height));
+
             if let Some(galley) = &self.last_galley {
                 self.sidebar.show(
                     ui,

@@ -217,6 +217,12 @@ impl EditorBackend {
     pub fn data_dir(&self) -> &Path {
         &self.data_dir
     }
+
+    /// Get UUID for a file, creating one if it doesn't exist
+    pub fn get_uuid(&self, file_path: &Path, content: &str) -> Result<String, BackendError> {
+        let hash = Self::calculate_hash(content);
+        self.get_or_create_file_id(file_path, &hash)
+    }
 }
 
 impl Default for EditorBackend {

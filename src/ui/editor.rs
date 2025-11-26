@@ -1,7 +1,9 @@
-use egui::{FontId, Galley, Sense, TextFormat, Ui, Vec2, text::LayoutJob};
+use egui::{FontId, Galley, Rect, Sense, TextFormat, Ui, Vec2, text::LayoutJob};
 use std::sync::Arc;
 
 use super::sidebar::Sidebar;
+use crate::sidebar_backend::Mark;
+use std::collections::HashMap;
 
 #[derive(Default)]
 pub struct Editor {
@@ -20,18 +22,14 @@ impl Editor {
         let sidebar_width = 20.0;
         let available_width = ui.available_width() - sidebar_width;
 
-        // Get the full available size for proper layout
-        let full_size = ui.available_size();
-        let min_height = 600.0; // Minimum height to ensure border visibility
-        let sidebar_height = full_size.y.max(min_height);
-
         // Use horizontal layout with top-to-bottom alignment
         ui.horizontal_top(|ui| {
-            // 1. Sidebar Area - allocate with explicit height
-            let (response, _painter) =
-                ui.allocate_painter(Vec2::new(sidebar_width, sidebar_height), Sense::click());
-
-            let sidebar_rect = response.rect;
+            // 1. Reserve space for sidebar (so editor is pushed right)
+            let sidebar_origin = ui.cursor().min;
+            ui.allocate_rect(
+                Rect::from_min_size(sidebar_origin, Vec2::new(sidebar_width, 0.0)),
+                Sense::hover(),
+            );
 
             // 2. Editor Area with custom layouter
             let mut layouter = |ui: &Ui, string: &dyn egui::TextBuffer, wrap_width: f32| {
@@ -61,14 +59,37 @@ impl Editor {
             let editor_response = output.response;
 
             // Capture the galley from the editor output
-            self.last_galley = Some(output.galley);
+            self.last_galley = Some(output.galley.clone());
 
-            if let Some(state) = egui::TextEdit::load_state(ui.ctx(), id) {
-                if let Some(range) = state.cursor.char_range() {
-                    self.cursor_index = Some(range.primary.index);
-                } else {
-                    self.cursor_index = None;
+            // 3. Handle State & Draw Decoration
+            if let Some(cursor_range) = output.cursor_range {
+                self.cursor_index = Some(cursor_range.primary.index);
+
+                // Draw Underline
+                if editor_response.has_focus() {
+                    let cursor_rect_in_galley = output.galley.pos_from_cursor(cursor_range.primary);
+
+                    // Translate relative galley coordinates to screen coordinates
+                    let screen_cursor_rect =
+                        cursor_rect_in_galley.translate(output.galley_pos.to_vec2());
+
+                    // Define underline position
+                    let underline_y = screen_cursor_rect.max.y;
+                    let min_x = editor_response.rect.min.x;
+                    let max_x = editor_response.rect.max.x;
+
+                    ui.painter().add(egui::Shape::dashed_line(
+                        &[
+                            egui::pos2(min_x, underline_y),
+                            egui::pos2(max_x, underline_y),
+                        ],
+                        egui::Stroke::new(1.0, ui.visuals().weak_text_color()),
+                        4.0, // dash_length
+                        2.0, // gap_length
+                    ));
                 }
+            } else {
+                self.cursor_index = None;
             }
 
             // Update content if changed
@@ -81,6 +102,14 @@ impl Editor {
             }
 
             // 3. Delegate sidebar rendering to Sidebar component
+            // Calculate height based on content height and visible area
+            let content_height = editor_response.rect.height();
+            let min_height = ui.clip_rect().height().max(600.0);
+            let sidebar_height = content_height.max(min_height);
+
+            let sidebar_rect =
+                Rect::from_min_size(sidebar_origin, Vec2::new(sidebar_width, sidebar_height));
+
             if let Some(galley) = &self.last_galley {
                 self.sidebar.show(
                     ui,
@@ -152,6 +181,30 @@ impl Editor {
             self.get_word_count(),
             self.get_cursor_word_count().unwrap_or(0),
         )
+    }
+
+    pub fn set_uuid(&mut self, uuid: String) {
+        self.sidebar.set_uuid(uuid);
+    }
+
+    pub fn marks_changed(&self) -> bool {
+        self.sidebar.marks_changed()
+    }
+
+    pub fn get_marks(&self) -> &HashMap<usize, Mark> {
+        self.sidebar.get_marks()
+    }
+
+    pub fn get_sidebar_uuid(&self) -> Option<&String> {
+        self.sidebar.get_uuid()
+    }
+
+    pub fn apply_marks(&mut self, marks: HashMap<usize, Mark>) {
+        self.sidebar.apply_marks(marks);
+    }
+
+    pub fn reset_marks_changed(&mut self) {
+        self.sidebar.reset_marks_changed();
     }
 }
 

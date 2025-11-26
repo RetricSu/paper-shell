@@ -1,8 +1,10 @@
 use crate::backend::EditorBackend;
+use crate::sidebar_backend::{Mark, SidebarBackend};
 use crate::style::configure_style;
 use crate::ui::editor::Editor;
 use crate::ui::history::HistoryWindow;
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -12,11 +14,13 @@ pub enum BackendResponse {
     SaveComplete(Result<PathBuf, String>),
     LoadComplete(Result<(PathBuf, String), String>),
     HistoryLoaded(Result<Vec<crate::backend::HistoryEntry>, String>),
+    MarksLoaded(Result<HashMap<usize, Mark>, String>),
 }
 
 pub struct PaperShellApp {
     editor: Editor,
     backend: Arc<EditorBackend>,
+    sidebar_backend: Arc<SidebarBackend>,
     current_file: Option<PathBuf>,
     response_receiver: Receiver<BackendResponse>,
     response_sender: Sender<BackendResponse>,
@@ -26,9 +30,16 @@ pub struct PaperShellApp {
 impl Default for PaperShellApp {
     fn default() -> Self {
         let (sender, receiver) = channel();
+        let editor = Editor::default();
+        let sidebar_backend = Arc::new(SidebarBackend::new().unwrap_or_else(|e| {
+            eprintln!("Failed to initialize SidebarBackend: {}", e);
+            panic!("Cannot continue without SidebarBackend");
+        }));
+
         Self {
-            editor: Editor::default(),
+            editor,
             backend: Arc::new(EditorBackend::default()),
+            sidebar_backend,
             current_file: None,
             response_receiver: receiver,
             response_sender: sender,
@@ -52,14 +63,25 @@ impl eframe::App for PaperShellApp {
                 BackendResponse::SaveComplete(result) => match result {
                     Ok(path) => {
                         println!("File saved successfully to {:?}", path);
+                        // Update UUID for the saved file
+                        let content = self.editor.get_content();
+                        if let Ok(uuid) = self.backend.get_uuid(&path, &content) {
+                            self.editor.set_uuid(uuid);
+                        }
                         self.current_file = Some(path);
                     }
                     Err(e) => eprintln!("Failed to save file: {}", e),
                 },
                 BackendResponse::LoadComplete(result) => match result {
                     Ok((path, content)) => {
-                        self.editor.set_content(content);
+                        self.editor.set_content(content.clone());
                         self.current_file = Some(path.clone());
+
+                        // Update UUID for the loaded file
+                        if let Ok(uuid) = self.backend.get_uuid(&path, &content) {
+                            self.editor.set_uuid(uuid);
+                        }
+
                         println!("File opened: {:?}", path);
                     }
                     Err(e) => eprintln!("Failed to load file: {}", e),
@@ -71,6 +93,12 @@ impl eframe::App for PaperShellApp {
                         }
                     }
                     Err(e) => eprintln!("Failed to load history: {}", e),
+                },
+                BackendResponse::MarksLoaded(result) => match result {
+                    Ok(marks) => {
+                        self.editor.apply_marks(marks);
+                    }
+                    Err(e) => eprintln!("Failed to load marks: {}", e),
                 },
             }
         }
@@ -148,6 +176,7 @@ impl eframe::App for PaperShellApp {
                     }
                     crate::ui::title_bar::TitleBarAction::Open => {
                         let backend = Arc::clone(&self.backend);
+                        let sidebar_backend = Arc::clone(&self.sidebar_backend);
                         let sender = self.response_sender.clone();
                         let data_dir = backend.data_dir().to_path_buf();
 
@@ -166,8 +195,18 @@ impl eframe::App for PaperShellApp {
                                         }
 
                                         let _ = sender.send(BackendResponse::LoadComplete(Ok((
-                                            path, content,
+                                            path.clone(),
+                                            content.clone(),
                                         ))));
+
+                                        // Load marks for this file
+                                        if let Ok(uuid) = backend.get_uuid(&path, &content) {
+                                            let marks_result = sidebar_backend
+                                                .load_marks(&uuid)
+                                                .map_err(|e| e.to_string());
+                                            let _ = sender
+                                                .send(BackendResponse::MarksLoaded(marks_result));
+                                        }
                                     }
                                     Err(e) => {
                                         let _ = sender.send(BackendResponse::LoadComplete(Err(
@@ -210,6 +249,24 @@ impl eframe::App for PaperShellApp {
 
         // History Window
         self.history_window.show(ctx);
+
+        // Check if marks have changed and save in background if needed
+        if self.editor.marks_changed()
+            && let Some(uuid) = self.editor.get_sidebar_uuid()
+        {
+            let marks = self.editor.get_marks().clone();
+            let uuid = uuid.clone();
+            let sidebar_backend = Arc::clone(&self.sidebar_backend);
+
+            // Reset the changed flag immediately to avoid duplicate saves
+            self.editor.reset_marks_changed();
+
+            std::thread::spawn(move || {
+                if let Err(e) = sidebar_backend.save_marks(&uuid, &marks) {
+                    eprintln!("Failed to save marks in background: {}", e);
+                }
+            });
+        }
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {

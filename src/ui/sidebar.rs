@@ -1,19 +1,47 @@
+use crate::sidebar_backend::Mark;
 use egui::{Color32, Galley, Pos2, Rect, Sense, Ui};
 use std::collections::HashMap;
 use std::sync::Arc;
-
-#[derive(Clone, Debug, Default)]
-pub struct Mark {
-    pub note: String,
-}
 
 #[derive(Default)]
 pub struct Sidebar {
     marks: HashMap<usize, Mark>,
     popup_mark: Option<usize>,
+    current_uuid: Option<String>,
+    marks_changed: bool,
 }
 
 impl Sidebar {
+    pub fn set_uuid(&mut self, uuid: String) {
+        if self.current_uuid.as_ref() != Some(&uuid) {
+            self.current_uuid = Some(uuid);
+            // Clear marks when UUID changes - they will be loaded by App
+            self.marks.clear();
+            self.marks_changed = false;
+        }
+    }
+
+    pub fn apply_marks(&mut self, marks: HashMap<usize, Mark>) {
+        self.marks = marks;
+        self.marks_changed = false;
+    }
+
+    pub fn marks_changed(&self) -> bool {
+        self.marks_changed
+    }
+
+    pub fn get_marks(&self) -> &HashMap<usize, Mark> {
+        &self.marks
+    }
+
+    pub fn get_uuid(&self) -> Option<&String> {
+        self.current_uuid.as_ref()
+    }
+
+    pub fn reset_marks_changed(&mut self) {
+        self.marks_changed = false;
+    }
+
     pub fn show(
         &mut self,
         ui: &mut Ui,
@@ -89,6 +117,7 @@ impl Sidebar {
                 // No mark - create one and open popup
                 e.insert(Mark::default());
                 self.popup_mark = Some(line_idx);
+                self.marks_changed = true;
             } else {
                 // Mark exists - toggle popup
                 if self.popup_mark == Some(line_idx) {
@@ -157,27 +186,39 @@ impl Sidebar {
             // Calculate word count before this mark
             let words_before = self.calculate_words_before(content, line_idx);
 
-            let mark_note = self.marks.get_mut(&line_idx).map(|m| &mut m.note);
+            let mut changed = false;
+            {
+                let mark_note = self.marks.get_mut(&line_idx).map(|m| &mut m.note);
 
-            if let Some(note) = mark_note {
-                egui::Window::new(
-                    egui::RichText::new(format!("{} words", words_before)).size(11.0),
-                )
-                .open(&mut open)
-                .resizable(true)
-                .collapsible(false)
-                .default_width(300.0)
-                .title_bar(true)
-                .show(ui.ctx(), |ui| {
-                    // Reduce spacing in the window
-                    ui.spacing_mut().item_spacing.y = 4.0;
+                if let Some(note) = mark_note {
+                    egui::Window::new(
+                        egui::RichText::new(format!("{} words", words_before)).size(11.0),
+                    )
+                    .open(&mut open)
+                    .resizable(true)
+                    .collapsible(false)
+                    .default_width(300.0)
+                    .title_bar(true)
+                    .show(ui.ctx(), |ui| {
+                        // Reduce spacing in the window
+                        ui.spacing_mut().item_spacing.y = 4.0;
 
-                    ui.add(
-                        egui::TextEdit::multiline(note)
-                            .desired_rows(8)
-                            .desired_width(f32::INFINITY),
-                    );
-                });
+                        if ui
+                            .add(
+                                egui::TextEdit::multiline(note)
+                                    .desired_rows(8)
+                                    .desired_width(f32::INFINITY),
+                            )
+                            .changed()
+                        {
+                            changed = true;
+                        }
+                    });
+                }
+            }
+
+            if changed {
+                self.marks_changed = true;
             }
 
             if !open {

@@ -9,6 +9,7 @@ use uuid::Uuid;
 use xxhash_rust::xxh64::xxh64;
 
 const METADATA_KEY: &str = "user.myeditor.id";
+const TOTAL_TIME_KEY: &str = "user.myeditor.total_time";
 const BLOB_DIR: &str = "blobs";
 const HISTORY_DIR: &str = "history";
 
@@ -44,6 +45,8 @@ pub struct HistoryEntry {
     pub timestamp: DateTime<Utc>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file_path: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub time_spent: Option<u64>,
 }
 
 /// Main backend interface for content-addressable storage
@@ -167,7 +170,13 @@ impl EditorBackend {
     }
 
     /// Main save method: save file with CAS and xattr tracking
-    pub fn save(&self, file_path: &Path, content: &str) -> Result<(), BackendError> {
+    /// Returns (uuid, new_total_time) to avoid redundant xattr reads in UI
+    pub fn save(
+        &self,
+        file_path: &Path,
+        content: &str,
+        time_spent: u64,
+    ) -> Result<(String, u64), BackendError> {
         // 1. Calculate hash
         let hash = Self::calculate_hash(content);
 
@@ -177,16 +186,22 @@ impl EditorBackend {
         // 3. Get or create UUID
         let uuid = self.get_or_create_file_id(file_path, &hash)?;
 
-        // 4. Update history
+        // 4. Update total time
+        let current_total = get_total_time_wrapper(file_path)?.unwrap_or(0);
+        let new_total = current_total + time_spent;
+        let _ = set_total_time_wrapper(file_path, new_total); // Ignore errors on unsupported platforms
+
+        // 5. Update history
         let mut history = self.load_history_by_uuid(&uuid)?;
         history.push(HistoryEntry {
             hash,
             timestamp: Utc::now(),
             file_path: Some(file_path.to_path_buf()),
+            time_spent: Some(time_spent),
         });
         self.save_history(&uuid, &history)?;
 
-        Ok(())
+        Ok((uuid, new_total))
     }
 
     /// Load version history for a file
@@ -196,6 +211,13 @@ impl EditorBackend {
             .ok_or_else(|| BackendError::FileNotFound(file_path.to_path_buf()))?;
 
         self.load_history_by_uuid(&uuid)
+    }
+
+    /// Get total writing time for a file
+    #[allow(dead_code)]
+    pub fn get_total_time(&self, file_path: &Path) -> Result<u64, BackendError> {
+        get_total_time_wrapper(file_path)?
+            .ok_or_else(|| BackendError::FileNotFound(file_path.to_path_buf()))
     }
 
     /// Restore content from a specific hash
@@ -219,9 +241,22 @@ impl EditorBackend {
     }
 
     /// Get UUID for a file, creating one if it doesn't exist
+    #[allow(dead_code)]
     pub fn get_uuid(&self, file_path: &Path, content: &str) -> Result<String, BackendError> {
         let hash = Self::calculate_hash(content);
         self.get_or_create_file_id(file_path, &hash)
+    }
+
+    /// Get UUID and total time together (reduces xattr reads for UI initialization)
+    pub fn get_file_metadata(
+        &self,
+        file_path: &Path,
+        content: &str,
+    ) -> Result<(String, u64), BackendError> {
+        let hash = Self::calculate_hash(content);
+        let uuid = self.get_or_create_file_id(file_path, &hash)?;
+        let total_time = get_total_time_wrapper(file_path)?.unwrap_or(0);
+        Ok((uuid, total_time))
     }
 }
 
@@ -272,6 +307,64 @@ fn get_file_id_wrapper(path: &Path) -> io::Result<Option<String>> {
         let ads_path = format!("{}:{}", path.to_string_lossy(), METADATA_KEY);
         match fs::read_to_string(ads_path) {
             Ok(content) => Ok(Some(content)),
+            Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        // Unsupported platform
+        Ok(None)
+    }
+}
+
+/// Write total time to file metadata (cross-platform)
+fn set_total_time_wrapper(path: &Path, time: u64) -> io::Result<()> {
+    let time_str = time.to_string();
+    #[cfg(unix)]
+    {
+        xattr::set(path, TOTAL_TIME_KEY, time_str.as_bytes())?;
+        Ok(())
+    }
+    #[cfg(windows)]
+    {
+        let ads_path = format!("{}:{}", path.to_string_lossy(), TOTAL_TIME_KEY);
+        fs::write(ads_path, time_str.as_bytes())
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        // Unsupported platform
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "Extended attributes not supported on this platform",
+        ))
+    }
+}
+
+/// Read total time from file metadata (cross-platform)
+fn get_total_time_wrapper(path: &Path) -> io::Result<Option<u64>> {
+    #[cfg(unix)]
+    {
+        match xattr::get(path, TOTAL_TIME_KEY)? {
+            Some(bytes) => {
+                let time_str = String::from_utf8_lossy(&bytes);
+                match time_str.parse::<u64>() {
+                    Ok(time) => Ok(Some(time)),
+                    Err(_) => Ok(None),
+                }
+            }
+            None => Ok(None),
+        }
+    }
+    #[cfg(windows)]
+    {
+        use std::io::ErrorKind;
+        let ads_path = format!("{}:{}", path.to_string_lossy(), TOTAL_TIME_KEY);
+        match fs::read_to_string(ads_path) {
+            Ok(content) => match content.parse::<u64>() {
+                Ok(time) => Ok(Some(time)),
+                Err(_) => Ok(None),
+            },
             Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
             Err(e) => Err(e),
         }
@@ -376,11 +469,13 @@ mod tests {
                 hash: "abc123".to_string(),
                 timestamp: Utc::now(),
                 file_path: Some(PathBuf::from("/test/file.txt")),
+                time_spent: None,
             },
             HistoryEntry {
                 hash: "def456".to_string(),
                 timestamp: Utc::now(),
                 file_path: Some(PathBuf::from("/test/file.txt")),
+                time_spent: None,
             },
         ];
 
@@ -407,14 +502,14 @@ mod tests {
 
         // Save version 1
         let content1 = "Version 1 content";
-        backend.save(&test_file, content1).unwrap();
+        backend.save(&test_file, content1, 0).unwrap();
 
         // Save version 2
         let content2 = "Version 2 content - updated";
-        backend.save(&test_file, content2).unwrap();
+        backend.save(&test_file, content2, 0).unwrap();
 
         // Save version 3 (same as version 1 - test deduplication)
-        backend.save(&test_file, content1).unwrap();
+        backend.save(&test_file, content1, 0).unwrap();
 
         // Verify blobs exist
         let hash1 = EditorBackend::calculate_hash(content1);

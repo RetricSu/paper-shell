@@ -6,19 +6,36 @@ pub enum TitleBarAction {
     Open,
     History,
     Settings,
+    Format,
+    FontChange(String),
 }
 
 pub struct TitleBar;
+
+pub struct TitleBarState<'a> {
+    pub title: &'a str,
+    pub word_count: usize,
+    pub cursor_word_count: usize,
+    pub has_current_file: bool,
+    pub chinese_fonts: &'a [String],
+    pub current_font: &'a str,
+}
 
 impl TitleBar {
     pub fn show(
         ui: &mut Ui,
         _frame: &mut eframe::Frame,
-        title: &str,
-        word_count: usize,
-        cursor_word_count: usize,
-        has_current_file: bool,
+        state: TitleBarState<'_>,
     ) -> Option<TitleBarAction> {
+        let TitleBarState {
+            title,
+            word_count,
+            cursor_word_count,
+            has_current_file,
+            chinese_fonts,
+            current_font,
+        } = state;
+
         let mut action = None;
         let title_bar_rect = ui.available_rect_before_wrap();
 
@@ -52,6 +69,27 @@ impl TitleBar {
                 if ui.button("➕").on_hover_text("New Window").clicked() {
                     action = Some(TitleBarAction::NewWindow);
                 }
+                ui.menu_button("📝", |ui| {
+                    if ui.button("Format").clicked() {
+                        action = Some(TitleBarAction::Format);
+                        ui.close();
+                    }
+                });
+                ui.menu_button("🔤", |ui| {
+                    ui.label("Chinese Fonts:");
+                    ui.separator();
+                    egui::ScrollArea::vertical()
+                        .max_height(300.0)
+                        .show(ui, |ui| {
+                            for font_name in chinese_fonts {
+                                let is_selected = font_name == current_font;
+                                if ui.selectable_label(is_selected, font_name).clicked() {
+                                    action = Some(TitleBarAction::FontChange(font_name.clone()));
+                                    ui.close();
+                                }
+                            }
+                        });
+                });
                 if ui
                     .add_enabled(has_current_file, egui::Button::new("📜"))
                     .on_hover_text("History")

@@ -138,3 +138,125 @@ fn load_fallback_font(fonts: &mut FontDefinitions, source: &font_kit::source::Sy
         tracing::warn!("Could not find suitable system font, using defaults");
     }
 }
+
+/// Enumerate all available Chinese fonts from the system
+///
+/// This function scans the system for fonts and returns a list of font family names
+/// that have CJK (Chinese, Japanese, Korean) support. The detection is based on:
+/// - Font family name patterns (common Chinese font names)
+/// - Operating system defaults
+///
+/// # Returns
+/// A sorted vector of unique font family names that support Chinese characters
+pub fn enumerate_chinese_fonts() -> Vec<String> {
+    let source = font_kit::source::SystemSource::new();
+    let mut chinese_fonts = std::collections::HashSet::new();
+
+    // Get all font families
+    let families = source.all_families().unwrap_or_default();
+
+    for family_name in families {
+        // Check if the font name contains common Chinese font indicators
+        if is_likely_chinese_font(&family_name) {
+            chinese_fonts.insert(family_name);
+        }
+    }
+
+    // Also include our known preferred fonts for the current OS
+    for font_name in get_preferred_font_names() {
+        chinese_fonts.insert(font_name.to_string());
+    }
+
+    // Convert to sorted vector for consistent ordering
+    let mut result: Vec<String> = chinese_fonts.into_iter().collect();
+    result.sort();
+
+    tracing::info!("Found {} Chinese fonts on the system", result.len());
+    result
+}
+
+/// Check if a font name is likely to be a Chinese font
+///
+/// This checks for common patterns in Chinese font names across different platforms
+fn is_likely_chinese_font(name: &str) -> bool {
+    let name_lower = name.to_lowercase();
+
+    // Common Chinese font name patterns
+    let chinese_indicators = [
+        // Simplified Chinese
+        "pingfang",
+        "hiragino",
+        "heiti",
+        "stheiti",
+        "stsong",
+        "stkaiti",
+        "stfangsong",
+        "songti",
+        "kaiti",
+        "fangsong",
+        "yahei",
+        "microsoft yahei",
+        "simsun",
+        "simhei",
+        "simkai",
+        "nsimsun",
+        "fangsong",
+        "lishu",
+        "deng",
+        "yuan",
+        // Traditional Chinese
+        "lihei",
+        "lisung",
+        "pmingliu",
+        "mingliu",
+        // Japanese (often have CJK support)
+        "gothic",
+        "mincho",
+        "meiryo",
+        "ms gothic",
+        "ms mincho",
+        "yu gothic",
+        "yu mincho",
+        // Generic CJK
+        "noto sans cjk",
+        "noto serif cjk",
+        "source han",
+        "han sans",
+        "han serif",
+        // Direct Chinese characters in name (some fonts have this)
+        "宋体",
+        "黑体",
+        "楷体",
+        "仿宋",
+    ];
+
+    chinese_indicators
+        .iter()
+        .any(|indicator| name_lower.contains(indicator))
+}
+
+/// Apply a specific font to the application
+///
+/// This function loads the specified font and configures it as the primary font
+/// for the entire application. It follows the same loading pattern as `setup_fonts()`.
+///
+/// # Arguments
+/// * `font_name` - The family name of the font to apply
+///
+/// # Returns
+/// A configured `FontDefinitions` instance with the specified font, or defaults if loading fails
+pub fn apply_font(font_name: &str) -> FontDefinitions {
+    let mut fonts = FontDefinitions::default();
+    let source = font_kit::source::SystemSource::new();
+
+    // Try to load the requested font
+    if try_load_font(&mut fonts, &source, font_name) {
+        tracing::info!("Applied font: {}", font_name);
+    } else {
+        // If the specific font fails, try fallback
+        tracing::warn!("Failed to load font '{}', using fallback", font_name);
+        load_fallback_font(&mut fonts, &source);
+    }
+
+    fonts
+}

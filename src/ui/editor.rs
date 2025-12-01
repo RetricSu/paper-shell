@@ -206,6 +206,40 @@ impl Editor {
     pub fn reset_marks_changed(&mut self) {
         self.sidebar.reset_marks_changed();
     }
+
+    /// Format the content by adding two spaces at the beginning of each paragraph.
+    /// A paragraph is defined as a block of text separated by blank lines.
+    pub fn format(&mut self) {
+        let formatted = Self::add_paragraph_indentation(&self.content);
+        self.content = formatted;
+    }
+
+    /// Helper function to add two spaces at the beginning of each paragraph
+    fn add_paragraph_indentation(text: &str) -> String {
+        let lines: Vec<&str> = text.lines().collect();
+        let mut result = Vec::new();
+        let mut is_new_paragraph = true;
+
+        for line in lines {
+            if line.trim().is_empty() {
+                // Empty line - preserve it and mark next non-empty line as new paragraph
+                result.push(line.to_string());
+                is_new_paragraph = true;
+            } else {
+                // Non-empty line
+                if is_new_paragraph && !line.starts_with("  ") {
+                    // Add two spaces at the beginning if it's a new paragraph and doesn't already have them
+                    result.push(format!("  {}", line));
+                } else {
+                    // Keep the line as-is
+                    result.push(line.to_string());
+                }
+                is_new_paragraph = false;
+            }
+        }
+
+        result.join("\n")
+    }
 }
 
 fn is_cjk(c: char) -> bool {
@@ -231,5 +265,56 @@ mod tests {
 
         editor.set_content("Hello 世界".to_string());
         assert_eq!(editor.get_word_count(), 3);
+    }
+
+    #[test]
+    fn test_format_basic() {
+        let mut editor = Editor::default();
+        editor.set_content("This is a paragraph.".to_string());
+        editor.format();
+        assert_eq!(editor.get_content(), "  This is a paragraph.");
+    }
+
+    #[test]
+    fn test_format_multiple_paragraphs() {
+        let mut editor = Editor::default();
+        editor.set_content("First paragraph.\n\nSecond paragraph.".to_string());
+        editor.format();
+        assert_eq!(
+            editor.get_content(),
+            "  First paragraph.\n\n  Second paragraph."
+        );
+    }
+
+    #[test]
+    fn test_format_already_formatted() {
+        let mut editor = Editor::default();
+        editor.set_content("  Already formatted.".to_string());
+        editor.format();
+        // Should not add more spaces if already formatted
+        assert_eq!(editor.get_content(), "  Already formatted.");
+    }
+
+    #[test]
+    fn test_format_with_empty_lines() {
+        let mut editor = Editor::default();
+        editor.set_content("First paragraph.\n\n\n\nSecond paragraph.".to_string());
+        editor.format();
+        assert_eq!(
+            editor.get_content(),
+            "  First paragraph.\n\n\n\n  Second paragraph."
+        );
+    }
+
+    #[test]
+    fn test_format_mixed_content() {
+        let mut editor = Editor::default();
+        editor
+            .set_content("  Already indented.\n\nNot indented.\n\nAnother paragraph.".to_string());
+        editor.format();
+        assert_eq!(
+            editor.get_content(),
+            "  Already indented.\n\n  Not indented.\n\n  Another paragraph."
+        );
     }
 }

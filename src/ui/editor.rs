@@ -207,38 +207,38 @@ impl Editor {
         self.sidebar.reset_marks_changed();
     }
 
-    /// Format the content by adding two spaces at the beginning of each paragraph.
-    /// A paragraph is defined as a block of text separated by blank lines.
+    /// Format the content by adding two spaces at the beginning of each line.
+    /// Blank lines are preserved as is.
     pub fn format(&mut self) {
         let formatted = Self::add_paragraph_indentation(&self.content);
         self.content = formatted;
     }
 
-    /// Helper function to add two spaces at the beginning of each paragraph
+    /// Helper function to add two spaces at the beginning of each line
     fn add_paragraph_indentation(text: &str) -> String {
-        let lines: Vec<&str> = text.lines().collect();
-        let mut result = Vec::new();
-        let mut is_new_paragraph = true;
+        let mut result = String::with_capacity(text.len() + 128);
 
-        for line in lines {
+        for (i, line) in text.lines().enumerate() {
+            if i > 0 {
+                result.push('\n');
+            }
+
             if line.trim().is_empty() {
-                // Empty line - preserve it and mark next non-empty line as new paragraph
-                result.push(line.to_string());
-                is_new_paragraph = true;
+                // Preserve blank lines as is
+                result.push_str(line);
             } else {
-                // Non-empty line
-                if is_new_paragraph && !line.starts_with("  ") {
-                    // Add two spaces at the beginning if it's a new paragraph and doesn't already have them
-                    result.push(format!("  {}", line));
-                } else {
-                    // Keep the line as-is
-                    result.push(line.to_string());
-                }
-                is_new_paragraph = false;
+                // Always add exactly two spaces after trimming leading whitespace
+                result.push_str("  ");
+                result.push_str(line.trim_start());
             }
         }
 
-        result.join("\n")
+        // Restore trailing newline if present
+        if text.ends_with('\n') {
+            result.push('\n');
+        }
+
+        result
     }
 }
 
@@ -315,6 +315,27 @@ mod tests {
         assert_eq!(
             editor.get_content(),
             "  Already indented.\n\n  Not indented.\n\n  Another paragraph."
+        );
+    }
+
+    #[test]
+    fn test_add_paragraph_indentation() {
+        assert_eq!(
+            Editor::add_paragraph_indentation("First paragraph.\n\nSecond paragraph."),
+            "  First paragraph.\n\n  Second paragraph."
+        );
+        assert_eq!(
+            Editor::add_paragraph_indentation("Already indented.\n\nNot indented."),
+            "  Already indented.\n\n  Not indented."
+        );
+        assert_eq!(
+            Editor::add_paragraph_indentation("Single line."),
+            "  Single line."
+        );
+        assert_eq!(Editor::add_paragraph_indentation(""), "");
+        assert_eq!(
+            Editor::add_paragraph_indentation("    Extra spaces."),
+            "  Extra spaces."
         );
     }
 }

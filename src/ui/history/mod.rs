@@ -207,24 +207,29 @@ impl HistoryWindow {
                 if let Some(selected_idx) = self.selected_index {
                     if let Some(version_data) = history_data.get(selected_idx) {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("🔑 Hash:").strong());
-                            ui.label(RichText::new(&version_data.entry.hash).monospace());
+                            // Stats (left-aligned)
+                            ui.with_layout(
+                                egui::Layout::left_to_right(egui::Align::Center),
+                                |ui| {
+                                    ui.label(
+                                        RichText::new(format!("+{}", version_data.added_count))
+                                            .color(Color32::from_rgb(0, 100, 0)),
+                                    );
+                                    ui.label(
+                                        RichText::new(format!("-{}", version_data.removed_count))
+                                            .color(Color32::from_rgb(150, 0, 0)),
+                                    );
+                                },
+                            );
 
-                            ui.add_space(16.0);
-
-                            // Stats
-                            if version_data.added_count > 0 {
-                                ui.label(
-                                    RichText::new(format!("+{}", version_data.added_count))
-                                        .color(Color32::from_rgb(0, 100, 0)),
-                                );
-                            }
-                            if version_data.removed_count > 0 {
-                                ui.label(
-                                    RichText::new(format!("-{}", version_data.removed_count))
-                                        .color(Color32::from_rgb(150, 0, 0)),
-                                );
-                            }
+                            // Hash (right-aligned)
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    ui.label(RichText::new(&version_data.entry.hash).monospace());
+                                    ui.label(RichText::new("Hash:").strong());
+                                },
+                            );
                         });
 
                         ui.add_space(8.0);

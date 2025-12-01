@@ -7,6 +7,7 @@ pub enum TitleBarAction {
     History,
     Settings,
     Format,
+    FontChange(String),
 }
 
 pub struct TitleBar;
@@ -19,6 +20,7 @@ impl TitleBar {
         word_count: usize,
         cursor_word_count: usize,
         has_current_file: bool,
+        chinese_fonts: &[String],
     ) -> Option<TitleBarAction> {
         let mut action = None;
         let title_bar_rect = ui.available_rect_before_wrap();
@@ -57,6 +59,16 @@ impl TitleBar {
                     if ui.button("Format").clicked() {
                         action = Some(TitleBarAction::Format);
                         ui.close();
+                    }
+                });
+                ui.menu_button("🔤", |ui| {
+                    ui.label("Chinese Fonts:");
+                    ui.separator();
+                    for font_name in chinese_fonts {
+                        if ui.button(font_name).clicked() {
+                            action = Some(TitleBarAction::FontChange(font_name.clone()));
+                            ui.close();
+                        }
                     }
                 });
                 if ui

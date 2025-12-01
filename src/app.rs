@@ -25,6 +25,7 @@ pub struct PaperShellApp {
     response_receiver: Receiver<BackendResponse>,
     response_sender: Sender<BackendResponse>,
     history_window: HistoryWindow,
+    available_fonts: Vec<String>,
 }
 
 impl Default for PaperShellApp {
@@ -44,6 +45,7 @@ impl Default for PaperShellApp {
             response_receiver: receiver,
             response_sender: sender,
             history_window: HistoryWindow::new(),
+            available_fonts: Vec::new(),
         }
     }
 }
@@ -51,7 +53,10 @@ impl Default for PaperShellApp {
 impl PaperShellApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         configure_style(&cc.egui_ctx);
-        Self::default()
+        Self {
+            available_fonts: crate::ui::font::enumerate_chinese_fonts(),
+            ..Default::default()
+        }
     }
 }
 
@@ -113,6 +118,7 @@ impl eframe::App for PaperShellApp {
                 total_words,
                 cursor_words,
                 self.current_file.is_some(),
+                &self.available_fonts,
             ) {
                 match action {
                     crate::ui::title_bar::TitleBarAction::NewWindow => {
@@ -236,6 +242,11 @@ impl eframe::App for PaperShellApp {
                     }
                     crate::ui::title_bar::TitleBarAction::Settings => {
                         // TODO: Settings logic
+                    }
+                    crate::ui::title_bar::TitleBarAction::FontChange(font_name) => {
+                        let new_fonts = crate::ui::font::apply_font(&font_name);
+                        ctx.set_fonts(new_fonts);
+                        tracing::info!("Font changed to: {}", font_name);
                     }
                 }
             }

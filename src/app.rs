@@ -26,6 +26,7 @@ pub struct PaperShellApp {
     response_sender: Sender<BackendResponse>,
     history_window: HistoryWindow,
     available_fonts: Vec<String>,
+    current_font: String,
 }
 
 impl Default for PaperShellApp {
@@ -46,6 +47,7 @@ impl Default for PaperShellApp {
             response_sender: sender,
             history_window: HistoryWindow::new(),
             available_fonts: Vec::new(),
+            current_font: "Default".to_string(),
         }
     }
 }
@@ -114,11 +116,14 @@ impl eframe::App for PaperShellApp {
             if let Some(action) = crate::ui::title_bar::TitleBar::show(
                 ui,
                 frame,
-                crate::constant::DEFAULT_WINDOW_TITLE,
-                total_words,
-                cursor_words,
-                self.current_file.is_some(),
-                &self.available_fonts,
+                crate::ui::title_bar::TitleBarState {
+                    title: crate::constant::DEFAULT_WINDOW_TITLE,
+                    word_count: total_words,
+                    cursor_word_count: cursor_words,
+                    has_current_file: self.current_file.is_some(),
+                    chinese_fonts: &self.available_fonts,
+                    current_font: &self.current_font,
+                },
             ) {
                 match action {
                     crate::ui::title_bar::TitleBarAction::NewWindow => {
@@ -246,6 +251,7 @@ impl eframe::App for PaperShellApp {
                     crate::ui::title_bar::TitleBarAction::FontChange(font_name) => {
                         let new_fonts = crate::ui::font::apply_font(&font_name);
                         ctx.set_fonts(new_fonts);
+                        self.current_font = font_name.clone();
                         tracing::info!("Font changed to: {}", font_name);
                     }
                 }

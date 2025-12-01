@@ -16,6 +16,7 @@ pub struct TitleBarState<'a> {
     pub title: &'a str,
     pub word_count: usize,
     pub cursor_word_count: usize,
+    pub writing_time: u64,
     pub has_current_file: bool,
     pub chinese_fonts: &'a [String],
     pub current_font: &'a str,
@@ -31,6 +32,7 @@ impl TitleBar {
             title,
             word_count,
             cursor_word_count,
+            writing_time,
             has_current_file,
             chinese_fonts,
             current_font,
@@ -127,12 +129,30 @@ impl TitleBar {
 
                 // Stats
                 ui.add_space(16.0);
+                let time_str = Self::format_writing_time(writing_time);
                 ui.label(
-                    egui::RichText::new(format!("{} / {}", cursor_word_count, word_count)).small(),
+                    egui::RichText::new(format!(
+                        "{} / {} | {}",
+                        cursor_word_count, word_count, time_str
+                    ))
+                    .small(),
                 );
             });
         });
 
         action
+    }
+
+    /// Format writing time in seconds to a readable string (MM:SS or HH:MM:SS)
+    fn format_writing_time(seconds: u64) -> String {
+        let hours = seconds / 3600;
+        let minutes = (seconds % 3600) / 60;
+        let secs = seconds % 60;
+
+        if hours > 0 {
+            format!("{:02}:{:02}:{:02}", hours, minutes, secs)
+        } else {
+            format!("{:02}:{:02}", minutes, secs)
+        }
     }
 }

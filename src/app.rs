@@ -3,6 +3,7 @@ use crate::sidebar_backend::{Mark, SidebarBackend};
 use crate::style::configure_style;
 use crate::ui::editor::Editor;
 use crate::ui::history::HistoryWindow;
+use paper_shell::time_backend::TimeBackend;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -21,12 +22,14 @@ pub struct PaperShellApp {
     editor: Editor,
     backend: Arc<EditorBackend>,
     sidebar_backend: Arc<SidebarBackend>,
+    time_backend: TimeBackend,
     current_file: Option<PathBuf>,
     response_receiver: Receiver<BackendResponse>,
     response_sender: Sender<BackendResponse>,
     history_window: HistoryWindow,
     available_fonts: Vec<String>,
     current_font: String,
+    last_focus_state: bool,
 }
 
 impl Default for PaperShellApp {
@@ -42,12 +45,14 @@ impl Default for PaperShellApp {
             editor,
             backend: Arc::new(EditorBackend::default()),
             sidebar_backend,
+            time_backend: TimeBackend::default(),
             current_file: None,
             response_receiver: receiver,
             response_sender: sender,
             history_window: HistoryWindow::new(),
             available_fonts: Vec::new(),
             current_font: "Default".to_string(),
+            last_focus_state: false,
         }
     }
 }
@@ -120,6 +125,7 @@ impl eframe::App for PaperShellApp {
                     title: crate::constant::DEFAULT_WINDOW_TITLE,
                     word_count: total_words,
                     cursor_word_count: cursor_words,
+                    writing_time: self.time_backend.get_writing_time(),
                     has_current_file: self.current_file.is_some(),
                     chinese_fonts: &self.available_fonts,
                     current_font: &self.current_font,
@@ -266,6 +272,13 @@ impl eframe::App for PaperShellApp {
                 });
             });
         });
+
+        // Update time backend with current focus state if changed
+        let is_focused = self.editor.is_focused();
+        if is_focused != self.last_focus_state {
+            self.time_backend.update_focus(is_focused);
+            self.last_focus_state = is_focused;
+        }
 
         // History Window
         self.history_window.show(ctx);

@@ -11,6 +11,7 @@ pub struct Editor {
     cursor_index: Option<usize>,
     last_galley: Option<Arc<Galley>>,
     sidebar: Sidebar,
+    is_focused: bool,
 }
 
 impl Editor {
@@ -62,11 +63,12 @@ impl Editor {
             self.last_galley = Some(output.galley.clone());
 
             // 3. Handle State & Draw Decoration
+            self.is_focused = editor_response.has_focus();
             if let Some(cursor_range) = output.cursor_range {
                 self.cursor_index = Some(cursor_range.primary.index);
 
                 // Draw Underline
-                if editor_response.has_focus() {
+                if self.is_focused {
                     let cursor_rect_in_galley = output.galley.pos_from_cursor(cursor_range.primary);
 
                     // Translate relative galley coordinates to screen coordinates
@@ -205,6 +207,11 @@ impl Editor {
 
     pub fn reset_marks_changed(&mut self) {
         self.sidebar.reset_marks_changed();
+    }
+
+    /// Get the current focus state of the editor
+    pub fn is_focused(&self) -> bool {
+        self.is_focused
     }
 
     /// Format the content by adding two spaces at the beginning of each line.

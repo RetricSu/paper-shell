@@ -40,6 +40,12 @@ impl TimeBackend {
         }
     }
 
+    /// Get the current writing time in seconds and reset the counter
+    pub fn get_and_reset_writing_time(&self) -> u64 {
+        let time_ms = self.writing_time.swap(0, Ordering::Relaxed);
+        time_ms / 1000
+    }
+
     /// Get the current writing time in seconds
     pub fn get_writing_time(&self) -> u64 {
         self.writing_time.load(Ordering::Relaxed) / 1000

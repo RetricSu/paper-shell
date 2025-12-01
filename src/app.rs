@@ -12,8 +12,8 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 
 /// Response messages from background operations
 pub enum BackendResponse {
-    SaveComplete(Result<PathBuf, String>),
-    LoadComplete(Result<(PathBuf, String), String>),
+    SaveComplete(Result<(String, u64), String>), // (uuid, total_time)
+    LoadComplete(Result<(PathBuf, String, String, u64), String>), // (path, content, uuid, total_time)
     HistoryLoaded(Result<Vec<crate::backend::HistoryEntry>, String>),
     MarksLoaded(Result<HashMap<usize, Mark>, String>),
 }
@@ -30,6 +30,7 @@ pub struct PaperShellApp {
     available_fonts: Vec<String>,
     current_font: String,
     last_focus_state: bool,
+    current_file_total_time: u64,
 }
 
 impl Default for PaperShellApp {
@@ -53,6 +54,7 @@ impl Default for PaperShellApp {
             available_fonts: Vec::new(),
             current_font: "Default".to_string(),
             last_focus_state: false,
+            current_file_total_time: 0,
         }
     }
 }
@@ -73,27 +75,22 @@ impl eframe::App for PaperShellApp {
         if let Ok(response) = self.response_receiver.try_recv() {
             match response {
                 BackendResponse::SaveComplete(result) => match result {
-                    Ok(path) => {
-                        println!("File saved successfully to {:?}", path);
-                        // Update UUID for the saved file
-                        let content = self.editor.get_content();
-                        if let Ok(uuid) = self.backend.get_uuid(&path, &content) {
-                            self.editor.set_uuid(uuid);
+                    Ok((uuid, total_time)) => {
+                        println!("File saved successfully");
+                        self.editor.set_uuid(uuid);
+                        self.current_file_total_time = total_time;
+                        if let Some(path) = self.current_file.as_ref() {
+                            println!("File path: {:?}", path);
                         }
-                        self.current_file = Some(path);
                     }
                     Err(e) => eprintln!("Failed to save file: {}", e),
                 },
                 BackendResponse::LoadComplete(result) => match result {
-                    Ok((path, content)) => {
-                        self.editor.set_content(content.clone());
+                    Ok((path, content, uuid, total_time)) => {
+                        self.editor.set_content(content);
                         self.current_file = Some(path.clone());
-
-                        // Update UUID for the loaded file
-                        if let Ok(uuid) = self.backend.get_uuid(&path, &content) {
-                            self.editor.set_uuid(uuid);
-                        }
-
+                        self.editor.set_uuid(uuid);
+                        self.current_file_total_time = total_time;
                         println!("File opened: {:?}", path);
                     }
                     Err(e) => eprintln!("Failed to load file: {}", e),
@@ -125,7 +122,8 @@ impl eframe::App for PaperShellApp {
                     title: crate::constant::DEFAULT_WINDOW_TITLE,
                     word_count: total_words,
                     cursor_word_count: cursor_words,
-                    writing_time: self.time_backend.get_writing_time(),
+                    writing_time: self.current_file_total_time
+                        + self.time_backend.get_writing_time(),
                     has_current_file: self.current_file.is_some(),
                     chinese_fonts: &self.available_fonts,
                     current_font: &self.current_font,
@@ -144,6 +142,7 @@ impl eframe::App for PaperShellApp {
                         let content = self.editor.get_content();
                         let backend = Arc::clone(&self.backend);
                         let sender = self.response_sender.clone();
+                        let time_spent = self.time_backend.get_and_reset_writing_time();
 
                         if let Some(ref path) = self.current_file {
                             // Save to existing file in background thread
@@ -159,8 +158,7 @@ impl eframe::App for PaperShellApp {
 
                                 // Then track with backend (CAS + history)
                                 let result = backend
-                                    .save(&path, &content)
-                                    .map(|_| path.clone())
+                                    .save(&path, &content, time_spent)
                                     .map_err(|e| e.to_string());
                                 let _ = sender.send(BackendResponse::SaveComplete(result));
                             });
@@ -183,8 +181,7 @@ impl eframe::App for PaperShellApp {
 
                                     // Then track with backend (CAS + history)
                                     let result = backend
-                                        .save(&path, &content)
-                                        .map(|_| path.clone())
+                                        .save(&path, &content, time_spent)
                                         .map_err(|e| e.to_string());
                                     let _ = sender.send(BackendResponse::SaveComplete(result));
                                 }
@@ -206,23 +203,31 @@ impl eframe::App for PaperShellApp {
                                 // Read file content
                                 match std::fs::read_to_string(&path) {
                                     Ok(content) => {
-                                        // Establish UUID tracking by saving
-                                        if let Err(e) = backend.save(&path, &content) {
-                                            eprintln!("Failed to track file with backend: {}", e);
-                                        }
+                                        // Get UUID and total time in one operation (optimized)
+                                        match backend.get_file_metadata(&path, &content) {
+                                            Ok((uuid, total_time)) => {
+                                                let _ = sender.send(BackendResponse::LoadComplete(
+                                                    Ok((
+                                                        path.clone(),
+                                                        content.clone(),
+                                                        uuid.clone(),
+                                                        total_time,
+                                                    )),
+                                                ));
 
-                                        let _ = sender.send(BackendResponse::LoadComplete(Ok((
-                                            path.clone(),
-                                            content.clone(),
-                                        ))));
-
-                                        // Load marks for this file
-                                        if let Ok(uuid) = backend.get_uuid(&path, &content) {
-                                            let marks_result = sidebar_backend
-                                                .load_marks(&uuid)
-                                                .map_err(|e| e.to_string());
-                                            let _ = sender
-                                                .send(BackendResponse::MarksLoaded(marks_result));
+                                                // Load marks for this file
+                                                let marks_result = sidebar_backend
+                                                    .load_marks(&uuid)
+                                                    .map_err(|e| e.to_string());
+                                                let _ = sender.send(BackendResponse::MarksLoaded(
+                                                    marks_result,
+                                                ));
+                                            }
+                                            Err(e) => {
+                                                let _ = sender.send(BackendResponse::LoadComplete(
+                                                    Err(format!("Failed to get metadata: {}", e)),
+                                                ));
+                                            }
                                         }
                                     }
                                     Err(e) => {
@@ -325,7 +330,8 @@ impl eframe::App for PaperShellApp {
         }
 
         // Then track with backend (CAS + history)
-        if let Err(e) = self.backend.save(&save_path, &content) {
+        let time_spent = self.time_backend.get_writing_time();
+        if let Err(e) = self.backend.save(&save_path, &content, time_spent) {
             eprintln!("Failed to track with backend on exit: {}", e);
         } else {
             println!("Auto-saved to {:?}", save_path);

@@ -219,6 +219,13 @@ impl HistoryWindow {
                                         RichText::new(format!("-{}", version_data.removed_count))
                                             .color(Color32::from_rgb(150, 0, 0)),
                                     );
+                                    let time = version_data.entry.time_spent.unwrap_or(0);
+                                    let minutes = time / 60;
+                                    let seconds = time % 60;
+                                    ui.label(RichText::new(format!(
+                                        " {:02}:{:02}",
+                                        minutes, seconds
+                                    )));
                                 },
                             );
 

@@ -217,6 +217,9 @@ impl eframe::App for PaperShellApp {
                             }
                         });
                     }
+                    crate::ui::title_bar::TitleBarAction::Format => {
+                        self.editor.format();
+                    }
                     crate::ui::title_bar::TitleBarAction::History => {
                         if let Some(ref path) = self.current_file {
                             let backend = Arc::clone(&self.backend);

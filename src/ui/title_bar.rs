@@ -6,6 +6,7 @@ pub enum TitleBarAction {
     Open,
     History,
     Settings,
+    Format,
 }
 
 pub struct TitleBar;
@@ -52,6 +53,12 @@ impl TitleBar {
                 if ui.button("➕").on_hover_text("New Window").clicked() {
                     action = Some(TitleBarAction::NewWindow);
                 }
+                ui.menu_button("📝", |ui| {
+                    if ui.button("Format").clicked() {
+                        action = Some(TitleBarAction::Format);
+                        ui.close();
+                    }
+                });
                 if ui
                     .add_enabled(has_current_file, egui::Button::new("📜"))
                     .on_hover_text("History")

@@ -9,20 +9,6 @@
 //! - macOS: `~/Library/Application Support/com.RetricSu.Paper-Shell/Paper Shell/config.toml`
 //! - Linux: `~/.config/paper-shell/config.toml`
 //! - Windows: `%APPDATA%\RetricSu\Paper Shell\config\config.toml`
-//!
-//! # Usage
-//!
-//! ```rust
-//! // Load settings (creates default if doesn't exist)
-//! let settings = Config::load()?;
-//!
-//! // Modify settings
-//! let mut settings = settings;
-//! settings.theme = "dark".to_string();
-//!
-//! // Save settings
-//! settings.save()?;
-//! ```
 
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};

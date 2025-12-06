@@ -60,7 +60,8 @@ impl Editor {
             // =========================================================
             //  Critical Fixes on my macOS M1 Machine for IME candidate window Positioning
             // =========================================================
-            if output.response.has_focus()
+            if cfg!(target_os = "macos")
+                && output.response.has_focus()
                 && let Some(cursor_range) = output.cursor_range
             {
                 // 1. Calculate the absolute position of the cursor on the screen
@@ -71,11 +72,11 @@ impl Editor {
 
                 // 2. Force override IME position
                 ui.ctx().output_mut(|o| {
-                    // Construct a tiny rectangle representing the cursor position
-                    // The height 20.0 here can be fine-tuned according to your font size, or you can directly use screen_cursor_rect.height()
+                    // Construct a tiny rectangle representing the cursor position.
+                    const IME_CURSOR_RECT_WIDTH: f32 = 2.0;
                     let ime_rect = egui::Rect::from_min_size(
                         screen_cursor_rect.min,
-                        egui::vec2(2.0, screen_cursor_rect.height()),
+                        egui::vec2(IME_CURSOR_RECT_WIDTH, screen_cursor_rect.height()),
                     );
 
                     // Key: Set both rect (input area) and cursor_rect (cursor area) to this tiny rectangle

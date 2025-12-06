@@ -57,6 +57,39 @@ impl Editor {
                 .layouter(&mut layouter)
                 .show(ui);
 
+            // =========================================================
+            //  Critical Fixes on my macOS M1 Machine for IME candidate window Positioning
+            // =========================================================
+            if cfg!(target_os = "macos")
+                && output.response.has_focus()
+                && let Some(cursor_range) = output.cursor_range
+            {
+                // 1. Calculate the absolute position of the cursor on the screen
+                // output.galley_pos includes scroll offset and padding, making it the most accurate reference point
+                let cursor_rect_in_galley = output.galley.pos_from_cursor(cursor_range.primary);
+                let screen_cursor_rect =
+                    cursor_rect_in_galley.translate(output.galley_pos.to_vec2());
+
+                // 2. Force override IME position
+                ui.ctx().output_mut(|o| {
+                    // Construct a tiny rectangle representing the cursor position.
+                    const IME_CURSOR_RECT_WIDTH: f32 = 2.0;
+                    let ime_rect = egui::Rect::from_min_size(
+                        screen_cursor_rect.min,
+                        egui::vec2(IME_CURSOR_RECT_WIDTH, screen_cursor_rect.height()),
+                    );
+
+                    // Key: Set both rect (input area) and cursor_rect (cursor area) to this tiny rectangle
+                    // This "tricks" macOS into thinking the input area is only as big as the cursor,
+                    // causing the candidate window to appear right next to the cursor
+                    o.ime = Some(egui::output::IMEOutput {
+                        rect: ime_rect,
+                        cursor_rect: ime_rect,
+                    });
+                });
+            }
+            // =========================================================
+
             let editor_response = output.response;
 
             // Capture the galley from the editor output

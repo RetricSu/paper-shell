@@ -220,12 +220,15 @@ impl HistoryWindow {
                                             .color(Color32::from_rgb(150, 0, 0)),
                                     );
                                     let time = version_data.entry.time_spent.unwrap_or(0);
-                                    let minutes = time / 60;
+                                    let hours = time / 3600;
+                                    let minutes = (time % 3600) / 60;
                                     let seconds = time % 60;
-                                    ui.label(RichText::new(format!(
-                                        " {:02}:{:02}",
-                                        minutes, seconds
-                                    )));
+                                    let time_str = if hours > 0 {
+                                        format!(" {:02}:{:02}:{:02}", hours, minutes, seconds)
+                                    } else {
+                                        format!(" {:02}:{:02}", minutes, seconds)
+                                    };
+                                    ui.label(RichText::new(time_str));
                                 },
                             );
 

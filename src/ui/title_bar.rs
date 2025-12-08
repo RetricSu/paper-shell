@@ -51,9 +51,9 @@ impl TitleBar {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
         }
         if interact.double_clicked() {
-            let is_maximized = ui.input(|i| i.viewport().maximized.unwrap_or(false));
+            let is_fullscreen = ui.input(|i| i.viewport().fullscreen.unwrap_or(false));
             ui.ctx()
-                .send_viewport_cmd(egui::ViewportCommand::Maximized(!is_maximized));
+                .send_viewport_cmd(egui::ViewportCommand::Fullscreen(!is_fullscreen));
         }
 
         ui.horizontal(|ui| {
@@ -114,11 +114,11 @@ impl TitleBar {
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                 }
 
-                // Maximize/Restore button
-                let is_maximized = ui.input(|i| i.viewport().maximized.unwrap_or(false));
-                if ui.button("⛶").on_hover_text("Maximize/Restore").clicked() {
+                // Fullscreen button
+                let is_fullscreen = ui.input(|i| i.viewport().fullscreen.unwrap_or(false));
+                if ui.button("⛶").on_hover_text("Fullscreen").clicked() {
                     ui.ctx()
-                        .send_viewport_cmd(egui::ViewportCommand::Maximized(!is_maximized));
+                        .send_viewport_cmd(egui::ViewportCommand::Fullscreen(!is_fullscreen));
                 }
 
                 // Minimize button

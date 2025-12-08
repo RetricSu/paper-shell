@@ -58,6 +58,42 @@ impl Editor {
                 .show(ui);
 
             // =========================================================
+            //   enable auto-scroll to cursor when typing or selecting
+            // =========================================================
+            if output.response.has_focus() {
+                let should_scroll_to_cursor = ui.input(|i| {
+                    // Condition A: Left mouse button is held down (dragging to select text)
+                    let is_dragging_select = i.pointer.primary_down();
+
+                    // Condition B: There are keyboard key presses or text input (typing or moving cursor with arrow keys)
+                    // We need to exclude pure scroll wheel events and only respond to key-related events
+                    let is_typing_or_navigating = i.events.iter().any(|e| {
+                        matches!(
+                            e,
+                            egui::Event::Key { .. } | egui::Event::Text(_) | egui::Event::Paste(_)
+                        )
+                    });
+
+                    is_dragging_select || is_typing_or_navigating
+                });
+
+                // Execute scrolling logic
+                if should_scroll_to_cursor && let Some(cursor_range) = output.cursor_range {
+                    let cursor_relative_rect = output.galley.pos_from_cursor(cursor_range.primary);
+
+                    // Convert to absolute screen position
+                    let global_cursor_rect =
+                        cursor_relative_rect.translate(output.galley_pos.to_vec2());
+
+                    // Slightly expand the rectangle to provide visual padding
+                    let padded_rect = global_cursor_rect.expand(2.0);
+
+                    // Force ScrollArea to scroll to the cursor position
+                    ui.scroll_to_rect(padded_rect, None);
+                }
+            }
+
+            // =========================================================
             //  Critical Fixes on my macOS M1 Machine for IME candidate window Positioning
             // =========================================================
             if cfg!(target_os = "macos")

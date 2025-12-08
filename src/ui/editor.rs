@@ -63,7 +63,7 @@ impl Editor {
             if output.response.has_focus() {
                 let should_scroll_to_cursor = ui.input(|i| {
                     // Condition A: Left mouse button is held down (dragging to select text)
-                    let is_dragging_select = i.pointer.primary_down();
+                    let is_dragging_select = i.pointer.is_decidedly_dragging();
 
                     // Condition B: There are keyboard key presses or text input (typing or moving cursor with arrow keys)
                     // We need to exclude pure scroll wheel events and only respond to key-related events

@@ -60,12 +60,35 @@ impl Default for PaperShellApp {
 }
 
 impl PaperShellApp {
-    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>, initial_file: Option<PathBuf>) -> Self {
         configure_style(&cc.egui_ctx);
-        Self {
+        let mut app = Self {
             available_fonts: crate::ui::font::enumerate_chinese_fonts(),
             ..Default::default()
+        };
+
+        if let Some(path) = initial_file {
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                if let Ok((uuid, total_time)) = app.backend.get_file_metadata(&path, &content) {
+                    app.editor.set_content(content);
+                    app.current_file = Some(path.clone());
+                    app.editor.set_uuid(uuid.clone());
+                    app.current_file_total_time = total_time;
+                    println!("File opened at startup: {:?}", path);
+
+                    // Load marks
+                    if let Ok(marks) = app.sidebar_backend.load_marks(&uuid) {
+                        app.editor.apply_marks(marks);
+                    }
+                } else {
+                    eprintln!("Failed to get metadata for file: {:?}", path);
+                }
+            } else {
+                eprintln!("Failed to read file: {:?}", path);
+            }
         }
+
+        app
     }
 }
 

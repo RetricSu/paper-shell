@@ -7,8 +7,11 @@ mod style;
 mod ui;
 
 use app::PaperShellApp;
+use std::path::PathBuf;
 
 fn main() -> eframe::Result {
+    let initial_file = std::env::args().nth(1).map(PathBuf::from);
+
     let options = ui::viewport::build_viewport();
 
     eframe::run_native(
@@ -19,7 +22,7 @@ fn main() -> eframe::Result {
             let fonts = ui::font::setup_fonts();
             cc.egui_ctx.set_fonts(fonts);
 
-            Ok(Box::new(PaperShellApp::new(cc)))
+            Ok(Box::new(PaperShellApp::new(cc, initial_file)))
         }),
     )
 }

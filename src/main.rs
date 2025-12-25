@@ -2,6 +2,7 @@ mod app;
 mod backend;
 mod config;
 mod constant;
+mod macos_handler;
 mod sidebar_backend;
 mod style;
 mod ui;
@@ -10,7 +11,7 @@ use app::PaperShellApp;
 use std::path::PathBuf;
 
 fn main() -> eframe::Result {
-    let initial_file = std::env::args().nth(1).map(PathBuf::from);
+    let initial_files: Vec<PathBuf> = std::env::args().skip(1).map(PathBuf::from).collect();
 
     let options = ui::viewport::build_viewport();
 
@@ -22,7 +23,7 @@ fn main() -> eframe::Result {
             let fonts = ui::font::setup_fonts();
             cc.egui_ctx.set_fonts(fonts);
 
-            Ok(Box::new(PaperShellApp::new(cc, initial_file)))
+        Ok(Box::new(PaperShellApp::new(cc, initial_files)))
         }),
     )
 }

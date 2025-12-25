@@ -60,14 +60,22 @@ impl Default for PaperShellApp {
 }
 
 impl PaperShellApp {
-    pub fn new(cc: &eframe::CreationContext<'_>, initial_file: Option<PathBuf>) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>, initial_files: Vec<PathBuf>) -> Self {
+        // --- ADD THIS BLOCK ---
+        #[cfg(target_os = "macos")]
+        {
+            // Inject the handler into Winit's delegate now that it exists
+            crate::macos_handler::implementation::install();
+        }
+        // ---------------------
+
         configure_style(&cc.egui_ctx);
         let mut app = Self {
             available_fonts: crate::ui::font::enumerate_chinese_fonts(),
             ..Default::default()
         };
 
-        if let Some(path) = initial_file {
+        for path in initial_files {
             if let Ok(content) = std::fs::read_to_string(&path) {
                 if let Ok((uuid, total_time)) = app.backend.get_file_metadata(&path, &content) {
                     app.editor.set_content(content);
@@ -94,7 +102,63 @@ impl PaperShellApp {
 
 impl eframe::App for PaperShellApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        // Check for backend operation responses
+        // ---------------------------------------------------------------------
+        // 1. macOS File Polling (Handle "Open With" / Drag & Drop)
+        // ---------------------------------------------------------------------
+        #[cfg(target_os = "macos")]
+        {
+            if let Ok(mut files) = crate::macos_handler::PENDING_FILES.lock()
+                && !files.is_empty() {
+                    for file_path in files.drain(..) {
+                        println!("MacOS Open Event: {}", file_path);
+                        
+                        // Prepare for background loading
+                        let backend = Arc::clone(&self.backend);
+                        let sidebar_backend = Arc::clone(&self.sidebar_backend);
+                        let sender = self.response_sender.clone();
+                        let path = PathBuf::from(file_path);
+
+                        std::thread::spawn(move || {
+                            match std::fs::read_to_string(&path) {
+                                Ok(content) => {
+                                    match backend.get_file_metadata(&path, &content) {
+                                        Ok((uuid, total_time)) => {
+                                            let _ = sender.send(BackendResponse::LoadComplete(Ok((
+                                                path.clone(),
+                                                content,
+                                                uuid.clone(),
+                                                total_time,
+                                            ))));
+                                            // Load marks for this file
+                                            let marks_result = sidebar_backend
+                                                .load_marks(&uuid)
+                                                .map_err(|e| e.to_string());
+                                            let _ = sender.send(BackendResponse::MarksLoaded(marks_result));
+                                        }
+                                        Err(e) => {
+                                            let _ = sender.send(BackendResponse::LoadComplete(Err(
+                                                format!("Failed to get metadata: {}", e),
+                                            )));
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    let _ = sender.send(BackendResponse::LoadComplete(Err(format!(
+                                        "Failed to read file: {}",
+                                        e
+                                    ))));
+                                }
+                            }
+                        });
+                    }
+                    // Force UI update to show the new file immediately
+                    ctx.request_repaint();
+                }
+        }
+
+        // ---------------------------------------------------------------------
+        // 2. Handle Background Responses
+        // ---------------------------------------------------------------------
         if let Ok(response) = self.response_receiver.try_recv() {
             match response {
                 BackendResponse::SaveComplete(result) => match result {
@@ -135,7 +199,9 @@ impl eframe::App for PaperShellApp {
             }
         }
 
-        // Title Bar
+        // ---------------------------------------------------------------------
+        // 3. UI: Title Bar
+        // ---------------------------------------------------------------------
         egui::TopBottomPanel::top("title_bar_panel").show(ctx, |ui| {
             let (total_words, cursor_words) = self.editor.get_stats();
             if let Some(action) = crate::ui::title_bar::TitleBar::show(
@@ -292,7 +358,9 @@ impl eframe::App for PaperShellApp {
             }
         });
 
-        // Main Content
+        // ---------------------------------------------------------------------
+        // 4. UI: Main Content Area
+        // ---------------------------------------------------------------------
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 ui.vertical_centered(|ui| {
@@ -301,6 +369,10 @@ impl eframe::App for PaperShellApp {
             });
         });
 
+        // ---------------------------------------------------------------------
+        // 5. Logic: Focus, History, Marks
+        // ---------------------------------------------------------------------
+        
         // Update time backend with current focus state if changed
         let is_focused = self.editor.is_focused();
         if is_focused != self.last_focus_state {

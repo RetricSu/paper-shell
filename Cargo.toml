@@ -13,6 +13,7 @@ short_description = "A writing editor"
 long_description = """
 A simple, concise and informative text editor for everyday writing.
 """
+osx_info_plist_exts = ["InfoAdditions.plist"]
 
 [lib]
 name = "paper_shell"

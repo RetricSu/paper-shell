@@ -1,4 +1,5 @@
 use crate::backend::EditorBackend;
+use crate::file::FileData;
 use crate::sidebar_backend::{Mark, SidebarBackend};
 use crate::style::configure_style;
 use crate::ui::editor::Editor;
@@ -11,9 +12,9 @@ use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
 /// Response messages from background operations
-pub enum BackendResponse {
+pub enum ResponseMessage {
     SaveComplete(Result<(String, u64), String>), // (uuid, total_time)
-    LoadComplete(Result<(PathBuf, String, String, u64), String>), // (path, content, uuid, total_time)
+    LoadComplete(Result<(PathBuf, String, String, u64), String>), // (path, content, uuid, total_time), error
     HistoryLoaded(Result<Vec<crate::backend::HistoryEntry>, String>),
     MarksLoaded(Result<HashMap<usize, Mark>, String>),
     OpenFile(PathBuf),
@@ -21,18 +22,23 @@ pub enum BackendResponse {
 
 pub struct PaperShellApp {
     editor: Editor,
+    current_file: Option<PathBuf>,
+    current_file_total_time: u64,
+
+    response_sender: Sender<ResponseMessage>,
+    response_receiver: Receiver<ResponseMessage>,
+
+    history_window: HistoryWindow,
+
+    current_font: String,
+    available_fonts: Vec<String>,
+
+    last_focus_state: bool,
+    config: crate::config::Config,
+
     backend: Arc<EditorBackend>,
     sidebar_backend: Arc<SidebarBackend>,
     time_backend: TimeBackend,
-    current_file: Option<PathBuf>,
-    response_receiver: Receiver<BackendResponse>,
-    response_sender: Sender<BackendResponse>,
-    history_window: HistoryWindow,
-    available_fonts: Vec<String>,
-    current_font: String,
-    last_focus_state: bool,
-    current_file_total_time: u64,
-    config: crate::config::Config,
 }
 
 impl Default for PaperShellApp {
@@ -40,9 +46,10 @@ impl Default for PaperShellApp {
         let (sender, receiver) = channel();
         let editor = Editor::default();
         let sidebar_backend = Arc::new(SidebarBackend::new().unwrap_or_else(|e| {
-            eprintln!("Failed to initialize SidebarBackend: {}", e);
+            tracing::error!("Failed to initialize SidebarBackend: {}", e);
             panic!("Cannot continue without SidebarBackend");
         }));
+        let available_fonts = crate::ui::font::enumerate_chinese_fonts();
 
         Self {
             editor,
@@ -53,7 +60,7 @@ impl Default for PaperShellApp {
             response_receiver: receiver,
             response_sender: sender,
             history_window: HistoryWindow::new(),
-            available_fonts: Vec::new(),
+            available_fonts,
             current_font: "Default".to_string(),
             last_focus_state: false,
             current_file_total_time: 0,
@@ -65,76 +72,96 @@ impl Default for PaperShellApp {
 impl PaperShellApp {
     pub fn new(cc: &eframe::CreationContext<'_>, initial_file: Option<PathBuf>) -> Self {
         configure_style(&cc.egui_ctx);
-        let mut app = Self {
-            available_fonts: crate::ui::font::enumerate_chinese_fonts(),
-            ..Default::default()
-        };
 
+        let mut app = Self::default();
         if let Some(path) = initial_file {
-            if let Ok(content) = std::fs::read_to_string(&path) {
-                if let Ok((uuid, total_time)) = app.backend.get_file_metadata(&path, &content) {
-                    app.editor.set_content(content);
-                    app.current_file = Some(path.clone());
-                    app.editor.set_uuid(uuid.clone());
-                    app.current_file_total_time = total_time;
-                    println!("File opened at startup: {:?}", path);
-                    app.config.add_recent_file(path.clone());
-
-                    // Load marks
-                    if let Ok(marks) = app.sidebar_backend.load_marks(&uuid) {
-                        app.editor.apply_marks(marks);
-                    }
-                } else {
-                    eprintln!("Failed to get metadata for file: {:?}", path);
-                }
-            } else {
-                eprintln!("Failed to read file: {:?}", path);
-            }
+            app.open_file(path);
         }
 
         app
     }
 
-    fn open_file_at_path(&mut self, path: PathBuf) {
+    // this is mostly the same process with load_file_data but in a thread with messaging
+    fn try_load_file_data(&mut self, path: PathBuf) {
         let backend = Arc::clone(&self.backend);
         let sidebar_backend = Arc::clone(&self.sidebar_backend);
         let sender = self.response_sender.clone();
 
-        std::thread::spawn(move || {
-            // Read file content
-            match std::fs::read_to_string(&path) {
-                Ok(content) => {
-                    // Get UUID and total time in one operation (optimized)
-                    match backend.get_file_metadata(&path, &content) {
-                        Ok((uuid, total_time)) => {
-                            let _ = sender.send(BackendResponse::LoadComplete(Ok((
-                                path.clone(),
-                                content.clone(),
-                                uuid.clone(),
-                                total_time,
-                            ))));
+        std::thread::spawn(move || match std::fs::read_to_string(&path) {
+            Ok(content) => match backend.get_file_metadata(&path, &content) {
+                Ok((uuid, total_time)) => {
+                    let _ = sender.send(ResponseMessage::LoadComplete(Ok((
+                        path,
+                        content,
+                        uuid.clone(),
+                        total_time,
+                    ))));
 
-                            // Load marks for this file
-                            let marks_result =
-                                sidebar_backend.load_marks(&uuid).map_err(|e| e.to_string());
-                            let _ = sender.send(BackendResponse::MarksLoaded(marks_result));
-                        }
-                        Err(e) => {
-                            let _ = sender.send(BackendResponse::LoadComplete(Err(format!(
-                                "Failed to get metadata: {}",
-                                e
-                            ))));
-                        }
-                    }
+                    let marks_result = sidebar_backend.load_marks(&uuid).map_err(|e| e.to_string());
+                    let _ = sender.send(ResponseMessage::MarksLoaded(marks_result));
                 }
                 Err(e) => {
-                    let _ = sender.send(BackendResponse::LoadComplete(Err(format!(
-                        "Failed to read file {:?}: {}",
-                        path, e
+                    let _ = sender.send(ResponseMessage::LoadComplete(Err(format!(
+                        "Failed to get metadata: {}",
+                        e
                     ))));
                 }
+            },
+            Err(e) => {
+                let _ = sender.send(ResponseMessage::LoadComplete(Err(format!(
+                    "Failed to read file {:?}: {}",
+                    path, e
+                ))));
             }
         });
+    }
+
+    fn open_file(&mut self, path: PathBuf) {
+        match self.load_file_data(&path) {
+            Ok(data) => {
+                self.apply_file_data(data.0, data.1);
+            }
+            Err(e) => {
+                tracing::error!("{}", e);
+            }
+        }
+    }
+
+    fn apply_file_data(&mut self, data: FileData, marks: HashMap<usize, Mark>) {
+        self.editor.set_content(data.content);
+        self.current_file = Some(data.path.clone());
+        self.editor.set_uuid(data.uuid);
+        self.current_file_total_time = data.total_time;
+        self.config.add_recent_file(data.path);
+        self.editor.apply_marks(marks);
+    }
+
+    fn load_file_data(
+        &self,
+        path: &PathBuf,
+    ) -> Result<(FileData, HashMap<usize, Mark>), String> {
+        let content = std::fs::read_to_string(path)
+            .map_err(|e: std::io::Error| format!("Failed to read file {:?}: {}", path, e))?;
+
+        let (uuid, total_time) = self
+            .backend
+            .get_file_metadata(path, &content)
+            .map_err(|e| format!("Failed to get metadata: {}", e))?;
+
+        let marks = self
+            .sidebar_backend
+            .load_marks(&uuid)
+            .map_err(|e| format!("Failed to load marks: {}", e))?;
+
+        Ok((
+            FileData {
+                uuid,
+                path: path.to_path_buf(),
+                total_time,
+                content,
+            },
+            marks,
+        ))
     }
 }
 
@@ -143,7 +170,7 @@ impl eframe::App for PaperShellApp {
         // Check for backend operation responses
         if let Ok(response) = self.response_receiver.try_recv() {
             match response {
-                BackendResponse::SaveComplete(result) => match result {
+                ResponseMessage::SaveComplete(result) => match result {
                     Ok((uuid, total_time)) => {
                         println!("File saved successfully");
                         self.editor.set_uuid(uuid);
@@ -155,7 +182,7 @@ impl eframe::App for PaperShellApp {
                     }
                     Err(e) => eprintln!("Failed to save file: {}", e),
                 },
-                BackendResponse::LoadComplete(result) => match result {
+                ResponseMessage::LoadComplete(result) => match result {
                     Ok((path, content, uuid, total_time)) => {
                         if !content.is_empty() {
                             self.editor.set_content(content);
@@ -172,10 +199,10 @@ impl eframe::App for PaperShellApp {
                     }
                     Err(e) => eprintln!("Failed to load file: {}", e),
                 },
-                BackendResponse::OpenFile(path) => {
-                    self.open_file_at_path(path);
+                ResponseMessage::OpenFile(path) => {
+                    self.try_load_file_data(path);
                 }
-                BackendResponse::HistoryLoaded(result) => match result {
+                ResponseMessage::HistoryLoaded(result) => match result {
                     Ok(entries) => {
                         if let Err(e) = self.history_window.set_history(entries, &self.backend) {
                             eprintln!("Failed to set history: {}", e);
@@ -183,7 +210,7 @@ impl eframe::App for PaperShellApp {
                     }
                     Err(e) => eprintln!("Failed to load history: {}", e),
                 },
-                BackendResponse::MarksLoaded(result) => match result {
+                ResponseMessage::MarksLoaded(result) => match result {
                     Ok(marks) => {
                         self.editor.apply_marks(marks);
                     }
@@ -231,7 +258,7 @@ impl eframe::App for PaperShellApp {
                             std::thread::spawn(move || {
                                 // First write the actual file content
                                 if let Err(e) = std::fs::write(&path, &content) {
-                                    let _ = sender.send(BackendResponse::SaveComplete(Err(
+                                    let _ = sender.send(ResponseMessage::SaveComplete(Err(
                                         format!("Failed to write file: {}", e),
                                     )));
                                     return;
@@ -241,7 +268,7 @@ impl eframe::App for PaperShellApp {
                                 let result = backend
                                     .save(&path, &content, time_spent)
                                     .map_err(|e| e.to_string());
-                                let _ = sender.send(BackendResponse::SaveComplete(result));
+                                let _ = sender.send(ResponseMessage::SaveComplete(result));
                             });
                         } else {
                             // Show save dialog for new file
@@ -254,7 +281,7 @@ impl eframe::App for PaperShellApp {
                                 {
                                     // First write the actual file content
                                     if let Err(e) = std::fs::write(&path, &content) {
-                                        let _ = sender.send(BackendResponse::SaveComplete(Err(
+                                        let _ = sender.send(ResponseMessage::SaveComplete(Err(
                                             format!("Failed to write file: {}", e),
                                         )));
                                         return;
@@ -267,10 +294,10 @@ impl eframe::App for PaperShellApp {
 
                                     // Add to recent files on successful save
                                     if result.is_ok() {
-                                        let _ = sender.send(BackendResponse::SaveComplete(
+                                        let _ = sender.send(ResponseMessage::SaveComplete(
                                             result.inspect(|_res| {
                                                 // Ensure the path is updated on Save As
-                                                let _ = sender.send(BackendResponse::LoadComplete(
+                                                let _ = sender.send(ResponseMessage::LoadComplete(
                                                     Ok((
                                                         path.clone(),
                                                         "".to_string(), // Empty content means don't update editor content
@@ -281,7 +308,7 @@ impl eframe::App for PaperShellApp {
                                             }),
                                         ));
                                     } else {
-                                        let _ = sender.send(BackendResponse::SaveComplete(result));
+                                        let _ = sender.send(ResponseMessage::SaveComplete(result));
                                     }
                                 }
                             });
@@ -303,13 +330,13 @@ impl eframe::App for PaperShellApp {
                                 // Instead of calling self.open_file_at_path (impossible),
                                 // we can just perform the load here or send a message.
                                 // Let's just do what open_file_at_path does but in this thread.
-                                let _ = sender.send(BackendResponse::OpenFile(path));
+                                let _ = sender.send(ResponseMessage::OpenFile(path));
                                 ctx.request_repaint();
                             }
                         });
                     }
                     crate::ui::title_bar::TitleBarAction::OpenFile(path) => {
-                        self.open_file_at_path(path);
+                        self.try_load_file_data(path);
                     }
                     crate::ui::title_bar::TitleBarAction::Format => {
                         self.editor.format();
@@ -322,7 +349,7 @@ impl eframe::App for PaperShellApp {
 
                             std::thread::spawn(move || {
                                 let result = backend.load_history(&path).map_err(|e| e.to_string());
-                                let _ = sender.send(BackendResponse::HistoryLoaded(result));
+                                let _ = sender.send(ResponseMessage::HistoryLoaded(result));
                             });
 
                             self.history_window.open();

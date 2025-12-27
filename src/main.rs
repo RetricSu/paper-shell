@@ -10,8 +10,13 @@ use app::PaperShellApp;
 use std::path::PathBuf;
 
 fn main() -> eframe::Result {
-    let initial_file = std::env::args().nth(1).map(PathBuf::from);
+    // Initialize tracing subscriber for console output
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .with_thread_ids(true)
+        .init();
 
+    let initial_file = std::env::args().nth(1).map(PathBuf::from);
     let options = ui::viewport::build_viewport();
 
     eframe::run_native(

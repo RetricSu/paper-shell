@@ -1,9 +1,11 @@
 use egui::{Align, Layout, Ui};
+use std::path::PathBuf;
 
 pub enum TitleBarAction {
     NewWindow,
     Save,
     Open,
+    OpenFile(PathBuf),
     History,
     Settings,
     Format,
@@ -20,6 +22,7 @@ pub struct TitleBarState<'a> {
     pub has_current_file: bool,
     pub chinese_fonts: &'a [String],
     pub current_font: &'a str,
+    pub recent_files: &'a [PathBuf],
 }
 
 impl TitleBar {
@@ -36,6 +39,7 @@ impl TitleBar {
             has_current_file,
             chinese_fonts,
             current_font,
+            recent_files,
         } = state;
 
         let mut action = None;
@@ -62,9 +66,32 @@ impl TitleBar {
                 ui.label(title);
                 ui.add_space(16.0);
 
-                if ui.button("📂").on_hover_text("Open").clicked() {
-                    action = Some(TitleBarAction::Open);
-                }
+                ui.menu_button("📂", |ui| {
+                    for path in recent_files {
+                        let file_name = path
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("Unknown");
+                        let path_str = path.to_string_lossy();
+                        if ui
+                            .button(file_name)
+                            .on_hover_text(path_str.as_ref())
+                            .clicked()
+                        {
+                            action = Some(TitleBarAction::OpenFile(path.clone()));
+                            ui.close();
+                        }
+                    }
+                    if !recent_files.is_empty() {
+                        ui.separator();
+                    }
+                    if ui.button("Open File...").clicked() {
+                        action = Some(TitleBarAction::Open);
+                        ui.close();
+                    }
+                })
+                .response
+                .on_hover_text("Open");
                 if ui.button("💾").on_hover_text("Save").clicked() {
                     action = Some(TitleBarAction::Save);
                 }

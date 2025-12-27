@@ -16,6 +16,7 @@ pub enum BackendResponse {
     LoadComplete(Result<(PathBuf, String, String, u64), String>), // (path, content, uuid, total_time)
     HistoryLoaded(Result<Vec<crate::backend::HistoryEntry>, String>),
     MarksLoaded(Result<HashMap<usize, Mark>, String>),
+    OpenFile(PathBuf),
 }
 
 pub struct PaperShellApp {
@@ -31,6 +32,7 @@ pub struct PaperShellApp {
     current_font: String,
     last_focus_state: bool,
     current_file_total_time: u64,
+    config: crate::config::Config,
 }
 
 impl Default for PaperShellApp {
@@ -55,6 +57,7 @@ impl Default for PaperShellApp {
             current_font: "Default".to_string(),
             last_focus_state: false,
             current_file_total_time: 0,
+            config: crate::config::Config::default(),
         }
     }
 }
@@ -75,6 +78,7 @@ impl PaperShellApp {
                     app.editor.set_uuid(uuid.clone());
                     app.current_file_total_time = total_time;
                     println!("File opened at startup: {:?}", path);
+                    app.config.add_recent_file(path.clone());
 
                     // Load marks
                     if let Ok(marks) = app.sidebar_backend.load_marks(&uuid) {
@@ -90,6 +94,48 @@ impl PaperShellApp {
 
         app
     }
+
+    fn open_file_at_path(&mut self, path: PathBuf) {
+        let backend = Arc::clone(&self.backend);
+        let sidebar_backend = Arc::clone(&self.sidebar_backend);
+        let sender = self.response_sender.clone();
+
+        std::thread::spawn(move || {
+            // Read file content
+            match std::fs::read_to_string(&path) {
+                Ok(content) => {
+                    // Get UUID and total time in one operation (optimized)
+                    match backend.get_file_metadata(&path, &content) {
+                        Ok((uuid, total_time)) => {
+                            let _ = sender.send(BackendResponse::LoadComplete(Ok((
+                                path.clone(),
+                                content.clone(),
+                                uuid.clone(),
+                                total_time,
+                            ))));
+
+                            // Load marks for this file
+                            let marks_result =
+                                sidebar_backend.load_marks(&uuid).map_err(|e| e.to_string());
+                            let _ = sender.send(BackendResponse::MarksLoaded(marks_result));
+                        }
+                        Err(e) => {
+                            let _ = sender.send(BackendResponse::LoadComplete(Err(format!(
+                                "Failed to get metadata: {}",
+                                e
+                            ))));
+                        }
+                    }
+                }
+                Err(e) => {
+                    let _ = sender.send(BackendResponse::LoadComplete(Err(format!(
+                        "Failed to read file {:?}: {}",
+                        path, e
+                    ))));
+                }
+            }
+        });
+    }
 }
 
 impl eframe::App for PaperShellApp {
@@ -104,20 +150,31 @@ impl eframe::App for PaperShellApp {
                         self.current_file_total_time = total_time;
                         if let Some(path) = self.current_file.as_ref() {
                             println!("File path: {:?}", path);
+                            self.config.add_recent_file(path.clone());
                         }
                     }
                     Err(e) => eprintln!("Failed to save file: {}", e),
                 },
                 BackendResponse::LoadComplete(result) => match result {
                     Ok((path, content, uuid, total_time)) => {
-                        self.editor.set_content(content);
+                        if !content.is_empty() {
+                            self.editor.set_content(content);
+                        }
                         self.current_file = Some(path.clone());
-                        self.editor.set_uuid(uuid);
-                        self.current_file_total_time = total_time;
+                        if !uuid.is_empty() {
+                            self.editor.set_uuid(uuid);
+                        }
+                        if total_time > 0 {
+                            self.current_file_total_time = total_time;
+                        }
+                        self.config.add_recent_file(path.clone());
                         println!("File opened: {:?}", path);
                     }
                     Err(e) => eprintln!("Failed to load file: {}", e),
                 },
+                BackendResponse::OpenFile(path) => {
+                    self.open_file_at_path(path);
+                }
                 BackendResponse::HistoryLoaded(result) => match result {
                     Ok(entries) => {
                         if let Err(e) = self.history_window.set_history(entries, &self.backend) {
@@ -150,6 +207,7 @@ impl eframe::App for PaperShellApp {
                     has_current_file: self.current_file.is_some(),
                     chinese_fonts: &self.available_fonts,
                     current_font: &self.current_font,
+                    recent_files: &self.config.settings.recent_files,
                 },
             ) {
                 match action {
@@ -206,61 +264,52 @@ impl eframe::App for PaperShellApp {
                                     let result = backend
                                         .save(&path, &content, time_spent)
                                         .map_err(|e| e.to_string());
-                                    let _ = sender.send(BackendResponse::SaveComplete(result));
+
+                                    // Add to recent files on successful save
+                                    if result.is_ok() {
+                                        let _ = sender.send(BackendResponse::SaveComplete(
+                                            result.inspect(|_res| {
+                                                // Ensure the path is updated on Save As
+                                                let _ = sender.send(BackendResponse::LoadComplete(
+                                                    Ok((
+                                                        path.clone(),
+                                                        "".to_string(), // Empty content means don't update editor content
+                                                        "".to_string(),
+                                                        0,
+                                                    )),
+                                                ));
+                                            }),
+                                        ));
+                                    } else {
+                                        let _ = sender.send(BackendResponse::SaveComplete(result));
+                                    }
                                 }
                             });
                         }
                     }
                     crate::ui::title_bar::TitleBarAction::Open => {
                         let backend = Arc::clone(&self.backend);
-                        let sidebar_backend = Arc::clone(&self.sidebar_backend);
-                        let sender = self.response_sender.clone();
                         let data_dir = backend.data_dir().to_path_buf();
+                        let ctx = ctx.clone();
 
+                        // Keep a reference to the sender to use in the outer scope
+                        let sender = self.response_sender.clone();
                         std::thread::spawn(move || {
                             if let Some(path) = rfd::FileDialog::new()
                                 .set_directory(&data_dir)
                                 .add_filter("Text", &["txt"])
                                 .pick_file()
                             {
-                                // Read file content
-                                match std::fs::read_to_string(&path) {
-                                    Ok(content) => {
-                                        // Get UUID and total time in one operation (optimized)
-                                        match backend.get_file_metadata(&path, &content) {
-                                            Ok((uuid, total_time)) => {
-                                                let _ = sender.send(BackendResponse::LoadComplete(
-                                                    Ok((
-                                                        path.clone(),
-                                                        content.clone(),
-                                                        uuid.clone(),
-                                                        total_time,
-                                                    )),
-                                                ));
-
-                                                // Load marks for this file
-                                                let marks_result = sidebar_backend
-                                                    .load_marks(&uuid)
-                                                    .map_err(|e| e.to_string());
-                                                let _ = sender.send(BackendResponse::MarksLoaded(
-                                                    marks_result,
-                                                ));
-                                            }
-                                            Err(e) => {
-                                                let _ = sender.send(BackendResponse::LoadComplete(
-                                                    Err(format!("Failed to get metadata: {}", e)),
-                                                ));
-                                            }
-                                        }
-                                    }
-                                    Err(e) => {
-                                        let _ = sender.send(BackendResponse::LoadComplete(Err(
-                                            format!("Failed to read file {:?}: {}", path, e),
-                                        )));
-                                    }
-                                }
+                                // Instead of calling self.open_file_at_path (impossible),
+                                // we can just perform the load here or send a message.
+                                // Let's just do what open_file_at_path does but in this thread.
+                                let _ = sender.send(BackendResponse::OpenFile(path));
+                                ctx.request_repaint();
                             }
                         });
+                    }
+                    crate::ui::title_bar::TitleBarAction::OpenFile(path) => {
+                        self.open_file_at_path(path);
                     }
                     crate::ui::title_bar::TitleBarAction::Format => {
                         self.editor.format();

@@ -47,6 +47,10 @@ pub struct Settings {
     /// Font size (for future use)
     #[serde(default = "default_font_size")]
     pub font_size: f32,
+
+    /// Recently opened files
+    #[serde(default)]
+    pub recent_files: Vec<PathBuf>,
 }
 
 // Default value functions for serde
@@ -68,6 +72,7 @@ impl Default for Settings {
             theme: default_theme(),
             autosave_interval: default_autosave_interval(),
             font_size: default_font_size(),
+            recent_files: Vec::new(),
         }
     }
 }
@@ -106,6 +111,22 @@ impl Config {
     #[allow(dead_code)]
     pub fn config_path() -> Result<PathBuf, ConfigError> {
         Ok(confy::get_configuration_file_path(APP_NAME, None)?)
+    }
+
+    /// Add a file to the recent files list
+    pub fn add_recent_file(&mut self, path: PathBuf) {
+        // Remove if already exists to move it to the top
+        self.settings.recent_files.retain(|p| p != &path);
+        // Insert at the beginning
+        self.settings.recent_files.insert(0, path);
+        // Limit to 10 entries
+        self.settings.recent_files.truncate(10);
+
+        // Save changes in background since it's synchronous IO
+        let settings = self.settings.clone();
+        std::thread::spawn(move || {
+            let _ = confy::store(APP_NAME, None, &settings);
+        });
     }
 }
 

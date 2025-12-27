@@ -95,17 +95,20 @@ impl TitleBar {
                 if ui.button("💾").on_hover_text("Save").clicked() {
                     action = Some(TitleBarAction::Save);
                 }
-                if ui.button("➕").on_hover_text("New Window").clicked() {
+                if ui.button("⚙").on_hover_text("Settings").clicked() {
+                    action = Some(TitleBarAction::Settings);
+                }
+                if ui.button("新建").on_hover_text("New Window").clicked() {
                     action = Some(TitleBarAction::NewWindow);
                 }
-                ui.menu_button("📝", |ui| {
-                    if ui.button("Format").clicked() {
+                ui.menu_button("编辑", |ui| {
+                    if ui.button("格式化").clicked() {
                         action = Some(TitleBarAction::Format);
                         ui.close();
                     }
                 });
-                ui.menu_button("🔤", |ui| {
-                    ui.label("Chinese Fonts:");
+                ui.menu_button("字体", |ui| {
+                    ui.label("中文:");
                     ui.separator();
                     egui::ScrollArea::vertical()
                         .max_height(300.0)
@@ -120,15 +123,12 @@ impl TitleBar {
                         });
                 });
                 if ui
-                    .add_enabled(has_current_file, egui::Button::new("📜"))
+                    .add_enabled(has_current_file, egui::Button::new("历史"))
                     .on_hover_text("History")
                     .on_disabled_hover_text("No file opened")
                     .clicked()
                 {
                     action = Some(TitleBarAction::History);
-                }
-                if ui.button("⚙").on_hover_text("Settings").clicked() {
-                    action = Some(TitleBarAction::Settings);
                 }
             });
 

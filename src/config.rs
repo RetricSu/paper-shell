@@ -121,8 +121,12 @@ impl Config {
         self.settings.recent_files.insert(0, path);
         // Limit to 10 entries
         self.settings.recent_files.truncate(10);
-        // Save changes
-        let _ = self.save();
+
+        // Save changes in background since it's synchronous IO
+        let settings = self.settings.clone();
+        std::thread::spawn(move || {
+            let _ = confy::store(APP_NAME, None, &settings);
+        });
     }
 }
 

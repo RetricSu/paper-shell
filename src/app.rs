@@ -16,6 +16,7 @@ pub enum BackendResponse {
     LoadComplete(Result<(PathBuf, String, String, u64), String>), // (path, content, uuid, total_time)
     HistoryLoaded(Result<Vec<crate::backend::HistoryEntry>, String>),
     MarksLoaded(Result<HashMap<usize, Mark>, String>),
+    OpenFile(PathBuf),
 }
 
 pub struct PaperShellApp {
@@ -99,9 +100,6 @@ impl PaperShellApp {
         let sidebar_backend = Arc::clone(&self.sidebar_backend);
         let sender = self.response_sender.clone();
 
-        // Add to recent files
-        self.config.add_recent_file(path.clone());
-
         std::thread::spawn(move || {
             // Read file content
             match std::fs::read_to_string(&path) {
@@ -159,14 +157,24 @@ impl eframe::App for PaperShellApp {
                 },
                 BackendResponse::LoadComplete(result) => match result {
                     Ok((path, content, uuid, total_time)) => {
-                        self.editor.set_content(content);
+                        if !content.is_empty() {
+                            self.editor.set_content(content);
+                        }
                         self.current_file = Some(path.clone());
-                        self.editor.set_uuid(uuid);
-                        self.current_file_total_time = total_time;
+                        if !uuid.is_empty() {
+                            self.editor.set_uuid(uuid);
+                        }
+                        if total_time > 0 {
+                            self.current_file_total_time = total_time;
+                        }
+                        self.config.add_recent_file(path.clone());
                         println!("File opened: {:?}", path);
                     }
                     Err(e) => eprintln!("Failed to load file: {}", e),
                 },
+                BackendResponse::OpenFile(path) => {
+                    self.open_file_at_path(path);
+                }
                 BackendResponse::HistoryLoaded(result) => match result {
                     Ok(entries) => {
                         if let Err(e) = self.history_window.set_history(entries, &self.backend) {
@@ -256,18 +264,25 @@ impl eframe::App for PaperShellApp {
                                     let result = backend
                                         .save(&path, &content, time_spent)
                                         .map_err(|e| e.to_string());
-                                    
+
                                     // Add to recent files on successful save
                                     if result.is_ok() {
-                                        let _ = sender.send(BackendResponse::LoadComplete(Ok((
-                                            path.clone(),
-                                            content.clone(),
-                                            "".to_string(), // UUID will be set by SaveComplete
-                                            0,              // Total time will be set by SaveComplete
-                                        ))));
+                                        let _ = sender.send(BackendResponse::SaveComplete(
+                                            result.inspect(|_res| {
+                                                // Ensure the path is updated on Save As
+                                                let _ = sender.send(BackendResponse::LoadComplete(
+                                                    Ok((
+                                                        path.clone(),
+                                                        "".to_string(), // Empty content means don't update editor content
+                                                        "".to_string(),
+                                                        0,
+                                                    )),
+                                                ));
+                                            }),
+                                        ));
+                                    } else {
+                                        let _ = sender.send(BackendResponse::SaveComplete(result));
                                     }
-
-                                    let _ = sender.send(BackendResponse::SaveComplete(result));
                                 }
                             });
                         }
@@ -275,14 +290,23 @@ impl eframe::App for PaperShellApp {
                     crate::ui::title_bar::TitleBarAction::Open => {
                         let backend = Arc::clone(&self.backend);
                         let data_dir = backend.data_dir().to_path_buf();
+                        let ctx = ctx.clone();
 
-                        if let Some(path) = rfd::FileDialog::new()
-                            .set_directory(&data_dir)
-                            .add_filter("Text", &["txt"])
-                            .pick_file()
-                        {
-                            self.open_file_at_path(path);
-                        }
+                        // Keep a reference to the sender to use in the outer scope
+                        let sender = self.response_sender.clone();
+                        std::thread::spawn(move || {
+                            if let Some(path) = rfd::FileDialog::new()
+                                .set_directory(&data_dir)
+                                .add_filter("Text", &["txt"])
+                                .pick_file()
+                            {
+                                // Instead of calling self.open_file_at_path (impossible),
+                                // we can just perform the load here or send a message.
+                                // Let's just do what open_file_at_path does but in this thread.
+                                let _ = sender.send(BackendResponse::OpenFile(path));
+                                ctx.request_repaint();
+                            }
+                        });
                     }
                     crate::ui::title_bar::TitleBarAction::OpenFile(path) => {
                         self.open_file_at_path(path);

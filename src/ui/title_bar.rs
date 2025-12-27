@@ -72,7 +72,12 @@ impl TitleBar {
                             .file_name()
                             .and_then(|n| n.to_str())
                             .unwrap_or("Unknown");
-                        if ui.button(file_name).on_hover_text(path.to_string_lossy()).clicked() {
+                        let path_str = path.to_string_lossy();
+                        if ui
+                            .button(file_name)
+                            .on_hover_text(path_str.as_ref())
+                            .clicked()
+                        {
                             action = Some(TitleBarAction::OpenFile(path.clone()));
                             ui.close();
                         }

@@ -37,6 +37,12 @@ pub struct PaperShellApp {
 
 impl Default for PaperShellApp {
     fn default() -> Self {
+        // Initialize tracing subscriber for console output
+        tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::DEBUG)
+            .with_thread_ids(true)
+            .init();
+
         let (sender, receiver) = channel();
         let editor = Editor::default();
         let sidebar_backend = Arc::new(SidebarBackend::new().unwrap_or_else(|e| {

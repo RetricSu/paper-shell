@@ -2,7 +2,7 @@ use egui::{FontId, Galley, Rect, Sense, TextFormat, Ui, Vec2, text::LayoutJob};
 use std::sync::Arc;
 
 use super::sidebar::Sidebar;
-use crate::sidebar_backend::Mark;
+use crate::backend::sidebar_backend::Mark;
 use std::collections::HashMap;
 use std::path::PathBuf;
 

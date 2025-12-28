@@ -1,4 +1,4 @@
-use crate::backend::HistoryEntry;
+use crate::backend::editor_backend::HistoryEntry;
 
 #[derive(Debug, Clone)]
 pub enum DiffRow {

@@ -3,7 +3,6 @@ mod backend;
 mod config;
 mod constant;
 mod file;
-mod sidebar_backend;
 mod style;
 mod ui;
 

@@ -1,10 +1,10 @@
-use crate::backend::EditorBackend;
+use crate::backend::editor_backend::{EditorBackend, HistoryEntry};
+use crate::backend::sidebar_backend::{Mark, SidebarBackend};
+use crate::backend::time_backend::TimeBackend;
 use crate::file::FileData;
-use crate::sidebar_backend::{Mark, SidebarBackend};
 use crate::style::configure_style;
 use crate::ui::editor::Editor;
 use crate::ui::history::HistoryWindow;
-use paper_shell::time_backend::TimeBackend;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -15,7 +15,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 pub enum ResponseMessage {
     FileSaved(Result<(String, u64), String>), // (uuid, total_time), error
     FileLoaded(Result<FileData, String>),     // FileData, error
-    HistoryLoaded(Result<Vec<crate::backend::HistoryEntry>, String>),
+    HistoryLoaded(Result<Vec<HistoryEntry>, String>),
     MarksLoaded(Result<HashMap<usize, Mark>, String>),
     OpenFile(PathBuf),
 }
@@ -33,7 +33,7 @@ pub struct PaperShellApp {
     last_focus_state: bool,
     config: crate::config::Config,
 
-    backend: Arc<EditorBackend>,
+    editor_backend: Arc<EditorBackend>,
     sidebar_backend: Arc<SidebarBackend>,
     time_backend: TimeBackend,
 }
@@ -50,7 +50,7 @@ impl Default for PaperShellApp {
 
         Self {
             editor,
-            backend: Arc::new(EditorBackend::default()),
+            editor_backend: Arc::new(EditorBackend::default()),
             sidebar_backend,
             time_backend: TimeBackend::default(),
             response_receiver: receiver,
@@ -91,7 +91,7 @@ impl PaperShellApp {
             .map_err(|e: std::io::Error| format!("Failed to read file {:?}: {}", path, e))?;
 
         let (uuid, total_time) = self
-            .backend
+            .editor_backend
             .get_file_metadata(path, &content)
             .map_err(|e| format!("Failed to get metadata: {}", e))?;
 
@@ -113,7 +113,7 @@ impl PaperShellApp {
 
     // this is mostly the same process with load_file_data but in a thread with messaging
     fn try_load_file_data(&mut self, path: PathBuf) {
-        let backend = Arc::clone(&self.backend);
+        let backend = Arc::clone(&self.editor_backend);
         let sidebar_backend = Arc::clone(&self.sidebar_backend);
         let sender = self.response_sender.clone();
 
@@ -149,7 +149,7 @@ impl PaperShellApp {
     fn try_load_history(&mut self) {
         let current_file = self.editor.get_current_file().cloned();
         if let Some(path) = current_file {
-            let backend = Arc::clone(&self.backend);
+            let backend = Arc::clone(&self.editor_backend);
             let sender = self.response_sender.clone();
 
             std::thread::spawn(move || {
@@ -173,7 +173,7 @@ impl PaperShellApp {
     }
 
     fn try_open_file_from_selector(&self) {
-        let backend = Arc::clone(&self.backend);
+        let backend = Arc::clone(&self.editor_backend);
         let data_dir = backend.data_dir().to_path_buf();
 
         // Keep a reference to the sender to use in the outer scope
@@ -226,7 +226,7 @@ impl PaperShellApp {
 
             // Then track with backend (CAS + history)
             let result = self
-                .backend
+                .editor_backend
                 .save(&path, &content, time_spent)
                 .map_err(|e| e.to_string());
             if let Ok((uuid, total_time)) = result.as_ref() {
@@ -236,7 +236,7 @@ impl PaperShellApp {
             }
         } else {
             // Show save dialog for new file
-            let data_dir = self.backend.data_dir().to_path_buf();
+            let data_dir = self.editor_backend.data_dir().to_path_buf();
             if let Some(path) = rfd::FileDialog::new()
                 .set_directory(&data_dir)
                 .add_filter("Text", &["txt"])
@@ -250,7 +250,7 @@ impl PaperShellApp {
 
                 // Then track with backend (CAS + history)
                 let result = self
-                    .backend
+                    .editor_backend
                     .save(&path, &content, time_spent)
                     .map_err(|e| e.to_string());
 
@@ -280,7 +280,7 @@ impl PaperShellApp {
             return;
         }
 
-        let backend = Arc::clone(&self.backend);
+        let backend = Arc::clone(&self.editor_backend);
         let sender = self.response_sender.clone();
         let time_spent = self.time_backend.get_and_reset_writing_time();
 
@@ -398,7 +398,10 @@ impl PaperShellApp {
                 },
                 ResponseMessage::HistoryLoaded(result) => match result {
                     Ok(entries) => {
-                        if let Err(e) = self.history_window.set_history(entries, &self.backend) {
+                        if let Err(e) = self
+                            .history_window
+                            .set_history(entries, &self.editor_backend)
+                        {
                             tracing::info!("Failed to set history: {}", e);
                         }
                     }

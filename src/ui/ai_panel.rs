@@ -41,7 +41,10 @@ impl AiPanel {
             .fill(Color32::from_rgba_unmultiplied(200, 200, 200, 160)) // 均衡的淡灰色
             .corner_radius(CornerRadius::same(12))
             .inner_margin(egui::Margin::same(16))
-            .stroke(egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 30)));
+            .stroke(egui::Stroke::new(
+                1.0,
+                Color32::from_rgba_unmultiplied(255, 255, 255, 30),
+            ));
 
         egui::Area::new(egui::Id::new("ai_panel_overlay"))
             .anchor(Align2::RIGHT_TOP, egui::vec2(-margin, top_margin))
@@ -57,12 +60,12 @@ impl AiPanel {
                         if ui.small_button(collapse_icon).clicked() {
                             self.is_collapsed = !self.is_collapsed;
                         }
-                        
+
                         ui.label(
                             RichText::new("🤖 AI 助手")
                                 .size(14.0)
                                 .strong()
-                                .color(Color32::WHITE)
+                                .color(Color32::WHITE),
                         );
 
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -82,7 +85,7 @@ impl AiPanel {
                                 ui.label(
                                     RichText::new("正在处理中...")
                                         .size(12.0)
-                                        .color(Color32::from_rgb(255, 200, 100))
+                                        .color(Color32::from_rgb(255, 200, 100)),
                                 );
                             });
                         } else if let Some(response) = &self.last_response {
@@ -91,24 +94,24 @@ impl AiPanel {
                                 .fill(Color32::from_rgba_unmultiplied(50, 50, 55, 200))
                                 .corner_radius(CornerRadius::same(8))
                                 .inner_margin(egui::Margin::same(10));
-                            
+
                             response_frame.show(ui, |ui| {
                                 ui.set_width(ui.available_width());
                                 ui.label(
                                     RichText::new("最新回复:")
                                         .size(11.0)
                                         .strong()
-                                        .color(Color32::LIGHT_GRAY)
+                                        .color(Color32::LIGHT_GRAY),
                                 );
                                 ui.add_space(4.0);
-                                
+
                                 egui::ScrollArea::vertical()
                                     .max_height(120.0)
                                     .show(ui, |ui| {
                                         ui.label(
                                             RichText::new(response)
                                                 .size(11.0)
-                                                .color(Color32::from_rgb(220, 220, 220))
+                                                .color(Color32::from_rgb(220, 220, 220)),
                                         );
                                     });
                             });
@@ -116,23 +119,21 @@ impl AiPanel {
                             ui.label(
                                 RichText::new("点击下方按钮发送文本给 AI")
                                     .size(11.0)
-                                    .color(Color32::GRAY)
+                                    .color(Color32::GRAY),
                             );
                         }
-                        
+
                         ui.add_space(12.0);
 
                         // 操作按钮
                         let button_text = if self.is_processing {
-                            "⏳ 处理中..."
+                            "⏳ Generating..."
                         } else {
-                            "🚀 发送给 AI"
+                            "🚀 Generate Outline"
                         };
 
                         let button = egui::Button::new(
-                            RichText::new(button_text)
-                                .size(13.0)
-                                .color(Color32::WHITE)
+                            RichText::new(button_text).size(13.0).color(Color32::WHITE),
                         )
                         .fill(Color32::from_rgba_unmultiplied(70, 120, 220, 220))
                         .corner_radius(CornerRadius::same(8))
@@ -143,11 +144,11 @@ impl AiPanel {
                         }
 
                         ui.add_space(8.0);
-                        
+
                         ui.label(
                             RichText::new("💡 需要设置 GEMINI_API_KEY")
                                 .size(9.0)
-                                .color(Color32::from_rgb(120, 120, 120))
+                                .color(Color32::from_rgb(120, 120, 120)),
                         );
                     }
                 });

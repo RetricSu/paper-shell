@@ -1,8 +1,8 @@
 use egui::{Galley, Rect, Sense, Ui, Vec2};
 use std::sync::Arc;
 
-use super::sidebar::Sidebar;
 use super::ai_panel::{AiPanel, AiPanelAction};
+use super::sidebar::Sidebar;
 use crate::backend::sidebar_backend::Mark;
 use std::collections::HashMap;
 use std::path::PathBuf;

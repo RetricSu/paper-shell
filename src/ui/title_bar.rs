@@ -167,14 +167,19 @@ impl TitleBar {
                     ))
                     .small(),
                 );
-                
+
                 // AI Panel toggle button
                 let ai_icon = if is_ai_panel_visible { "🤖" } else { "🤖" };
-                let ai_btn = egui::Button::new(egui::RichText::new(ai_icon).size(12.0))
-                    .frame(false);
-                if ui.add(ai_btn)
-                    .on_hover_text(if is_ai_panel_visible { "Hide AI Panel" } else { "Show AI Panel" })
-                    .clicked() 
+                let ai_btn =
+                    egui::Button::new(egui::RichText::new(ai_icon).size(12.0)).frame(false);
+                if ui
+                    .add(ai_btn)
+                    .on_hover_text(if is_ai_panel_visible {
+                        "Hide AI Panel"
+                    } else {
+                        "Show AI Panel"
+                    })
+                    .clicked()
                 {
                     action = Some(TitleBarAction::ToggleAiPanel);
                 }

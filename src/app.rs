@@ -1,11 +1,11 @@
+use crate::backend::ai_backend::{AiBackend, AiError};
 use crate::backend::editor_backend::{EditorBackend, HistoryEntry};
 use crate::backend::sidebar_backend::{Mark, SidebarBackend};
 use crate::backend::time_backend::TimeBackend;
-use crate::backend::ai_backend::{AiBackend, AiError};
 use crate::file::FileData;
 use crate::style::configure_style;
-use crate::ui::editor::Editor;
 use crate::ui::ai_panel::AiPanelAction;
+use crate::ui::editor::Editor;
 use crate::ui::history::HistoryWindow;
 
 use std::collections::HashMap;
@@ -444,14 +444,17 @@ impl PaperShellApp {
         match action {
             AiPanelAction::SendRequest => {
                 let content = self.editor.get_content();
-                let prompt = format!("Please help improve this text:\n\n{}", content);
-                
+                let prompt = format!(
+                    "Please output the summary outline/overview of the following content, sort of like a semantic map or storyboard/narrative map:\n\n{}",
+                    content
+                );
+
                 self.editor.set_ai_processing(true);
                 tracing::info!("Sending AI request");
-                
+
                 let ai_backend = Arc::clone(&self.ai_backend);
                 let sender = self.ai_response_sender.clone();
-                
+
                 ai_backend.send_request(prompt, sender);
             }
         }

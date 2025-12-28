@@ -62,12 +62,11 @@ impl Default for AiBackend {
 impl AiBackend {
     pub fn new() -> Self {
         // 使用 GEMINI_API_KEY 环境变量
-        let api_key = std::env::var("GEMINI_API_KEY")
-            .unwrap_or_else(|_| {
-                tracing::warn!("GEMINI_API_KEY not found, using empty string");
-                String::new()
-            });
-        
+        let api_key = std::env::var("GEMINI_API_KEY").unwrap_or_else(|_| {
+            tracing::warn!("GEMINI_API_KEY not found, using empty string");
+            String::new()
+        });
+
         Self { api_key }
     }
 
@@ -77,25 +76,18 @@ impl AiBackend {
     }
 
     /// 发送请求到 Google Gemini API (使用独立线程)
-    pub fn send_request(
-        &self,
-        prompt: String,
-        sender: Sender<Result<String, AiError>>,
-    ) {
+    pub fn send_request(&self, prompt: String, sender: Sender<Result<String, AiError>>) {
         let api_key = self.api_key.clone();
-        
+
         thread::spawn(move || {
             let result = Self::blocking_send_request(api_key, prompt);
             let _ = sender.send(result);
         });
     }
 
-    fn blocking_send_request(
-        api_key: String,
-        prompt: String,
-    ) -> Result<String, AiError> {
+    fn blocking_send_request(api_key: String, prompt: String) -> Result<String, AiError> {
         let client = Client::new();
-        
+
         let url = format!(
             "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite-preview-09-2025:generateContent?key={}",
             api_key
@@ -103,9 +95,7 @@ impl AiBackend {
 
         let request_body = GeminiRequest {
             contents: vec![Content {
-                parts: vec![Part {
-                    text: format!("你是一个写作助手。请帮助改进以下文本：\n\n{}", prompt),
-                }],
+                parts: vec![Part { text: prompt }],
             }],
         };
 
@@ -118,7 +108,10 @@ impl AiBackend {
         if !response.status().is_success() {
             let status = response.status();
             let error_text = response.text().unwrap_or_else(|_| "未知错误".to_string());
-            return Err(AiError::ApiError(format!("API 错误 {}: {}", status, error_text)));
+            return Err(AiError::ApiError(format!(
+                "API 错误 {}: {}",
+                status, error_text
+            )));
         }
 
         let gemini_response: GeminiResponse = response

@@ -45,7 +45,7 @@ impl Sidebar {
     pub fn show(
         &mut self,
         ui: &mut Ui,
-        content: &str,
+        content: &str, // 这个参数现在仅用于点击后的逻辑，不用于渲染循环
         galley: &Arc<Galley>,
         sidebar_rect: Rect,
         clip_rect: Rect,
@@ -62,83 +62,122 @@ impl Sidebar {
             egui::Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color),
         );
 
-        // 处理点击交互
+        // 交互处理
         let response = ui.interact(sidebar_rect, ui.id().with("sidebar"), Sense::click());
-        let pointer_pos = response.interact_pointer_pos(); // 获取点击位置
-        let mut clicked_line_index: Option<usize> = None;
+        let pointer_pos = response.interact_pointer_pos();
+        let mut clicked_logical_line: Option<usize> = None;
 
-        // 状态累加器 (核心优化：避免 O(N^2))
-        let mut current_char_idx: usize = 0;
+        // --- 🚀 核心优化开始 ---
 
-        // 预计算可视范围的上下界，留一点 buffer 防止边缘闪烁
-        let view_min_y = clip_rect.min.y - 50.0;
-        let view_max_y = clip_rect.max.y + 50.0;
+        // 我们需要维护“逻辑行号”(logical_line_idx)，因为 Galley 的 Row 包含自动换行(wrap)产生的视觉行
+        let mut logical_line_idx = 0;
 
-        // 遍历所有逻辑行
-        for (line_idx, line) in content.split_inclusive('\n').enumerate() {
-            // 1. 获取当前行在 Galley 中的位置
-            // egui 的 cursor 是基于 char index 的
-            let cursor = egui::text::CCursor::new(current_char_idx);
-            let rect_in_galley = galley.pos_from_cursor(cursor);
+        // 标记当前视觉行是否是一个逻辑行的开头
+        let mut is_start_of_logical_line = true;
 
-            // 转换为屏幕绝对坐标
-            // rect_in_galley.center().y 是相对于文本开头的偏移
-            // text_offset.y 是文本开头在屏幕上的 Y 坐标（滚动会改变这个值）
-            let line_center_y = text_offset.y + rect_in_galley.center().y;
+        // 记录最后一行底部位置，用于处理文末可能存在的空行
+        let mut last_row_bottom_y = text_offset.y;
 
-            // 2. 更新累加器 (为下一次循环做准备)
-            // 必须在 continue/break 之前计算好这一行的长度
-            let char_count = line.chars().count();
-            current_char_idx += char_count;
+        // 直接遍历 Galley 的预计算行信息 (速度极快)
+        for row in &galley.rows {
+            // 计算当前行的屏幕绝对位置
+            // text_offset 是 TextEdit 的左上角，row.rect 是相对于 TextEdit 的
+            let row_screen_top = text_offset.y + row.rect().top();
+            let row_screen_bottom = text_offset.y + row.rect().bottom();
+            last_row_bottom_y = row_screen_bottom;
 
-            // 3. 视锥剔除 (Culling) - 性能优化的关键
-            if line_center_y < view_min_y {
-                continue; // 在屏幕上方，跳过绘制
-            }
-            if line_center_y > view_max_y {
-                break; // 在屏幕下方，剩下的都不用看了，直接退出循环！
-            }
+            // 如果这是一个新逻辑行的开头，我们就需要绘制侧边栏标记
+            if is_start_of_logical_line {
+                // ✂️ 视锥剔除 (Culling)
+                // 如果这一行完全在屏幕上方，或者完全在屏幕下方，跳过绘制
+                // 加上 20.0 padding 防止边缘闪烁
+                let is_visible = row_screen_bottom >= clip_rect.top() - 20.0
+                    && row_screen_top <= clip_rect.bottom() + 20.0;
 
-            // 4. 计算绘制中心点
-            // sidebar_rect.center().x 是侧边栏的中心 X
-            let center = Pos2::new(sidebar_rect.center().x, line_center_y);
+                if is_visible {
+                    let center_y = (row_screen_top + row_screen_bottom) / 2.0;
+                    let center = Pos2::new(sidebar_rect.center().x, center_y);
 
-            // 5. 点击检测 (Hit Test)
-            // 如果刚刚发生了点击，并且点击位置在当前行附近
-            if response.clicked()
-                && let Some(pos) = pointer_pos
-            {
-                // 简单的距离检测，高度的一半作为判定范围
-                let half_height = rect_in_galley.height() / 2.0;
-                if (pos.y - line_center_y).abs() <= half_height {
-                    clicked_line_index = Some(line_idx);
+                    // 1. 绘制 UI (小圆点)
+                    painter.circle_stroke(
+                        center,
+                        2.5,
+                        egui::Stroke::new(1.0, ui.visuals().text_color().gamma_multiply(0.3)),
+                    );
+
+                    if self.marks.contains_key(&logical_line_idx) {
+                        painter.circle_filled(center, 4.0, Color32::from_rgb(200, 100, 100));
+                    }
+
+                    // 2. 点击检测 (顺便做，省去额外遍历)
+                    if response.clicked()
+                        && let Some(pos) = pointer_pos
+                    {
+                        // 如果点击位置在当前行的高度范围内
+                        if pos.y >= row_screen_top && pos.y <= row_screen_bottom {
+                            clicked_logical_line = Some(logical_line_idx);
+                        }
+                    }
                 }
             }
 
-            // 6. 绘制 UI
-            // 绘制提示小圆圈
-            painter.circle_stroke(
-                center,
-                2.5,
-                egui::Stroke::new(1.0, ui.visuals().text_color().gamma_multiply(0.3)),
-            );
-
-            // 如果有标记，绘制实心圆
-            if self.marks.contains_key(&line_idx) {
-                painter.circle_filled(center, 4.0, Color32::from_rgb(200, 100, 100));
+            // 更新状态
+            if row.ends_with_newline {
+                // 如果这一行以换行符结束，说明下一行是新的逻辑行
+                logical_line_idx += 1;
+                is_start_of_logical_line = true;
+            } else {
+                // 否则说明这行太长被自动折行了，下一行依然属于当前逻辑行
+                is_start_of_logical_line = false;
             }
         }
 
-        // 处理点击事件逻辑
-        if let Some(idx) = clicked_line_index {
-            if let std::collections::hash_map::Entry::Vacant(e) = self.marks.entry(idx) {
+        // 处理特殊的边界情况：文件末尾有换行符，导致最后有一个空的逻辑行
+        // 这个空行在 galley.rows 里通常没有对应的 row
+        if is_start_of_logical_line && content.ends_with('\n') {
+            // 估算空行的位置（假设高度和最后一行一样，或者默认值）
+            let line_height = if !galley.rows.is_empty() {
+                galley.rows[0].rect().height()
+            } else {
+                14.0
+            };
+            let center_y = last_row_bottom_y + line_height / 2.0;
+
+            // 同样检查可见性
+            if center_y >= clip_rect.top() - 20.0 && center_y <= clip_rect.bottom() + 20.0 {
+                let center = Pos2::new(sidebar_rect.center().x, center_y);
+
+                painter.circle_stroke(
+                    center,
+                    2.5,
+                    egui::Stroke::new(1.0, ui.visuals().text_color().gamma_multiply(0.3)),
+                );
+
+                if self.marks.contains_key(&logical_line_idx) {
+                    painter.circle_filled(center, 4.0, Color32::from_rgb(200, 100, 100));
+                }
+
+                if response.clicked()
+                    && let Some(pos) = pointer_pos
+                    && (pos.y - center_y).abs() < line_height / 2.0
+                {
+                    clicked_logical_line = Some(logical_line_idx);
+                }
+            }
+        }
+
+        // --- 🚀 核心优化结束 ---
+
+        // 处理点击事件结果
+        if let Some(line_idx) = clicked_logical_line {
+            if let std::collections::hash_map::Entry::Vacant(e) = self.marks.entry(line_idx) {
                 e.insert(Mark::default());
-                self.popup_mark = Some(idx);
+                self.popup_mark = Some(line_idx);
                 self.marks_changed = true;
-            } else if self.popup_mark == Some(idx) {
+            } else if self.popup_mark == Some(line_idx) {
                 self.popup_mark = None;
             } else {
-                self.popup_mark = Some(idx);
+                self.popup_mark = Some(line_idx);
             }
         }
 

@@ -15,6 +15,7 @@ pub struct Editor {
     is_focused: bool,
     current_file: Option<PathBuf>,
     current_file_total_time: u64,
+    cached_word_count: Option<usize>,
 }
 
 impl Editor {
@@ -153,6 +154,10 @@ impl Editor {
             // Content is always taken back
             self.content = content;
 
+            if editor_response.changed() {
+                self.cached_word_count = None; // 标记为脏
+            }
+
             if editor_response.clicked() {
                 editor_response.request_focus();
             }
@@ -187,9 +192,21 @@ impl Editor {
 
     pub fn set_content(&mut self, content: String) {
         self.content = content;
+        self.cached_word_count = None; // 清除缓存
     }
 
-    pub fn get_word_count(&self) -> usize {
+    pub fn get_word_count(&mut self) -> usize {
+        if let Some(count) = self.cached_word_count {
+            return count;
+        }
+
+        // 原有的计算逻辑
+        let count = self.calculate_word_count_internal();
+        self.cached_word_count = Some(count);
+        count
+    }
+
+    fn calculate_word_count_internal(&self) -> usize {
         let mut count = 0;
         let mut in_word = false;
         for c in self.content.chars() {
@@ -235,7 +252,7 @@ impl Editor {
         Some(count)
     }
 
-    pub fn get_stats(&self) -> (usize, usize) {
+    pub fn get_stats(&mut self) -> (usize, usize) {
         (
             self.get_word_count(),
             self.get_cursor_word_count().unwrap_or(0),

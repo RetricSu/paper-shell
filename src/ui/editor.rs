@@ -19,7 +19,7 @@ pub struct Editor {
 
 impl Editor {
     pub fn show(&mut self, ui: &mut Ui) {
-        let mut content = self.content.clone();
+        let mut content = std::mem::take(&mut self.content);
         let id = ui.make_persistent_id("main_editor");
 
         // Sidebar width
@@ -166,10 +166,8 @@ impl Editor {
                 self.cursor_index = None;
             }
 
-            // Update content if changed
-            if editor_response.changed() {
-                self.content = content;
-            }
+            // Content is always taken back
+            self.content = content;
 
             if editor_response.clicked() {
                 editor_response.request_focus();

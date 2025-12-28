@@ -1,9 +1,10 @@
-use egui::{FontId, Galley, Rect, Sense, TextFormat, Ui, Vec2, text::LayoutJob};
+use egui::{Galley, Rect, Sense, Ui, Vec2};
 use std::sync::Arc;
 
 use super::sidebar::Sidebar;
-use crate::sidebar_backend::Mark;
+use crate::backend::sidebar_backend::Mark;
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 #[derive(Default)]
 pub struct Editor {
@@ -12,11 +13,14 @@ pub struct Editor {
     last_galley: Option<Arc<Galley>>,
     sidebar: Sidebar,
     is_focused: bool,
+    current_file: Option<PathBuf>,
+    current_file_total_time: u64,
+    cached_word_count: Option<usize>,
 }
 
 impl Editor {
     pub fn show(&mut self, ui: &mut Ui) {
-        let mut content = self.content.clone();
+        let mut content = std::mem::take(&mut self.content);
         let id = ui.make_persistent_id("main_editor");
 
         // Sidebar width
@@ -32,29 +36,13 @@ impl Editor {
                 Sense::hover(),
             );
 
-            // 2. Editor Area with custom layouter
-            let mut layouter = |ui: &Ui, string: &dyn egui::TextBuffer, wrap_width: f32| {
-                let mut layout_job = LayoutJob::default();
-                let font_id = FontId::monospace(14.0);
-                layout_job.append(
-                    string.as_str(),
-                    0.0,
-                    TextFormat {
-                        font_id,
-                        color: ui.visuals().text_color(),
-                        ..Default::default()
-                    },
-                );
-                layout_job.wrap.max_width = wrap_width;
-                ui.fonts_mut(|f| f.layout_job(layout_job))
-            };
-
+            // 2. Editor Area
             let output = egui::TextEdit::multiline(&mut content)
                 .id(id)
                 .frame(false)
                 .desired_width(available_width)
                 .desired_rows(30)
-                .layouter(&mut layouter)
+                .font(egui::FontId::monospace(14.0))
                 .show(ui);
 
             // =========================================================
@@ -163,9 +151,11 @@ impl Editor {
                 self.cursor_index = None;
             }
 
-            // Update content if changed
+            // Content is always taken back
+            self.content = content;
+
             if editor_response.changed() {
-                self.content = content;
+                self.cached_word_count = None; // 标记为脏
             }
 
             if editor_response.clicked() {
@@ -182,12 +172,15 @@ impl Editor {
                 Rect::from_min_size(sidebar_origin, Vec2::new(sidebar_width, sidebar_height));
 
             if let Some(galley) = &self.last_galley {
+                let clip_rect = ui.clip_rect();
+                let text_offset = output.galley_pos;
                 self.sidebar.show(
                     ui,
                     &self.content,
                     galley,
-                    editor_response.rect,
                     sidebar_rect,
+                    clip_rect,
+                    text_offset,
                 );
             }
         });
@@ -199,9 +192,21 @@ impl Editor {
 
     pub fn set_content(&mut self, content: String) {
         self.content = content;
+        self.cached_word_count = None; // 清除缓存
     }
 
-    pub fn get_word_count(&self) -> usize {
+    pub fn get_word_count(&mut self) -> usize {
+        if let Some(count) = self.cached_word_count {
+            return count;
+        }
+
+        // 原有的计算逻辑
+        let count = self.calculate_word_count_internal();
+        self.cached_word_count = Some(count);
+        count
+    }
+
+    fn calculate_word_count_internal(&self) -> usize {
         let mut count = 0;
         let mut in_word = false;
         for c in self.content.chars() {
@@ -247,7 +252,7 @@ impl Editor {
         Some(count)
     }
 
-    pub fn get_stats(&self) -> (usize, usize) {
+    pub fn get_stats(&mut self) -> (usize, usize) {
         (
             self.get_word_count(),
             self.get_cursor_word_count().unwrap_or(0),
@@ -276,6 +281,26 @@ impl Editor {
 
     pub fn reset_marks_changed(&mut self) {
         self.sidebar.reset_marks_changed();
+    }
+
+    /// Get the current file path
+    pub fn get_current_file(&self) -> Option<&PathBuf> {
+        self.current_file.as_ref()
+    }
+
+    /// Set the current file path
+    pub fn set_current_file(&mut self, path: Option<PathBuf>) {
+        self.current_file = path;
+    }
+
+    /// Get the current file total time
+    pub fn get_current_file_total_time(&self) -> u64 {
+        self.current_file_total_time
+    }
+
+    /// Set the current file total time
+    pub fn set_current_file_total_time(&mut self, time: u64) {
+        self.current_file_total_time = time;
     }
 
     /// Get the current focus state of the editor

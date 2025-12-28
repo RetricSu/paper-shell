@@ -3,7 +3,7 @@ mod stats;
 mod types;
 mod ui;
 
-use crate::backend::{EditorBackend, HistoryEntry};
+use crate::backend::editor_backend::{EditorBackend, HistoryEntry};
 use egui::{Color32, Context, RichText, ScrollArea, Ui};
 
 // Re-export public types

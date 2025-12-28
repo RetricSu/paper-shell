@@ -2,25 +2,14 @@
 //!
 //! This module centralizes all application configuration settings using `confy`
 //! for automatic serialization and OS-specific config directory management.
-//!
-//! # Configuration Storage
-//!
-//! Settings are automatically stored in OS-specific locations:
-//! - macOS: `~/Library/Application Support/com.RetricSu.Paper-Shell/Paper Shell/config.toml`
-//! - Linux: `~/.config/paper-shell/config.toml`
-//! - Windows: `%APPDATA%\RetricSu\Paper Shell\config\config.toml`
 
+use crate::constant::{APP_NAME, APP_ORGANIZATION, APP_QUALIFIER, MAX_RECENT_FILES};
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use thiserror::Error;
+use tracing::info;
 
-/// Application name and metadata constants
-const APP_QUALIFIER: &str = "com";
-const APP_ORGANIZATION: &str = "RetricSu";
-const APP_NAME: &str = "Paper Shell";
-
-/// Configuration errors
 #[derive(Error, Debug)]
 pub enum ConfigError {
     #[error("Configuration error: {0}")]
@@ -30,54 +19,6 @@ pub enum ConfigError {
     Io(#[from] std::io::Error),
 }
 
-/// User settings that can be customized
-///
-/// This struct is automatically serialized to/from TOML using `confy`.
-/// Add new settings fields here as the application grows.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Settings {
-    /// Application theme (for future use)
-    #[serde(default = "default_theme")]
-    pub theme: String,
-
-    /// Auto-save interval in seconds (0 = disabled)
-    #[serde(default = "default_autosave_interval")]
-    pub autosave_interval: u64,
-
-    /// Font size (for future use)
-    #[serde(default = "default_font_size")]
-    pub font_size: f32,
-
-    /// Recently opened files
-    #[serde(default)]
-    pub recent_files: Vec<PathBuf>,
-}
-
-// Default value functions for serde
-fn default_theme() -> String {
-    "light".to_string()
-}
-
-fn default_autosave_interval() -> u64 {
-    300 // 5 minutes
-}
-
-fn default_font_size() -> f32 {
-    14.0
-}
-
-impl Default for Settings {
-    fn default() -> Self {
-        Self {
-            theme: default_theme(),
-            autosave_interval: default_autosave_interval(),
-            font_size: default_font_size(),
-            recent_files: Vec::new(),
-        }
-    }
-}
-
-/// Main configuration interface
 pub struct Config {
     #[allow(dead_code)]
     pub settings: Settings,
@@ -87,6 +28,7 @@ impl Config {
     /// Load configuration from disk, creating default if it doesn't exist
     pub fn load() -> Result<Self, ConfigError> {
         let settings: Settings = confy::load(APP_NAME, None)?;
+        info!("Load config from {:?}", Self::config_path()?);
         Ok(Self { settings })
     }
 
@@ -94,6 +36,7 @@ impl Config {
     #[allow(dead_code)]
     pub fn save(&self) -> Result<(), ConfigError> {
         confy::store(APP_NAME, None, &self.settings)?;
+        info!("Save config to {:?}", Self::config_path()?);
         Ok(())
     }
 
@@ -115,17 +58,17 @@ impl Config {
 
     /// Add a file to the recent files list
     pub fn add_recent_file(&mut self, path: PathBuf) {
-        // Remove if already exists to move it to the top
+        // Move the path to the front
         self.settings.recent_files.retain(|p| p != &path);
-        // Insert at the beginning
         self.settings.recent_files.insert(0, path);
-        // Limit to 10 entries
-        self.settings.recent_files.truncate(10);
+        self.settings.recent_files.truncate(MAX_RECENT_FILES);
 
         // Save changes in background since it's synchronous IO
         let settings = self.settings.clone();
         std::thread::spawn(move || {
-            let _ = confy::store(APP_NAME, None, &settings);
+            if let Err(e) = confy::store(APP_NAME, None, &settings) {
+                tracing::error!("Failed to save recent files: {}", e);
+            }
         });
     }
 }
@@ -135,5 +78,37 @@ impl Default for Config {
         Self::load().unwrap_or_else(|_| Self {
             settings: Settings::default(),
         })
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Settings {
+    /// Application theme (for future use)
+    #[serde(default)]
+    pub theme: String,
+
+    /// Auto-save interval in seconds (0 = disabled)
+    #[serde(default)]
+    pub autosave_interval: u64,
+
+    /// Font size (for future use)
+    #[serde(default)]
+    pub font_size: f32,
+
+    /// Recently opened file paths
+    /// since the path is a string(heap data),
+    /// Using fixed-size array won't make much difference on performance
+    #[serde(default)]
+    pub recent_files: Vec<PathBuf>,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            theme: "light".to_string(),
+            autosave_interval: 300, // 5 minutes
+            font_size: 14.0,
+            recent_files: Vec::new(),
+        }
     }
 }

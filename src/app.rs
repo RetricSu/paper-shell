@@ -22,9 +22,6 @@ pub enum ResponseMessage {
 
 pub struct PaperShellApp {
     editor: Editor,
-    current_file: Option<PathBuf>,
-    current_file_total_time: u64,
-
     response_sender: Sender<ResponseMessage>,
     response_receiver: Receiver<ResponseMessage>,
 
@@ -56,14 +53,12 @@ impl Default for PaperShellApp {
             backend: Arc::new(EditorBackend::default()),
             sidebar_backend,
             time_backend: TimeBackend::default(),
-            current_file: None,
             response_receiver: receiver,
             response_sender: sender,
             history_window: HistoryWindow::new(),
             available_fonts,
             current_font: "Default".to_string(),
             last_focus_state: false,
-            current_file_total_time: 0,
             config: crate::config::Config::default(),
         }
     }
@@ -152,10 +147,10 @@ impl PaperShellApp {
     }
 
     fn try_load_history(&mut self) {
-        if let Some(ref path) = self.current_file {
+        let current_file = self.editor.get_current_file().cloned();
+        if let Some(path) = current_file {
             let backend = Arc::clone(&self.backend);
             let sender = self.response_sender.clone();
-            let path = path.clone();
 
             std::thread::spawn(move || {
                 let result = backend.load_history(&path).map_err(|e| e.to_string());
@@ -215,14 +210,14 @@ impl PaperShellApp {
     }
 
     fn try_save_file(&self) {
+        let current_file = self.editor.get_current_file().cloned();
         let content = self.editor.get_content();
         let backend = Arc::clone(&self.backend);
         let sender = self.response_sender.clone();
         let time_spent = self.time_backend.get_and_reset_writing_time();
 
-        if let Some(ref path) = self.current_file {
+        if let Some(path) = current_file {
             // Save to existing file in background thread
-            let path = path.clone();
             std::thread::spawn(move || {
                 // First write the actual file content
                 if let Err(e) = std::fs::write(&path, &content) {
@@ -285,8 +280,8 @@ impl PaperShellApp {
 
     fn apply_save_file(&mut self, uuid: String, total_time: u64) {
         self.editor.set_uuid(uuid);
-        self.current_file_total_time = total_time;
-        if let Some(path) = self.current_file.as_ref() {
+        self.editor.set_current_file_total_time(total_time);
+        if let Some(path) = self.editor.get_current_file() {
             tracing::info!("File saved path: {:?}", path);
             self.config.add_recent_file(path.clone());
         }
@@ -296,12 +291,12 @@ impl PaperShellApp {
         if !data.content.is_empty() {
             self.editor.set_content(data.content);
         }
-        self.current_file = Some(data.path.clone());
+        self.editor.set_current_file(Some(data.path.clone()));
         if !data.uuid.is_empty() {
             self.editor.set_uuid(data.uuid);
         }
         if data.total_time > 0 {
-            self.current_file_total_time = data.total_time;
+            self.editor.set_current_file_total_time(data.total_time);
         }
         self.config.add_recent_file(data.path.clone());
         if let Some(data) = marks {
@@ -371,9 +366,9 @@ impl eframe::App for PaperShellApp {
                     title: crate::constant::DEFAULT_WINDOW_TITLE,
                     word_count: total_words,
                     cursor_word_count: cursor_words,
-                    writing_time: self.current_file_total_time
+                    writing_time: self.editor.get_current_file_total_time()
                         + self.time_backend.get_writing_time(),
-                    has_current_file: self.current_file.is_some(),
+                    has_current_file: self.editor.get_current_file().is_some(),
                     chinese_fonts: &self.available_fonts,
                     current_font: &self.current_font,
                     recent_files: &self.config.settings.recent_files,
@@ -422,13 +417,11 @@ impl eframe::App for PaperShellApp {
 
         // Auto-save to current file or create new timestamped file
         // This is blocking, but acceptable since the app is closing
-        let save_path = if let Some(ref path) = self.current_file {
-            path.clone()
-        } else {
+        let save_path = self.editor.get_current_file().cloned().unwrap_or_else(|| {
             // Create timestamped file in data directory
             let timestamp = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S");
             self.backend.data_dir().join(format!("{}.txt", timestamp))
-        };
+        });
 
         // First write the actual file content
         if let Err(e) = std::fs::write(&save_path, &content) {

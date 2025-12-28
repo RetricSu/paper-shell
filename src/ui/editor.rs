@@ -4,6 +4,7 @@ use std::sync::Arc;
 use super::sidebar::Sidebar;
 use crate::sidebar_backend::Mark;
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 #[derive(Default)]
 pub struct Editor {
@@ -12,6 +13,8 @@ pub struct Editor {
     last_galley: Option<Arc<Galley>>,
     sidebar: Sidebar,
     is_focused: bool,
+    current_file: Option<PathBuf>,
+    current_file_total_time: u64,
 }
 
 impl Editor {
@@ -276,6 +279,26 @@ impl Editor {
 
     pub fn reset_marks_changed(&mut self) {
         self.sidebar.reset_marks_changed();
+    }
+
+    /// Get the current file path
+    pub fn get_current_file(&self) -> Option<&PathBuf> {
+        self.current_file.as_ref()
+    }
+
+    /// Set the current file path
+    pub fn set_current_file(&mut self, path: Option<PathBuf>) {
+        self.current_file = path;
+    }
+
+    /// Get the current file total time
+    pub fn get_current_file_total_time(&self) -> u64 {
+        self.current_file_total_time
+    }
+
+    /// Set the current file total time
+    pub fn set_current_file_total_time(&mut self, time: u64) {
+        self.current_file_total_time = time;
     }
 
     /// Get the current focus state of the editor

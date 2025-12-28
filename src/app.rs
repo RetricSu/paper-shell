@@ -81,6 +81,41 @@ impl PaperShellApp {
         app
     }
 
+    fn spawn_new_window(&self) {
+        // Spawn a new instance of the application
+        if let Err(e) = std::process::Command::new(std::env::current_exe().unwrap()).spawn() {
+            tracing::error!("Failed to spawn new window: {}", e);
+        }
+    }
+}
+
+// file related operations without UI
+impl PaperShellApp {
+    fn load_file_data(&self, path: &PathBuf) -> Result<(FileData, HashMap<usize, Mark>), String> {
+        let content = std::fs::read_to_string(path)
+            .map_err(|e: std::io::Error| format!("Failed to read file {:?}: {}", path, e))?;
+
+        let (uuid, total_time) = self
+            .backend
+            .get_file_metadata(path, &content)
+            .map_err(|e| format!("Failed to get metadata: {}", e))?;
+
+        let marks = self
+            .sidebar_backend
+            .load_marks(&uuid)
+            .map_err(|e| format!("Failed to load marks: {}", e))?;
+
+        Ok((
+            FileData {
+                uuid,
+                path: path.to_path_buf(),
+                total_time,
+                content,
+            },
+            marks,
+        ))
+    }
+
     // this is mostly the same process with load_file_data but in a thread with messaging
     fn try_load_file_data(&mut self, path: PathBuf) {
         let backend = Arc::clone(&self.backend);
@@ -116,6 +151,21 @@ impl PaperShellApp {
         });
     }
 
+    fn try_load_history(&mut self) {
+        if let Some(ref path) = self.current_file {
+            let backend = Arc::clone(&self.backend);
+            let sender = self.response_sender.clone();
+            let path = path.clone();
+
+            std::thread::spawn(move || {
+                let result = backend.load_history(&path).map_err(|e| e.to_string());
+                let _ = sender.send(ResponseMessage::HistoryLoaded(result));
+            });
+
+            self.history_window.open();
+        }
+    }
+
     fn open_file(&mut self, path: PathBuf) {
         match self.load_file_data(&path) {
             Ok(data) => {
@@ -124,6 +174,112 @@ impl PaperShellApp {
             Err(e) => {
                 tracing::error!("{}", e);
             }
+        }
+    }
+
+    fn open_file_from_selector(&self) {
+        let backend = Arc::clone(&self.backend);
+        let data_dir = backend.data_dir().to_path_buf();
+
+        // Keep a reference to the sender to use in the outer scope
+        let sender = self.response_sender.clone();
+        std::thread::spawn(move || {
+            if let Some(path) = rfd::FileDialog::new()
+                .set_directory(&data_dir)
+                .add_filter("Text", &["txt"])
+                .pick_file()
+            {
+                let _ = sender.send(ResponseMessage::OpenFile(path));
+            }
+        });
+    }
+
+    fn try_save_marks_if_changed(&mut self) {
+        // Check if marks have changed and save in background if needed
+        if self.editor.marks_changed()
+            && let Some(uuid) = self.editor.get_sidebar_uuid()
+        {
+            let marks = self.editor.get_marks().clone();
+            let uuid = uuid.clone();
+            let sidebar_backend = Arc::clone(&self.sidebar_backend);
+
+            // Reset the changed flag immediately to avoid duplicate saves
+            self.editor.reset_marks_changed();
+
+            std::thread::spawn(move || {
+                if let Err(e) = sidebar_backend.save_marks(&uuid, &marks) {
+                    eprintln!("Failed to save marks in background: {}", e);
+                }
+            });
+        }
+    }
+
+    fn save_file(&self) {
+        let content = self.editor.get_content();
+        let backend = Arc::clone(&self.backend);
+        let sender = self.response_sender.clone();
+        let time_spent = self.time_backend.get_and_reset_writing_time();
+
+        if let Some(ref path) = self.current_file {
+            // Save to existing file in background thread
+            let path = path.clone();
+            std::thread::spawn(move || {
+                // First write the actual file content
+                if let Err(e) = std::fs::write(&path, &content) {
+                    let _ = sender.send(ResponseMessage::FileSaved(Err(format!(
+                        "Failed to write file: {}",
+                        e
+                    ))));
+                    return;
+                }
+
+                // Then track with backend (CAS + history)
+                let result = backend
+                    .save(&path, &content, time_spent)
+                    .map_err(|e| e.to_string());
+                let _ = sender.send(ResponseMessage::FileSaved(result));
+            });
+        } else {
+            // Show save dialog for new file
+            let data_dir = backend.data_dir().to_path_buf();
+            std::thread::spawn(move || {
+                if let Some(path) = rfd::FileDialog::new()
+                    .set_directory(&data_dir)
+                    .add_filter("Text", &["txt"])
+                    .save_file()
+                {
+                    // First write the actual file content
+                    if let Err(e) = std::fs::write(&path, &content) {
+                        let _ = sender.send(ResponseMessage::FileSaved(Err(format!(
+                            "Failed to write file: {}",
+                            e
+                        ))));
+                        return;
+                    }
+
+                    // Then track with backend (CAS + history)
+                    let result = backend
+                        .save(&path, &content, time_spent)
+                        .map_err(|e| e.to_string());
+
+                    // Add to recent files on successful save
+                    if result.is_ok() {
+                        let _ = sender.send(ResponseMessage::FileSaved(result.inspect(|_res| {
+                            // Ensure the path is updated on Save As
+                            let _ = sender.send(ResponseMessage::FileLoaded(Ok({
+                                FileData {
+                                    uuid: "".to_string(),
+                                    path,
+                                    total_time: 0,
+                                    content: "".to_string(),
+                                }
+                            })));
+                        })));
+                    } else {
+                        let _ = sender.send(ResponseMessage::FileSaved(result));
+                    }
+                }
+            });
         }
     }
 
@@ -154,29 +310,12 @@ impl PaperShellApp {
         tracing::info!("File opened: {:?}", data.path);
     }
 
-    fn load_file_data(&self, path: &PathBuf) -> Result<(FileData, HashMap<usize, Mark>), String> {
-        let content = std::fs::read_to_string(path)
-            .map_err(|e: std::io::Error| format!("Failed to read file {:?}: {}", path, e))?;
-
-        let (uuid, total_time) = self
-            .backend
-            .get_file_metadata(path, &content)
-            .map_err(|e| format!("Failed to get metadata: {}", e))?;
-
-        let marks = self
-            .sidebar_backend
-            .load_marks(&uuid)
-            .map_err(|e| format!("Failed to load marks: {}", e))?;
-
-        Ok((
-            FileData {
-                uuid,
-                path: path.to_path_buf(),
-                total_time,
-                content,
-            },
-            marks,
-        ))
+    fn update_time_backend_if_focus_changed(&mut self) {
+        let is_focused = self.editor.is_focused();
+        if is_focused != self.last_focus_state {
+            self.time_backend.update_focus(is_focused);
+            self.last_focus_state = is_focused;
+        }
     }
 
     fn check_response_messages(&mut self) {
@@ -219,6 +358,8 @@ impl PaperShellApp {
 impl eframe::App for PaperShellApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         self.check_response_messages();
+        self.try_save_marks_if_changed();
+        self.update_time_backend_if_focus_changed();
 
         // Title Bar
         egui::TopBottomPanel::top("title_bar_panel").show(ctx, |ui| {
@@ -239,125 +380,12 @@ impl eframe::App for PaperShellApp {
                 },
             ) {
                 match action {
-                    crate::ui::title_bar::TitleBarAction::NewWindow => {
-                        // Spawn a new instance of the application
-                        if let Err(e) =
-                            std::process::Command::new(std::env::current_exe().unwrap()).spawn()
-                        {
-                            eprintln!("Failed to spawn new window: {}", e);
-                        }
-                    }
-                    crate::ui::title_bar::TitleBarAction::Save => {
-                        let content = self.editor.get_content();
-                        let backend = Arc::clone(&self.backend);
-                        let sender = self.response_sender.clone();
-                        let time_spent = self.time_backend.get_and_reset_writing_time();
-
-                        if let Some(ref path) = self.current_file {
-                            // Save to existing file in background thread
-                            let path = path.clone();
-                            std::thread::spawn(move || {
-                                // First write the actual file content
-                                if let Err(e) = std::fs::write(&path, &content) {
-                                    let _ = sender.send(ResponseMessage::FileSaved(Err(format!(
-                                        "Failed to write file: {}",
-                                        e
-                                    ))));
-                                    return;
-                                }
-
-                                // Then track with backend (CAS + history)
-                                let result = backend
-                                    .save(&path, &content, time_spent)
-                                    .map_err(|e| e.to_string());
-                                let _ = sender.send(ResponseMessage::FileSaved(result));
-                            });
-                        } else {
-                            // Show save dialog for new file
-                            let data_dir = backend.data_dir().to_path_buf();
-                            std::thread::spawn(move || {
-                                if let Some(path) = rfd::FileDialog::new()
-                                    .set_directory(&data_dir)
-                                    .add_filter("Text", &["txt"])
-                                    .save_file()
-                                {
-                                    // First write the actual file content
-                                    if let Err(e) = std::fs::write(&path, &content) {
-                                        let _ = sender.send(ResponseMessage::FileSaved(Err(
-                                            format!("Failed to write file: {}", e),
-                                        )));
-                                        return;
-                                    }
-
-                                    // Then track with backend (CAS + history)
-                                    let result = backend
-                                        .save(&path, &content, time_spent)
-                                        .map_err(|e| e.to_string());
-
-                                    // Add to recent files on successful save
-                                    if result.is_ok() {
-                                        let _ = sender.send(ResponseMessage::FileSaved(
-                                            result.inspect(|_res| {
-                                                // Ensure the path is updated on Save As
-                                                let _ =
-                                                    sender.send(ResponseMessage::FileLoaded(Ok({
-                                                        FileData {
-                                                            uuid: "".to_string(),
-                                                            path,
-                                                            total_time: 0,
-                                                            content: "".to_string(),
-                                                        }
-                                                    })));
-                                            }),
-                                        ));
-                                    } else {
-                                        let _ = sender.send(ResponseMessage::FileSaved(result));
-                                    }
-                                }
-                            });
-                        }
-                    }
-                    crate::ui::title_bar::TitleBarAction::Open => {
-                        let backend = Arc::clone(&self.backend);
-                        let data_dir = backend.data_dir().to_path_buf();
-                        let ctx = ctx.clone();
-
-                        // Keep a reference to the sender to use in the outer scope
-                        let sender = self.response_sender.clone();
-                        std::thread::spawn(move || {
-                            if let Some(path) = rfd::FileDialog::new()
-                                .set_directory(&data_dir)
-                                .add_filter("Text", &["txt"])
-                                .pick_file()
-                            {
-                                // Instead of calling self.open_file_at_path (impossible),
-                                // we can just perform the load here or send a message.
-                                // Let's just do what open_file_at_path does but in this thread.
-                                let _ = sender.send(ResponseMessage::OpenFile(path));
-                                ctx.request_repaint();
-                            }
-                        });
-                    }
-                    crate::ui::title_bar::TitleBarAction::OpenFile(path) => {
-                        self.try_load_file_data(path);
-                    }
-                    crate::ui::title_bar::TitleBarAction::Format => {
-                        self.editor.format();
-                    }
-                    crate::ui::title_bar::TitleBarAction::History => {
-                        if let Some(ref path) = self.current_file {
-                            let backend = Arc::clone(&self.backend);
-                            let sender = self.response_sender.clone();
-                            let path = path.clone();
-
-                            std::thread::spawn(move || {
-                                let result = backend.load_history(&path).map_err(|e| e.to_string());
-                                let _ = sender.send(ResponseMessage::HistoryLoaded(result));
-                            });
-
-                            self.history_window.open();
-                        }
-                    }
+                    crate::ui::title_bar::TitleBarAction::NewWindow => self.spawn_new_window(),
+                    crate::ui::title_bar::TitleBarAction::Save => self.save_file(),
+                    crate::ui::title_bar::TitleBarAction::Open => self.open_file_from_selector(),
+                    crate::ui::title_bar::TitleBarAction::OpenFile(path) => self.open_file(path),
+                    crate::ui::title_bar::TitleBarAction::Format => self.editor.format(),
+                    crate::ui::title_bar::TitleBarAction::History => self.try_load_history(),
                     crate::ui::title_bar::TitleBarAction::Settings => {
                         // TODO: Settings logic
                     }
@@ -380,33 +408,8 @@ impl eframe::App for PaperShellApp {
             });
         });
 
-        // Update time backend with current focus state if changed
-        let is_focused = self.editor.is_focused();
-        if is_focused != self.last_focus_state {
-            self.time_backend.update_focus(is_focused);
-            self.last_focus_state = is_focused;
-        }
-
         // History Window
         self.history_window.show(ctx);
-
-        // Check if marks have changed and save in background if needed
-        if self.editor.marks_changed()
-            && let Some(uuid) = self.editor.get_sidebar_uuid()
-        {
-            let marks = self.editor.get_marks().clone();
-            let uuid = uuid.clone();
-            let sidebar_backend = Arc::clone(&self.sidebar_backend);
-
-            // Reset the changed flag immediately to avoid duplicate saves
-            self.editor.reset_marks_changed();
-
-            std::thread::spawn(move || {
-                if let Err(e) = sidebar_backend.save_marks(&uuid, &marks) {
-                    eprintln!("Failed to save marks in background: {}", e);
-                }
-            });
-        }
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {

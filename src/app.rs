@@ -13,8 +13,8 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 
 /// Response messages from background operations
 pub enum ResponseMessage {
-    SaveComplete(Result<(String, u64), String>), // (uuid, total_time)
-    LoadComplete(Result<(PathBuf, String, String, u64), String>), // (path, content, uuid, total_time), error
+    FileSaved(Result<(String, u64), String>), // (uuid, total_time), error
+    FileLoaded(Result<FileData, String>),     // FileData, error
     HistoryLoaded(Result<Vec<crate::backend::HistoryEntry>, String>),
     MarksLoaded(Result<HashMap<usize, Mark>, String>),
     OpenFile(PathBuf),
@@ -90,25 +90,25 @@ impl PaperShellApp {
         std::thread::spawn(move || match std::fs::read_to_string(&path) {
             Ok(content) => match backend.get_file_metadata(&path, &content) {
                 Ok((uuid, total_time)) => {
-                    let _ = sender.send(ResponseMessage::LoadComplete(Ok((
+                    let _ = sender.send(ResponseMessage::FileLoaded(Ok(FileData {
                         path,
                         content,
-                        uuid.clone(),
+                        uuid: uuid.clone(),
                         total_time,
-                    ))));
+                    })));
 
                     let marks_result = sidebar_backend.load_marks(&uuid).map_err(|e| e.to_string());
                     let _ = sender.send(ResponseMessage::MarksLoaded(marks_result));
                 }
                 Err(e) => {
-                    let _ = sender.send(ResponseMessage::LoadComplete(Err(format!(
+                    let _ = sender.send(ResponseMessage::FileLoaded(Err(format!(
                         "Failed to get metadata: {}",
                         e
                     ))));
                 }
             },
             Err(e) => {
-                let _ = sender.send(ResponseMessage::LoadComplete(Err(format!(
+                let _ = sender.send(ResponseMessage::FileLoaded(Err(format!(
                     "Failed to read file {:?}: {}",
                     path, e
                 ))));
@@ -119,7 +119,7 @@ impl PaperShellApp {
     fn open_file(&mut self, path: PathBuf) {
         match self.load_file_data(&path) {
             Ok(data) => {
-                self.apply_file_data(data.0, data.1);
+                self.apply_load_file_data(data.0, Some(data.1));
             }
             Err(e) => {
                 tracing::error!("{}", e);
@@ -127,19 +127,34 @@ impl PaperShellApp {
         }
     }
 
-    fn apply_file_data(&mut self, data: FileData, marks: HashMap<usize, Mark>) {
-        self.editor.set_content(data.content);
-        self.current_file = Some(data.path.clone());
-        self.editor.set_uuid(data.uuid);
-        self.current_file_total_time = data.total_time;
-        self.config.add_recent_file(data.path);
-        self.editor.apply_marks(marks);
+    fn apply_save_file(&mut self, uuid: String, total_time: u64) {
+        self.editor.set_uuid(uuid);
+        self.current_file_total_time = total_time;
+        if let Some(path) = self.current_file.as_ref() {
+            tracing::info!("File saved path: {:?}", path);
+            self.config.add_recent_file(path.clone());
+        }
     }
 
-    fn load_file_data(
-        &self,
-        path: &PathBuf,
-    ) -> Result<(FileData, HashMap<usize, Mark>), String> {
+    fn apply_load_file_data(&mut self, data: FileData, marks: Option<HashMap<usize, Mark>>) {
+        if !data.content.is_empty() {
+            self.editor.set_content(data.content);
+        }
+        self.current_file = Some(data.path.clone());
+        if !data.uuid.is_empty() {
+            self.editor.set_uuid(data.uuid);
+        }
+        if data.total_time > 0 {
+            self.current_file_total_time = data.total_time;
+        }
+        self.config.add_recent_file(data.path.clone());
+        if let Some(data) = marks {
+            self.editor.apply_marks(data);
+        }
+        tracing::info!("File opened: {:?}", data.path);
+    }
+
+    fn load_file_data(&self, path: &PathBuf) -> Result<(FileData, HashMap<usize, Mark>), String> {
         let content = std::fs::read_to_string(path)
             .map_err(|e: std::io::Error| format!("Failed to read file {:?}: {}", path, e))?;
 
@@ -163,61 +178,47 @@ impl PaperShellApp {
             marks,
         ))
     }
-}
 
-impl eframe::App for PaperShellApp {
-    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        // Check for backend operation responses
+    fn check_response_messages(&mut self) {
         if let Ok(response) = self.response_receiver.try_recv() {
             match response {
-                ResponseMessage::SaveComplete(result) => match result {
+                ResponseMessage::FileSaved(result) => match result {
                     Ok((uuid, total_time)) => {
-                        println!("File saved successfully");
-                        self.editor.set_uuid(uuid);
-                        self.current_file_total_time = total_time;
-                        if let Some(path) = self.current_file.as_ref() {
-                            println!("File path: {:?}", path);
-                            self.config.add_recent_file(path.clone());
-                        }
+                        self.apply_save_file(uuid, total_time);
                     }
-                    Err(e) => eprintln!("Failed to save file: {}", e),
+                    Err(e) => tracing::error!("Failed to save file: {}", e),
                 },
-                ResponseMessage::LoadComplete(result) => match result {
-                    Ok((path, content, uuid, total_time)) => {
-                        if !content.is_empty() {
-                            self.editor.set_content(content);
-                        }
-                        self.current_file = Some(path.clone());
-                        if !uuid.is_empty() {
-                            self.editor.set_uuid(uuid);
-                        }
-                        if total_time > 0 {
-                            self.current_file_total_time = total_time;
-                        }
-                        self.config.add_recent_file(path.clone());
-                        println!("File opened: {:?}", path);
+                ResponseMessage::FileLoaded(result) => match result {
+                    Ok(data) => {
+                        self.apply_load_file_data(data, None);
                     }
-                    Err(e) => eprintln!("Failed to load file: {}", e),
+                    Err(e) => tracing::error!("Failed to load file: {}", e),
                 },
-                ResponseMessage::OpenFile(path) => {
-                    self.try_load_file_data(path);
-                }
                 ResponseMessage::HistoryLoaded(result) => match result {
                     Ok(entries) => {
                         if let Err(e) = self.history_window.set_history(entries, &self.backend) {
-                            eprintln!("Failed to set history: {}", e);
+                            tracing::info!("Failed to set history: {}", e);
                         }
                     }
-                    Err(e) => eprintln!("Failed to load history: {}", e),
+                    Err(e) => tracing::error!("Failed to load history: {}", e),
                 },
                 ResponseMessage::MarksLoaded(result) => match result {
                     Ok(marks) => {
                         self.editor.apply_marks(marks);
                     }
-                    Err(e) => eprintln!("Failed to load marks: {}", e),
+                    Err(e) => tracing::error!("Failed to load marks: {}", e),
                 },
+                ResponseMessage::OpenFile(path) => {
+                    self.try_load_file_data(path);
+                }
             }
         }
+    }
+}
+
+impl eframe::App for PaperShellApp {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        self.check_response_messages();
 
         // Title Bar
         egui::TopBottomPanel::top("title_bar_panel").show(ctx, |ui| {
@@ -258,9 +259,10 @@ impl eframe::App for PaperShellApp {
                             std::thread::spawn(move || {
                                 // First write the actual file content
                                 if let Err(e) = std::fs::write(&path, &content) {
-                                    let _ = sender.send(ResponseMessage::SaveComplete(Err(
-                                        format!("Failed to write file: {}", e),
-                                    )));
+                                    let _ = sender.send(ResponseMessage::FileSaved(Err(format!(
+                                        "Failed to write file: {}",
+                                        e
+                                    ))));
                                     return;
                                 }
 
@@ -268,7 +270,7 @@ impl eframe::App for PaperShellApp {
                                 let result = backend
                                     .save(&path, &content, time_spent)
                                     .map_err(|e| e.to_string());
-                                let _ = sender.send(ResponseMessage::SaveComplete(result));
+                                let _ = sender.send(ResponseMessage::FileSaved(result));
                             });
                         } else {
                             // Show save dialog for new file
@@ -281,7 +283,7 @@ impl eframe::App for PaperShellApp {
                                 {
                                     // First write the actual file content
                                     if let Err(e) = std::fs::write(&path, &content) {
-                                        let _ = sender.send(ResponseMessage::SaveComplete(Err(
+                                        let _ = sender.send(ResponseMessage::FileSaved(Err(
                                             format!("Failed to write file: {}", e),
                                         )));
                                         return;
@@ -294,21 +296,22 @@ impl eframe::App for PaperShellApp {
 
                                     // Add to recent files on successful save
                                     if result.is_ok() {
-                                        let _ = sender.send(ResponseMessage::SaveComplete(
+                                        let _ = sender.send(ResponseMessage::FileSaved(
                                             result.inspect(|_res| {
                                                 // Ensure the path is updated on Save As
-                                                let _ = sender.send(ResponseMessage::LoadComplete(
-                                                    Ok((
-                                                        path.clone(),
-                                                        "".to_string(), // Empty content means don't update editor content
-                                                        "".to_string(),
-                                                        0,
-                                                    )),
-                                                ));
+                                                let _ =
+                                                    sender.send(ResponseMessage::FileLoaded(Ok({
+                                                        FileData {
+                                                            uuid: "".to_string(),
+                                                            path,
+                                                            total_time: 0,
+                                                            content: "".to_string(),
+                                                        }
+                                                    })));
                                             }),
                                         ));
                                     } else {
-                                        let _ = sender.send(ResponseMessage::SaveComplete(result));
+                                        let _ = sender.send(ResponseMessage::FileSaved(result));
                                     }
                                 }
                             });

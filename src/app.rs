@@ -480,6 +480,7 @@ impl eframe::App for PaperShellApp {
                     chinese_fonts: &self.available_fonts,
                     current_font: &self.current_font,
                     recent_files: &self.config.settings.recent_files,
+                    is_ai_panel_visible: self.editor.get_ai_panel_mut().is_visible,
                 },
             ) {
                 match action {
@@ -499,6 +500,10 @@ impl eframe::App for PaperShellApp {
                         ctx.set_fonts(new_fonts);
                         self.current_font = font_name.clone();
                         tracing::info!("Font changed to: {}", font_name);
+                    }
+                    crate::ui::title_bar::TitleBarAction::ToggleAiPanel => {
+                        let panel = self.editor.get_ai_panel_mut();
+                        panel.is_visible = !panel.is_visible;
                     }
                 }
             }

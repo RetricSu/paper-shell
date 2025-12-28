@@ -1,3 +1,4 @@
+pub mod ai_panel;
 pub mod editor;
 pub mod font;
 pub mod history;

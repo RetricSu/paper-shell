@@ -10,6 +10,7 @@ pub enum TitleBarAction {
     Settings,
     Format,
     FontChange(String),
+    ToggleAiPanel,
 }
 
 pub struct TitleBar;
@@ -23,6 +24,7 @@ pub struct TitleBarState<'a> {
     pub chinese_fonts: &'a [String],
     pub current_font: &'a str,
     pub recent_files: &'a [PathBuf],
+    pub is_ai_panel_visible: bool,
 }
 
 impl TitleBar {
@@ -40,6 +42,7 @@ impl TitleBar {
             chinese_fonts,
             current_font,
             recent_files,
+            is_ai_panel_visible,
         } = state;
 
         let mut action = None;
@@ -154,8 +157,13 @@ impl TitleBar {
                         .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
                 }
 
-                // Stats
+                // Stats and AI toggle
                 ui.add_space(16.0);
+                let ai_icon = if is_ai_panel_visible { "[x]" } else { "[ ]" };
+                if ui.label(egui::RichText::new(ai_icon).small()).clicked() {
+                    action = Some(TitleBarAction::ToggleAiPanel);
+                }
+
                 let time_str = Self::format_writing_time(writing_time);
                 ui.label(
                     egui::RichText::new(format!(

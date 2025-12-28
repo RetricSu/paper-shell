@@ -1,8 +1,10 @@
+use crate::backend::ai_backend::{AiBackend, AiError};
 use crate::backend::editor_backend::{EditorBackend, HistoryEntry};
 use crate::backend::sidebar_backend::{Mark, SidebarBackend};
 use crate::backend::time_backend::TimeBackend;
 use crate::file::FileData;
 use crate::style::configure_style;
+use crate::ui::ai_panel::AiPanelAction;
 use crate::ui::editor::Editor;
 use crate::ui::history::HistoryWindow;
 
@@ -18,6 +20,7 @@ pub enum ResponseMessage {
     HistoryLoaded(Result<Vec<HistoryEntry>, String>),
     MarksLoaded(Result<HashMap<usize, Mark>, String>),
     OpenFile(PathBuf),
+    AiResponse(Result<String, AiError>),
 }
 
 pub struct PaperShellApp {
@@ -36,11 +39,15 @@ pub struct PaperShellApp {
     editor_backend: Arc<EditorBackend>,
     sidebar_backend: Arc<SidebarBackend>,
     time_backend: TimeBackend,
+    ai_backend: Arc<AiBackend>,
+    ai_response_sender: Sender<Result<String, AiError>>,
+    ai_response_receiver: Receiver<Result<String, AiError>>,
 }
 
 impl Default for PaperShellApp {
     fn default() -> Self {
         let (sender, receiver) = channel();
+        let (ai_sender, ai_receiver) = channel();
         let editor = Editor::default();
         let sidebar_backend = Arc::new(SidebarBackend::new().unwrap_or_else(|e| {
             tracing::error!("Failed to initialize SidebarBackend: {}", e);
@@ -53,8 +60,11 @@ impl Default for PaperShellApp {
             editor_backend: Arc::new(EditorBackend::default()),
             sidebar_backend,
             time_backend: TimeBackend::default(),
+            ai_backend: Arc::new(AiBackend::new()),
             response_receiver: receiver,
             response_sender: sender,
+            ai_response_sender: ai_sender,
+            ai_response_receiver: ai_receiver,
             history_window: HistoryWindow::new(),
             available_fonts,
             current_font: "Default".to_string(),
@@ -416,6 +426,36 @@ impl PaperShellApp {
                 ResponseMessage::OpenFile(path) => {
                     self.try_load_file_data(path);
                 }
+                ResponseMessage::AiResponse(result) => match result {
+                    Ok(response) => {
+                        self.editor.set_ai_response(response);
+                        tracing::info!("AI response received");
+                    }
+                    Err(e) => {
+                        self.editor.set_ai_response(format!("Error: {}", e));
+                        tracing::error!("AI request failed: {}", e);
+                    }
+                },
+            }
+        }
+    }
+
+    fn handle_ai_panel_action(&mut self, action: AiPanelAction) {
+        match action {
+            AiPanelAction::SendRequest => {
+                let content = self.editor.get_content();
+                let prompt = format!(
+                    "Please output the summary outline/overview of the following content, sort of like a semantic map or storyboard/narrative map:\n\n{}",
+                    content
+                );
+
+                self.editor.set_ai_processing(true);
+                tracing::info!("Sending AI request");
+
+                let ai_backend = Arc::clone(&self.ai_backend);
+                let sender = self.ai_response_sender.clone();
+
+                ai_backend.send_request(prompt, sender);
             }
         }
     }
@@ -443,6 +483,7 @@ impl eframe::App for PaperShellApp {
                     chinese_fonts: &self.available_fonts,
                     current_font: &self.current_font,
                     recent_files: &self.config.settings.recent_files,
+                    is_ai_panel_visible: self.editor.get_ai_panel_mut().is_visible,
                 },
             ) {
                 match action {
@@ -463,6 +504,10 @@ impl eframe::App for PaperShellApp {
                         self.current_font = font_name.clone();
                         tracing::info!("Font changed to: {}", font_name);
                     }
+                    crate::ui::title_bar::TitleBarAction::ToggleAiPanel => {
+                        let panel = self.editor.get_ai_panel_mut();
+                        panel.is_visible = !panel.is_visible;
+                    }
                 }
             }
         });
@@ -471,10 +516,24 @@ impl eframe::App for PaperShellApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 ui.vertical_centered(|ui| {
-                    self.editor.show(ui);
+                    if let Some(action) = self.editor.show(ui) {
+                        self.handle_ai_panel_action(action);
+                    }
                 });
             });
         });
+
+        // AI 助手独立窗口
+        if let Some(action) = self.editor.get_ai_panel_mut().show(ctx) {
+            self.handle_ai_panel_action(action);
+        }
+
+        // Check for AI responses
+        if let Ok(result) = self.ai_response_receiver.try_recv() {
+            self.response_sender
+                .send(ResponseMessage::AiResponse(result))
+                .unwrap();
+        }
 
         // History Window
         self.history_window.show(ctx);

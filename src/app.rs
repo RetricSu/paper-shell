@@ -203,15 +203,83 @@ impl PaperShellApp {
 
             std::thread::spawn(move || {
                 if let Err(e) = sidebar_backend.save_marks(&uuid, &marks) {
-                    eprintln!("Failed to save marks in background: {}", e);
+                    tracing::error!("Failed to save marks in background: {}", e);
                 }
             });
+        }
+    }
+
+    fn save_file(&mut self) {
+        let current_file = self.editor.get_current_file().cloned();
+        let content = self.editor.get_content();
+        if content.trim().is_empty() {
+            return;
+        }
+        let time_spent = self.time_backend.get_and_reset_writing_time();
+
+        if let Some(path) = current_file {
+            // First write the actual file content
+            if let Err(e) = std::fs::write(&path, &content) {
+                tracing::error!("Failed to write file: {}", e);
+                return;
+            }
+
+            // Then track with backend (CAS + history)
+            let result = self
+                .backend
+                .save(&path, &content, time_spent)
+                .map_err(|e| e.to_string());
+            if let Ok((uuid, total_time)) = result.as_ref() {
+                self.apply_save_file(uuid.clone(), *total_time);
+            } else {
+                tracing::error!("Failed to save file: {}", result.err().unwrap());
+            }
+        } else {
+            // Show save dialog for new file
+            let data_dir = self.backend.data_dir().to_path_buf();
+            if let Some(path) = rfd::FileDialog::new()
+                .set_directory(&data_dir)
+                .add_filter("Text", &["txt"])
+                .save_file()
+            {
+                // First write the actual file content
+                if let Err(e) = std::fs::write(&path, &content) {
+                    tracing::error!("Failed to write file: {}", e);
+                    return;
+                }
+
+                // Then track with backend (CAS + history)
+                let result = self
+                    .backend
+                    .save(&path, &content, time_spent)
+                    .map_err(|e| e.to_string());
+
+                // Add to recent files on successful save
+                if let Ok((uuid, total_time)) = result.as_ref() {
+                    self.apply_save_file(uuid.clone(), *total_time);
+                    self.apply_load_file_data(
+                        FileData {
+                            uuid: uuid.clone(),
+                            path,
+                            total_time: *total_time,
+                            content,
+                        },
+                        None,
+                    );
+                } else {
+                    tracing::error!("Failed to save file: {}", result.err().unwrap());
+                }
+            }
         }
     }
 
     fn try_save_file(&self) {
         let current_file = self.editor.get_current_file().cloned();
         let content = self.editor.get_content();
+        if content.trim().is_empty() {
+            return;
+        }
+
         let backend = Arc::clone(&self.backend);
         let sender = self.response_sender.clone();
         let time_spent = self.time_backend.get_and_reset_writing_time();
@@ -410,31 +478,6 @@ impl eframe::App for PaperShellApp {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        let content = self.editor.get_content();
-        if content.trim().is_empty() {
-            return;
-        }
-
-        // Auto-save to current file or create new timestamped file
-        // This is blocking, but acceptable since the app is closing
-        let save_path = self.editor.get_current_file().cloned().unwrap_or_else(|| {
-            // Create timestamped file in data directory
-            let timestamp = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S");
-            self.backend.data_dir().join(format!("{}.txt", timestamp))
-        });
-
-        // First write the actual file content
-        if let Err(e) = std::fs::write(&save_path, &content) {
-            eprintln!("Failed to write file on exit: {}", e);
-            return;
-        }
-
-        // Then track with backend (CAS + history)
-        let time_spent = self.time_backend.get_writing_time();
-        if let Err(e) = self.backend.save(&save_path, &content, time_spent) {
-            eprintln!("Failed to track with backend on exit: {}", e);
-        } else {
-            println!("Auto-saved to {:?}", save_path);
-        }
+        self.save_file();
     }
 }

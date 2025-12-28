@@ -177,7 +177,7 @@ impl PaperShellApp {
         }
     }
 
-    fn open_file_from_selector(&self) {
+    fn try_open_file_from_selector(&self) {
         let backend = Arc::clone(&self.backend);
         let data_dir = backend.data_dir().to_path_buf();
 
@@ -214,7 +214,7 @@ impl PaperShellApp {
         }
     }
 
-    fn save_file(&self) {
+    fn try_save_file(&self) {
         let content = self.editor.get_content();
         let backend = Arc::clone(&self.backend);
         let sender = self.response_sender.clone();
@@ -381,8 +381,10 @@ impl eframe::App for PaperShellApp {
             ) {
                 match action {
                     crate::ui::title_bar::TitleBarAction::NewWindow => self.spawn_new_window(),
-                    crate::ui::title_bar::TitleBarAction::Save => self.save_file(),
-                    crate::ui::title_bar::TitleBarAction::Open => self.open_file_from_selector(),
+                    crate::ui::title_bar::TitleBarAction::Save => self.try_save_file(),
+                    crate::ui::title_bar::TitleBarAction::Open => {
+                        self.try_open_file_from_selector()
+                    }
                     crate::ui::title_bar::TitleBarAction::OpenFile(path) => self.open_file(path),
                     crate::ui::title_bar::TitleBarAction::Format => self.editor.format(),
                     crate::ui::title_bar::TitleBarAction::History => self.try_load_history(),

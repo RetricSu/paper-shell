@@ -1,4 +1,4 @@
-use egui::{FontId, Galley, Rect, Sense, TextFormat, Ui, Vec2, text::LayoutJob};
+use egui::{Galley, Rect, Sense, Ui, Vec2};
 use std::sync::Arc;
 
 use super::sidebar::Sidebar;
@@ -35,29 +35,13 @@ impl Editor {
                 Sense::hover(),
             );
 
-            // 2. Editor Area with custom layouter
-            let mut layouter = |ui: &Ui, string: &dyn egui::TextBuffer, wrap_width: f32| {
-                let mut layout_job = LayoutJob::default();
-                let font_id = FontId::monospace(14.0);
-                layout_job.append(
-                    string.as_str(),
-                    0.0,
-                    TextFormat {
-                        font_id,
-                        color: ui.visuals().text_color(),
-                        ..Default::default()
-                    },
-                );
-                layout_job.wrap.max_width = wrap_width;
-                ui.fonts_mut(|f| f.layout_job(layout_job))
-            };
-
+            // 2. Editor Area
             let output = egui::TextEdit::multiline(&mut content)
                 .id(id)
                 .frame(false)
                 .desired_width(available_width)
                 .desired_rows(30)
-                .layouter(&mut layouter)
+                .font(egui::FontId::monospace(14.0))
                 .show(ui);
 
             // =========================================================

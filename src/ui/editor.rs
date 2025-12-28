@@ -167,12 +167,15 @@ impl Editor {
                 Rect::from_min_size(sidebar_origin, Vec2::new(sidebar_width, sidebar_height));
 
             if let Some(galley) = &self.last_galley {
+                let clip_rect = ui.clip_rect();
+                let text_offset = output.galley_pos;
                 self.sidebar.show(
                     ui,
                     &self.content,
                     galley,
-                    editor_response.rect,
                     sidebar_rect,
+                    clip_rect,
+                    text_offset,
                 );
             }
         });

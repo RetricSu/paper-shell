@@ -47,12 +47,13 @@ impl Sidebar {
         ui: &mut Ui,
         content: &str,
         galley: &Arc<Galley>,
-        editor_rect: Rect,
         sidebar_rect: Rect,
+        clip_rect: Rect,
+        text_offset: Pos2,
     ) {
         let painter = ui.painter_at(sidebar_rect);
 
-        // Draw right border line (separator)
+        // 绘制分割线
         painter.line_segment(
             [
                 Pos2::new(sidebar_rect.right(), sidebar_rect.top()),
@@ -61,121 +62,87 @@ impl Sidebar {
             egui::Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color),
         );
 
-        // Safe line height retrieval
-        let line_height = if !galley.rows.is_empty() {
-            galley.rows[0].rect().height()
-        } else {
-            14.0 // Fallback
-        };
-
-        // Handle sidebar click
+        // 处理点击交互
         let response = ui.interact(sidebar_rect, ui.id().with("sidebar"), Sense::click());
-        let mut clicked_line: Option<usize> = None;
+        let pointer_pos = response.interact_pointer_pos(); // 获取点击位置
+        let mut clicked_line_index: Option<usize> = None;
 
-        if response.clicked()
-            && let Some(pointer_pos) = response.interact_pointer_pos()
-        {
-            // Find which line was clicked based on Y position
-            for (current_line, _line) in content.split_inclusive('\n').enumerate() {
-                let line_start_byte: usize = content
-                    .split_inclusive('\n')
-                    .take(current_line)
-                    .map(|l| l.len())
-                    .sum();
+        // 状态累加器 (核心优化：避免 O(N^2))
+        let mut current_char_idx: usize = 0;
 
-                let char_idx = content[..line_start_byte].chars().count();
-                let cursor = egui::text::CCursor::new(char_idx);
-                let rect = galley.pos_from_cursor(cursor);
-                let line_y = editor_rect.min.y + rect.center().y;
+        // 预计算可视范围的上下界，留一点 buffer 防止边缘闪烁
+        let view_min_y = clip_rect.min.y - 50.0;
+        let view_max_y = clip_rect.max.y + 50.0;
 
-                let dist = (pointer_pos.y - line_y).abs();
-                if dist < line_height / 2.0 {
-                    clicked_line = Some(current_line);
-                    break;
+        // 遍历所有逻辑行
+        for (line_idx, line) in content.split_inclusive('\n').enumerate() {
+            // 1. 获取当前行在 Galley 中的位置
+            // egui 的 cursor 是基于 char index 的
+            let cursor = egui::text::CCursor::new(current_char_idx);
+            let rect_in_galley = galley.pos_from_cursor(cursor);
+
+            // 转换为屏幕绝对坐标
+            // rect_in_galley.center().y 是相对于文本开头的偏移
+            // text_offset.y 是文本开头在屏幕上的 Y 坐标（滚动会改变这个值）
+            let line_center_y = text_offset.y + rect_in_galley.center().y;
+
+            // 2. 更新累加器 (为下一次循环做准备)
+            // 必须在 continue/break 之前计算好这一行的长度
+            let char_count = line.chars().count();
+            current_char_idx += char_count;
+
+            // 3. 视锥剔除 (Culling) - 性能优化的关键
+            if line_center_y < view_min_y {
+                continue; // 在屏幕上方，跳过绘制
+            }
+            if line_center_y > view_max_y {
+                break; // 在屏幕下方，剩下的都不用看了，直接退出循环！
+            }
+
+            // 4. 计算绘制中心点
+            // sidebar_rect.center().x 是侧边栏的中心 X
+            let center = Pos2::new(sidebar_rect.center().x, line_center_y);
+
+            // 5. 点击检测 (Hit Test)
+            // 如果刚刚发生了点击，并且点击位置在当前行附近
+            if response.clicked()
+                && let Some(pos) = pointer_pos
+            {
+                // 简单的距离检测，高度的一半作为判定范围
+                let half_height = rect_in_galley.height() / 2.0;
+                if (pos.y - line_center_y).abs() <= half_height {
+                    clicked_line_index = Some(line_idx);
                 }
             }
 
-            // Handle the trailing empty line if text ends with newline
-            if clicked_line.is_none() && content.ends_with('\n') {
-                let logical_line_idx = content.split_inclusive('\n').count();
-                let line_start_byte = content.len();
-                let char_idx = content[..line_start_byte].chars().count();
-                let cursor = egui::text::CCursor::new(char_idx);
-                let rect = galley.pos_from_cursor(cursor);
-                let line_y = editor_rect.min.y + rect.center().y;
+            // 6. 绘制 UI
+            // 绘制提示小圆圈
+            painter.circle_stroke(
+                center,
+                2.5,
+                egui::Stroke::new(1.0, ui.visuals().text_color().gamma_multiply(0.3)),
+            );
 
-                let dist = (pointer_pos.y - line_y).abs();
-                if dist < line_height / 2.0 {
-                    clicked_line = Some(logical_line_idx);
-                }
+            // 如果有标记，绘制实心圆
+            if self.marks.contains_key(&line_idx) {
+                painter.circle_filled(center, 4.0, Color32::from_rgb(200, 100, 100));
             }
         }
 
-        // Process the click if we found a line
-        if let Some(line_idx) = clicked_line {
-            if let std::collections::hash_map::Entry::Vacant(e) = self.marks.entry(line_idx) {
-                // No mark - create one and open popup
+        // 处理点击事件逻辑
+        if let Some(idx) = clicked_line_index {
+            if let std::collections::hash_map::Entry::Vacant(e) = self.marks.entry(idx) {
                 e.insert(Mark::default());
-                self.popup_mark = Some(line_idx);
+                self.popup_mark = Some(idx);
                 self.marks_changed = true;
+            } else if self.popup_mark == Some(idx) {
+                self.popup_mark = None;
             } else {
-                // Mark exists - toggle popup
-                if self.popup_mark == Some(line_idx) {
-                    self.popup_mark = None;
-                } else {
-                    self.popup_mark = Some(line_idx);
-                }
+                self.popup_mark = Some(idx);
             }
         }
 
-        // Draw all marks and clickable hints
-        for (current_line, _line) in content.split_inclusive('\n').enumerate() {
-            let line_start_byte: usize = content
-                .split_inclusive('\n')
-                .take(current_line)
-                .map(|l| l.len())
-                .sum();
-
-            let char_idx = content[..line_start_byte].chars().count();
-            let cursor = egui::text::CCursor::new(char_idx);
-            let rect = galley.pos_from_cursor(cursor);
-            let center = Pos2::new(sidebar_rect.center().x, editor_rect.min.y + rect.center().y);
-
-            // Draw subtle hint circle for clickable position
-            painter.circle_stroke(
-                center,
-                2.5,
-                egui::Stroke::new(1.0, ui.visuals().text_color().gamma_multiply(0.3)),
-            );
-
-            // Draw filled dot if this line has a mark
-            if self.marks.contains_key(&current_line) {
-                painter.circle_filled(center, 4.0, Color32::from_rgb(200, 100, 100));
-            }
-        }
-
-        // Handle the trailing empty line if text ends with newline
-        if content.ends_with('\n') {
-            let logical_line_idx = content.split_inclusive('\n').count();
-            let line_start_byte = content.len();
-            let char_idx = content[..line_start_byte].chars().count();
-            let cursor = egui::text::CCursor::new(char_idx);
-            let rect = galley.pos_from_cursor(cursor);
-            let center = Pos2::new(sidebar_rect.center().x, editor_rect.min.y + rect.center().y);
-
-            // Draw subtle hint circle for clickable position
-            painter.circle_stroke(
-                center,
-                2.5,
-                egui::Stroke::new(1.0, ui.visuals().text_color().gamma_multiply(0.3)),
-            );
-
-            if self.marks.contains_key(&logical_line_idx) {
-                painter.circle_filled(center, 4.0, Color32::from_rgb(200, 100, 100));
-            }
-        }
-
-        // Render popup if active
+        // 渲染弹窗
         self.show_popup(ui, content);
     }
 

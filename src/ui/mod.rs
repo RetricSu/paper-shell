@@ -4,3 +4,4 @@ pub mod history;
 pub mod sidebar;
 pub mod title_bar;
 pub mod viewport;
+pub mod ai_panel;

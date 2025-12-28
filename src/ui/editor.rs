@@ -2,6 +2,7 @@ use egui::{Galley, Rect, Sense, Ui, Vec2};
 use std::sync::Arc;
 
 use super::sidebar::Sidebar;
+use super::ai_panel::{AiPanel, AiPanelAction};
 use crate::backend::sidebar_backend::Mark;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -12,6 +13,7 @@ pub struct Editor {
     cursor_index: Option<usize>,
     last_galley: Option<Arc<Galley>>,
     sidebar: Sidebar,
+    ai_panel: AiPanel,
     is_focused: bool,
     current_file: Option<PathBuf>,
     current_file_total_time: u64,
@@ -19,7 +21,8 @@ pub struct Editor {
 }
 
 impl Editor {
-    pub fn show(&mut self, ui: &mut Ui) {
+    pub fn show(&mut self, ui: &mut Ui) -> Option<AiPanelAction> {
+        let ai_action = None;
         let mut content = std::mem::take(&mut self.content);
         let id = ui.make_persistent_id("main_editor");
 
@@ -184,6 +187,8 @@ impl Editor {
                 );
             }
         });
+
+        ai_action
     }
 
     pub fn get_content(&self) -> String {
@@ -340,6 +345,23 @@ impl Editor {
         }
 
         result
+    }
+
+    // AI Panel control methods
+    pub fn get_ai_panel_mut(&mut self) -> &mut AiPanel {
+        &mut self.ai_panel
+    }
+
+    pub fn set_ai_processing(&mut self, processing: bool) {
+        self.ai_panel.set_processing(processing);
+    }
+
+    pub fn set_ai_response(&mut self, response: String) {
+        self.ai_panel.set_response(response);
+    }
+
+    pub fn set_ai_panel_visible(&mut self, visible: bool) {
+        self.ai_panel.is_visible = visible;
     }
 }
 

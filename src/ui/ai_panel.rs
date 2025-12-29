@@ -4,6 +4,7 @@ pub struct AiPanel {
     pub is_visible: bool,
     pub is_processing: bool,
     pub last_response: Option<Vec<String>>,
+    narrative_map_changed: bool,
 }
 
 impl Default for AiPanel {
@@ -12,6 +13,7 @@ impl Default for AiPanel {
             is_visible: true,
             is_processing: false,
             last_response: None,
+            narrative_map_changed: false,
         }
     }
 }
@@ -101,6 +103,24 @@ impl AiPanel {
     pub fn set_response(&mut self, response: Vec<String>) {
         self.last_response = Some(response);
         self.is_processing = false;
+        self.narrative_map_changed = true;
+    }
+
+    pub fn apply_narrative_map(&mut self, map: Vec<String>) {
+        self.last_response = Some(map);
+        // Don't set narrative_map_changed since this is loading from disk
+    }
+
+    pub fn narrative_map_changed(&self) -> bool {
+        self.narrative_map_changed
+    }
+
+    pub fn reset_narrative_map_changed(&mut self) {
+        self.narrative_map_changed = false;
+    }
+
+    pub fn get_narrative_map(&self) -> Option<&Vec<String>> {
+        self.last_response.as_ref()
     }
 }
 

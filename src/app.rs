@@ -1,4 +1,5 @@
 use crate::backend::ai_backend::{AiBackend, AiError};
+use crate::backend::ai_panel_backend::AiPanelBackend;
 use crate::backend::editor_backend::{EditorBackend, HistoryEntry};
 use crate::backend::sidebar_backend::{Mark, SidebarBackend};
 use crate::backend::time_backend::TimeBackend;
@@ -19,6 +20,7 @@ pub enum ResponseMessage {
     FileLoaded(Result<FileData, String>),     // FileData, error
     HistoryLoaded(Result<Vec<HistoryEntry>, String>),
     MarksLoaded(Result<HashMap<usize, Mark>, String>),
+    NarrativeMapLoaded(Result<Option<Vec<String>>, String>),
     OpenFile(PathBuf),
     AiResponse(Result<Vec<String>, AiError>),
 }
@@ -38,6 +40,7 @@ pub struct PaperShellApp {
 
     editor_backend: Arc<EditorBackend>,
     sidebar_backend: Arc<SidebarBackend>,
+    ai_panel_backend: Arc<AiPanelBackend>,
     time_backend: TimeBackend,
     ai_backend: Arc<AiBackend>,
     ai_response_sender: Sender<Result<Vec<String>, AiError>>,
@@ -53,12 +56,17 @@ impl Default for PaperShellApp {
             tracing::error!("Failed to initialize SidebarBackend: {}", e);
             panic!("Cannot continue without SidebarBackend");
         }));
+        let ai_panel_backend = Arc::new(AiPanelBackend::new().unwrap_or_else(|e| {
+            tracing::error!("Failed to initialize AiPanelBackend: {}", e);
+            panic!("Cannot continue without AiPanelBackend");
+        }));
         let available_fonts = crate::ui::font::enumerate_chinese_fonts();
 
         Self {
             editor,
             editor_backend: Arc::new(EditorBackend::default()),
             sidebar_backend,
+            ai_panel_backend,
             time_backend: TimeBackend::default(),
             ai_backend: Arc::new(AiBackend::new(None, None, None)),
             response_receiver: receiver,
@@ -96,7 +104,10 @@ impl PaperShellApp {
 
 // file related operations without UI
 impl PaperShellApp {
-    fn load_file_data(&self, path: &PathBuf) -> Result<(FileData, HashMap<usize, Mark>), String> {
+    fn load_file_data(
+        &self,
+        path: &PathBuf,
+    ) -> Result<(FileData, HashMap<usize, Mark>, Option<Vec<String>>), String> {
         let content = std::fs::read_to_string(path)
             .map_err(|e: std::io::Error| format!("Failed to read file {:?}: {}", path, e))?;
 
@@ -110,6 +121,11 @@ impl PaperShellApp {
             .load_marks(&uuid)
             .map_err(|e| format!("Failed to load marks: {}", e))?;
 
+        let narrative_map = self
+            .ai_panel_backend
+            .load_narrative_map(&uuid)
+            .map_err(|e| format!("Failed to load narrative map: {}", e))?;
+
         Ok((
             FileData {
                 uuid,
@@ -118,6 +134,7 @@ impl PaperShellApp {
                 content,
             },
             marks,
+            narrative_map,
         ))
     }
 
@@ -125,6 +142,7 @@ impl PaperShellApp {
     fn try_load_file_data(&mut self, path: PathBuf) {
         let backend = Arc::clone(&self.editor_backend);
         let sidebar_backend = Arc::clone(&self.sidebar_backend);
+        let ai_panel_backend = Arc::clone(&self.ai_panel_backend);
         let sender = self.response_sender.clone();
 
         std::thread::spawn(move || match std::fs::read_to_string(&path) {
@@ -139,6 +157,11 @@ impl PaperShellApp {
 
                     let marks_result = sidebar_backend.load_marks(&uuid).map_err(|e| e.to_string());
                     let _ = sender.send(ResponseMessage::MarksLoaded(marks_result));
+
+                    let narrative_map_result = ai_panel_backend
+                        .load_narrative_map(&uuid)
+                        .map_err(|e| e.to_string());
+                    let _ = sender.send(ResponseMessage::NarrativeMapLoaded(narrative_map_result));
                 }
                 Err(e) => {
                     let _ = sender.send(ResponseMessage::FileLoaded(Err(format!(
@@ -173,8 +196,11 @@ impl PaperShellApp {
 
     fn open_file(&mut self, path: PathBuf) {
         match self.load_file_data(&path) {
-            Ok(data) => {
-                self.apply_load_file_data(data.0, Some(data.1));
+            Ok((file_data, marks, narrative_map)) => {
+                self.apply_load_file_data(file_data, Some(marks));
+                if let Some(map) = narrative_map {
+                    self.editor.apply_narrative_map(map);
+                }
             }
             Err(e) => {
                 tracing::error!("{}", e);
@@ -214,6 +240,27 @@ impl PaperShellApp {
             std::thread::spawn(move || {
                 if let Err(e) = sidebar_backend.save_marks(&uuid, &marks) {
                     tracing::error!("Failed to save marks in background: {}", e);
+                }
+            });
+        }
+    }
+
+    fn try_save_narrative_map_if_changed(&mut self) {
+        // Check if narrative map has changed and save in background if needed
+        if self.editor.narrative_map_changed()
+            && let Some(uuid) = self.editor.get_sidebar_uuid()
+            && let Some(map) = self.editor.get_narrative_map()
+        {
+            let map = map.clone();
+            let uuid = uuid.clone();
+            let ai_panel_backend = Arc::clone(&self.ai_panel_backend);
+
+            // Reset the changed flag immediately to avoid duplicate saves
+            self.editor.reset_narrative_map_changed();
+
+            std::thread::spawn(move || {
+                if let Err(e) = ai_panel_backend.save_narrative_map(&uuid, &map) {
+                    tracing::error!("Failed to save narrative map in background: {}", e);
                 }
             });
         }
@@ -423,6 +470,16 @@ impl PaperShellApp {
                     }
                     Err(e) => tracing::error!("Failed to load marks: {}", e),
                 },
+                ResponseMessage::NarrativeMapLoaded(result) => match result {
+                    Ok(Some(map)) => {
+                        self.editor.apply_narrative_map(map);
+                        tracing::info!("Narrative map loaded");
+                    }
+                    Ok(None) => {
+                        // No saved narrative map for this file
+                    }
+                    Err(e) => tracing::error!("Failed to load narrative map: {}", e),
+                },
                 ResponseMessage::OpenFile(path) => {
                     self.try_load_file_data(path);
                 }
@@ -462,6 +519,7 @@ impl eframe::App for PaperShellApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         self.check_response_messages();
         self.try_save_marks_if_changed();
+        self.try_save_narrative_map_if_changed();
         self.update_time_backend_if_focus_changed();
 
         // Title Bar

@@ -22,9 +22,27 @@ impl AiPanel {
         let margin = 0.0;
         let top_margin = 25.0; // 留出标题栏空间
 
+        // 检测鼠标是否在面板上方
+        let screen_size = ctx.content_rect();
+        let panel_rect = egui::Rect::from_min_size(
+            egui::pos2(screen_size.right() - panel_width - margin, top_margin),
+            egui::vec2(panel_width, panel_height),
+        );
+
+        let is_hovered = ctx.input(|i| {
+            i.pointer
+                .latest_pos()
+                .map(|pos| panel_rect.contains(pos))
+                .unwrap_or(false)
+        });
+
+        // 根据鼠标状态设置透明度：鼠标在上方时完全不透明，离开时高度透明
+        let fill_alpha = if is_hovered { 220 } else { 120 };
+        let text_color_alpha = if is_hovered { 255 } else { 30 };
+
         // 半透明背景样式
         let panel_frame = Frame::new()
-            .fill(Color32::from_rgba_unmultiplied(200, 200, 200, 255)) // 均衡的淡灰色
+            .fill(Color32::from_rgba_unmultiplied(200, 200, 200, fill_alpha)) // 动态透明度
             .inner_margin(egui::Margin::same(1))
             .stroke(egui::Stroke::new(
                 1.0,
@@ -75,7 +93,14 @@ impl AiPanel {
                                         },
                                     );
                                     ui.label(
-                                        RichText::new(text).size(11.0), //.color(Color32::from_rgb(220, 220, 220)),
+                                        RichText::new(text).size(11.0).color(
+                                            Color32::from_rgba_unmultiplied(
+                                                0,
+                                                0,
+                                                0,
+                                                text_color_alpha,
+                                            ),
+                                        ), //.color(Color32::from_rgb(220, 220, 220)),
                                     );
                                 });
                             });

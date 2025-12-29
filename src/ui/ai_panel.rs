@@ -1,4 +1,4 @@
-use egui::{Align2, Color32, CornerRadius, Frame, RichText, Vec2};
+use egui::{Align2, Color32, Frame, RichText};
 
 pub struct AiPanel {
     pub is_visible: bool,
@@ -26,16 +26,17 @@ impl AiPanel {
 
         // 计算面板位置 - 右上角，留出边距
         let panel_width = 150.0;
-        let margin = 5.0;
-        let top_margin = 20.0; // 留出标题栏空间
+        let panel_height = 300.0;
+        let margin = 0.0;
+        let top_margin = 25.0; // 留出标题栏空间
 
         // 半透明背景样式
         let panel_frame = Frame::new()
-            .fill(Color32::from_rgba_unmultiplied(200, 200, 200, 160)) // 均衡的淡灰色
-            .inner_margin(egui::Margin::same(16))
+            .fill(Color32::from_rgba_unmultiplied(200, 200, 200, 255)) // 均衡的淡灰色
+            .inner_margin(egui::Margin::same(1))
             .stroke(egui::Stroke::new(
                 1.0,
-                Color32::from_rgba_unmultiplied(255, 255, 255, 30),
+                Color32::from_rgba_unmultiplied(255, 255, 255, 255),
             ));
 
         egui::Area::new(egui::Id::new("ai_panel_overlay"))
@@ -45,72 +46,42 @@ impl AiPanel {
             .show(ctx, |ui| {
                 panel_frame.show(ui, |ui| {
                     ui.set_width(panel_width);
+                    ui.set_height(panel_height);
 
-                    ui.add_space(10.0);
+                    // 操作按钮
+                    let button_text = if self.is_processing {
+                        "⏳ Generating..."
+                    } else {
+                        "Generate"
+                    };
+
+                    let button = egui::Button::new(button_text);
+                    if ui.add_enabled(!self.is_processing, button).clicked() {
+                        action = Some(AiPanelAction::SendRequest);
+                    }
+
+                    ui.add_space(2.0);
 
                     // 状态显示
                     if self.is_processing {
                         ui.horizontal(|ui| {
                             ui.spinner();
                             ui.label(
-                                RichText::new("正在处理中...")
-                                    .size(12.0)
-                                    .color(Color32::from_rgb(255, 200, 100)),
+                                RichText::new("正在处理中...").size(12.0), //.color(Color32::from_rgb(255, 200, 100)),
                             );
                         });
                     } else if let Some(response) = &self.last_response {
-                        // 显示回复区域
-                        let response_frame = Frame::new()
-                            .fill(Color32::from_rgba_unmultiplied(50, 50, 55, 200))
-                            .corner_radius(CornerRadius::same(8))
-                            .inner_margin(egui::Margin::same(10));
-
-                        response_frame.show(ui, |ui| {
-                            ui.set_width(ui.available_width());
-                            ui.label(
-                                RichText::new("最新回复:")
-                                    .size(11.0)
-                                    .strong()
-                                    .color(Color32::LIGHT_GRAY),
-                            );
-                            ui.add_space(4.0);
-
-                            egui::ScrollArea::vertical()
-                                .max_height(120.0)
-                                .show(ui, |ui| {
-                                    ui.label(
-                                        RichText::new(response)
-                                            .size(11.0)
-                                            .color(Color32::from_rgb(220, 220, 220)),
-                                    );
-                                });
-                        });
+                        egui::ScrollArea::vertical()
+                            .max_height(panel_height)
+                            .show(ui, |ui| {
+                                ui.label(
+                                    RichText::new(response).size(11.0), //.color(Color32::from_rgb(220, 220, 220)),
+                                );
+                            });
                     } else {
                         ui.label(
-                            RichText::new("点击下方按钮发送文本给 AI")
-                                .size(11.0)
-                                .color(Color32::GRAY),
+                            RichText::new("点击下方按钮发送文本给 AI").size(11.0), //.color(Color32::GRAY),
                         );
-                    }
-
-                    ui.add_space(12.0);
-
-                    // 操作按钮
-                    let button_text = if self.is_processing {
-                        "⏳ Generating..."
-                    } else {
-                        "🚀 Generate Outline"
-                    };
-
-                    let button = egui::Button::new(
-                        RichText::new(button_text).size(13.0).color(Color32::WHITE),
-                    )
-                    .fill(Color32::from_rgba_unmultiplied(70, 120, 220, 220))
-                    .corner_radius(CornerRadius::same(8))
-                    .min_size(Vec2::new(ui.available_width(), 36.0));
-
-                    if ui.add_enabled(!self.is_processing, button).clicked() {
-                        action = Some(AiPanelAction::SendRequest);
                     }
                 });
             });

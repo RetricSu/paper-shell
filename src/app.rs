@@ -444,13 +444,6 @@ impl PaperShellApp {
         match action {
             AiPanelAction::SendRequest => {
                 let content = self.editor.get_content();
-                let prompt = format!(
-                    "You are an expert narrative editor. Your job is to analyze long-form text and structure it into a linear narrative map.
-Output a JSON array of objects.
-For each narrative section (chapter, scene, or key beat), generate only a headline with a number in the same language with the text. A headline is a single, descriptive sentence (Present tense, Active voice) that summarizes the main action. Do NOT use generic titles like Introduction or The Meeting.
-Return ONLY raw JSON. No markdown formatting.:\n\n{}",
-                    content
-                );
 
                 self.editor.set_ai_processing(true);
                 tracing::info!("Sending AI request");
@@ -458,7 +451,7 @@ Return ONLY raw JSON. No markdown formatting.:\n\n{}",
                 let ai_backend = Arc::clone(&self.ai_backend);
                 let sender = self.ai_response_sender.clone();
 
-                ai_backend.send_request(prompt, sender);
+                ai_backend.generate_narrative_map(content.as_str(), sender);
             }
         }
     }

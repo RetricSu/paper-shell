@@ -159,7 +159,7 @@ impl TitleBar {
 
                 // Stats and AI toggle
                 ui.add_space(16.0);
-                let ai_icon = if is_ai_panel_visible { "[x]" } else { "[ ]" };
+                let ai_icon = if is_ai_panel_visible { "[|]" } else { "[ ]" };
                 if ui.label(egui::RichText::new(ai_icon).small()).clicked() {
                     action = Some(TitleBarAction::ToggleAiPanel);
                 }

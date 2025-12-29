@@ -94,6 +94,20 @@ impl AiBackend {
         }
     }
 
+    pub fn generate_narrative_map(&self, content: &str, sender: Sender<Result<String, AiError>>) {
+        let prompt = format!(
+"You are an expert narrative editor. 
+Your job is to analyze long-form text and structure it into a linear narrative map.
+Output a JSON array of strings.
+For each narrative section (chapter, scene, or key beat), generate only a headline in the same language as the text. 
+A headline is a single, descriptive sentence (Present tense, Active voice) that summarizes the main action. 
+Do NOT generate generic headline like Introduction or The Meeting.
+You MUST use plain and simple language in the headline regardless the original style of the text.
+Return ONLY raw JSON. No markdown formatting.:\n\n{}",
+                    content
+                );
+        self.send_request(prompt, sender);
+    }
     pub fn send_request(&self, prompt: String, sender: Sender<Result<String, AiError>>) {
         let api_key = self.api_key.clone();
 

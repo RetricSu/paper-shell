@@ -50,12 +50,12 @@ impl AiPanel {
 
                     // 操作按钮
                     let button_text = if self.is_processing {
-                        "⏳ Generating..."
+                        "⏳ 生成中..."
                     } else {
-                        "Generate"
+                        "导览地图"
                     };
 
-                    let button = egui::Button::new(button_text);
+                    let button = egui::Button::new(egui::RichText::new(button_text).size(10.0));
                     if ui.add_enabled(!self.is_processing, button).clicked() {
                         action = Some(AiPanelAction::SendRequest);
                     }
@@ -78,10 +78,6 @@ impl AiPanel {
                                     RichText::new(response).size(11.0), //.color(Color32::from_rgb(220, 220, 220)),
                                 );
                             });
-                    } else {
-                        ui.label(
-                            RichText::new("点击下方按钮发送文本给 AI").size(11.0), //.color(Color32::GRAY),
-                        );
                     }
                 });
             });

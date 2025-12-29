@@ -1,12 +1,6 @@
-mod app;
-mod backend;
-mod config;
-mod constant;
-mod file;
-mod style;
-mod ui;
-
-use app::PaperShellApp;
+use paper_shell::app::PaperShellApp;
+use paper_shell::constant;
+use paper_shell::ui;
 use std::path::PathBuf;
 
 fn main() -> eframe::Result {

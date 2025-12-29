@@ -5,6 +5,8 @@ use std::sync::mpsc::Sender;
 use std::thread;
 use thiserror::Error;
 
+use crate::messages::ResponseMessage;
+
 #[derive(Error, Debug)]
 pub enum AiError {
     #[error("API error: {0}")]
@@ -95,11 +97,7 @@ impl AiBackend {
         }
     }
 
-    pub fn generate_narrative_map(
-        &self,
-        content: &str,
-        sender: Sender<Result<Vec<String>, AiError>>,
-    ) {
+    pub fn generate_narrative_map(&self, content: &str, sender: Sender<ResponseMessage>) {
         let prompt = format!(
 "You are an expert narrative editor. 
 Your job is to analyze long-form text and structure it into a linear narrative map.
@@ -113,7 +111,7 @@ Return ONLY raw JSON. No markdown formatting.:\n\n{}",
                 );
         self.send_request(prompt, sender);
     }
-    pub fn send_request(&self, prompt: String, sender: Sender<Result<Vec<String>, AiError>>) {
+    pub fn send_request(&self, prompt: String, sender: Sender<ResponseMessage>) {
         let api_key = self.api_key.clone();
 
         let model = self.model.clone();
@@ -123,7 +121,9 @@ Return ONLY raw JSON. No markdown formatting.:\n\n{}",
         thread::spawn(move || {
             let result = Self::blocking_send_request(model, api_url, api_key, prompt);
 
-            let _ = sender.send(Self::deserialize_ai_response(result));
+            let _ = sender.send(ResponseMessage::AiResponse(Self::deserialize_ai_response(
+                result,
+            )));
         });
     }
 

@@ -1,9 +1,10 @@
-use crate::backend::ai_backend::{AiBackend, AiError};
+use crate::backend::ai_backend::AiBackend;
 use crate::backend::ai_panel_backend::AiPanelBackend;
-use crate::backend::editor_backend::{EditorBackend, HistoryEntry};
+use crate::backend::editor_backend::EditorBackend;
 use crate::backend::sidebar_backend::{Mark, SidebarBackend};
 use crate::backend::time_backend::TimeBackend;
 use crate::file::FileData;
+use crate::messages::ResponseMessage;
 use crate::style::configure_style;
 use crate::ui::ai_panel::AiPanelAction;
 use crate::ui::editor::Editor;
@@ -13,17 +14,6 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
-
-/// Response messages from background operations
-pub enum ResponseMessage {
-    FileSaved(Result<(String, u64), String>), // (uuid, total_time), error
-    FileLoaded(Result<FileData, String>),     // FileData, error
-    HistoryLoaded(Result<Vec<HistoryEntry>, String>),
-    MarksLoaded(Result<HashMap<usize, Mark>, String>),
-    NarrativeMapLoaded(Result<Option<Vec<String>>, String>),
-    OpenFile(PathBuf),
-    AiResponse(Result<Vec<String>, AiError>),
-}
 
 pub struct PaperShellApp {
     editor: Editor,
@@ -43,14 +33,11 @@ pub struct PaperShellApp {
     ai_panel_backend: Arc<AiPanelBackend>,
     time_backend: TimeBackend,
     ai_backend: Arc<AiBackend>,
-    ai_response_sender: Sender<Result<Vec<String>, AiError>>,
-    ai_response_receiver: Receiver<Result<Vec<String>, AiError>>,
 }
 
 impl Default for PaperShellApp {
     fn default() -> Self {
         let (sender, receiver) = channel();
-        let (ai_sender, ai_receiver) = channel();
         let editor = Editor::default();
         let sidebar_backend = Arc::new(SidebarBackend::new().unwrap_or_else(|e| {
             tracing::error!("Failed to initialize SidebarBackend: {}", e);
@@ -71,8 +58,6 @@ impl Default for PaperShellApp {
             ai_backend: Arc::new(AiBackend::new(None, None, None)),
             response_receiver: receiver,
             response_sender: sender,
-            ai_response_sender: ai_sender,
-            ai_response_receiver: ai_receiver,
             history_window: HistoryWindow::new(),
             available_fonts,
             current_font: "Default".to_string(),
@@ -507,9 +492,9 @@ impl PaperShellApp {
                 tracing::info!("Sending AI request");
 
                 let ai_backend = Arc::clone(&self.ai_backend);
-                let sender = self.ai_response_sender.clone();
+                let response_sender = self.response_sender.clone();
 
-                ai_backend.generate_narrative_map(content.as_str(), sender);
+                ai_backend.generate_narrative_map(content.as_str(), response_sender);
             }
         }
     }
@@ -581,13 +566,6 @@ impl eframe::App for PaperShellApp {
         // AI 助手独立窗口
         if let Some(action) = self.editor.get_ai_panel_mut().show(ctx) {
             self.handle_ai_panel_action(action);
-        }
-
-        // Check for AI responses
-        if let Ok(result) = self.ai_response_receiver.try_recv() {
-            self.response_sender
-                .send(ResponseMessage::AiResponse(result))
-                .unwrap();
         }
 
         // History Window

@@ -38,7 +38,9 @@ impl AiPanelBackend {
 
     pub fn save_narrative_map(&self, uuid: &str, map: &[String]) -> Result<(), AiPanelError> {
         let file_path = self.narrative_maps_dir.join(format!("{}.json", uuid));
-        let narrative_map = NarrativeMap { items: map.to_owned() };
+        let narrative_map = NarrativeMap {
+            items: map.to_owned(),
+        };
         let content = serde_json::to_string_pretty(&narrative_map)?;
         fs::write(file_path, content)?;
         Ok(())

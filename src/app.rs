@@ -39,6 +39,12 @@ pub struct PaperShellApp {
 
 impl Default for PaperShellApp {
     fn default() -> Self {
+        // Initialize tracing subscriber for console output
+        tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::DEBUG)
+            .with_thread_ids(true)
+            .init();
+
         let (sender, receiver) = channel();
         let editor = Editor::default();
         let sidebar_backend = Arc::new(SidebarBackend::new().unwrap_or_else(|e| {
@@ -50,6 +56,12 @@ impl Default for PaperShellApp {
             panic!("Cannot continue without AiPanelBackend");
         }));
         let available_fonts = crate::ui::font::enumerate_chinese_fonts();
+        let config = crate::config::Config::default();
+        let ai_backend = Arc::new(AiBackend::new(
+            Some(config.settings.ai_panel.model_name.clone()),
+            Some(config.settings.ai_panel.api_url.clone()),
+            Some(config.settings.ai_panel.api_key.clone()),
+        ));
 
         Self {
             editor,
@@ -57,14 +69,14 @@ impl Default for PaperShellApp {
             sidebar_backend,
             ai_panel_backend,
             time_backend: TimeBackend::default(),
-            ai_backend: Arc::new(AiBackend::new(None, None, None)),
+            ai_backend,
             response_receiver: receiver,
             response_sender: sender,
             history_window: HistoryWindow::new(),
             available_fonts,
             current_font: "Default".to_string(),
             last_focus_state: false,
-            config: crate::config::Config::default(),
+            config,
         }
     }
 }
@@ -91,10 +103,7 @@ impl PaperShellApp {
 
 // file related operations without UI
 impl PaperShellApp {
-    fn load_file_data(
-        &self,
-        path: &PathBuf,
-    ) -> Result<LoadFileResult, String> {
+    fn load_file_data(&self, path: &PathBuf) -> Result<LoadFileResult, String> {
         let content = std::fs::read_to_string(path)
             .map_err(|e: std::io::Error| format!("Failed to read file {:?}: {}", path, e))?;
 

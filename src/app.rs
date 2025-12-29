@@ -60,7 +60,7 @@ impl Default for PaperShellApp {
             editor_backend: Arc::new(EditorBackend::default()),
             sidebar_backend,
             time_backend: TimeBackend::default(),
-            ai_backend: Arc::new(AiBackend::new()),
+            ai_backend: Arc::new(AiBackend::new(None, None, None)),
             response_receiver: receiver,
             response_sender: sender,
             ai_response_sender: ai_sender,

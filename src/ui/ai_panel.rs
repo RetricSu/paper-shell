@@ -3,7 +3,7 @@ use egui::{Align2, Color32, Frame, RichText};
 pub struct AiPanel {
     pub is_visible: bool,
     pub is_processing: bool,
-    pub last_response: Option<String>,
+    pub last_response: Option<Vec<String>>,
 }
 
 impl Default for AiPanel {
@@ -74,9 +74,18 @@ impl AiPanel {
                         egui::ScrollArea::vertical()
                             .max_height(panel_height)
                             .show(ui, |ui| {
-                                ui.label(
-                                    RichText::new(response).size(11.0), //.color(Color32::from_rgb(220, 220, 220)),
-                                );
+                                egui::Frame::new().inner_margin(8.0).show(ui, |ui| {
+                                    let text = response.iter().enumerate().fold(
+                                        String::new(),
+                                        |mut acc, (i, line)| {
+                                            acc.push_str(&format!("{}. {}\n", i + 1, line));
+                                            acc
+                                        },
+                                    );
+                                    ui.label(
+                                        RichText::new(text).size(11.0), //.color(Color32::from_rgb(220, 220, 220)),
+                                    );
+                                });
                             });
                     }
                 });
@@ -89,7 +98,7 @@ impl AiPanel {
         self.is_processing = processing;
     }
 
-    pub fn set_response(&mut self, response: String) {
+    pub fn set_response(&mut self, response: Vec<String>) {
         self.last_response = Some(response);
         self.is_processing = false;
     }

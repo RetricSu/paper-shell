@@ -20,7 +20,7 @@ pub enum ResponseMessage {
     HistoryLoaded(Result<Vec<HistoryEntry>, String>),
     MarksLoaded(Result<HashMap<usize, Mark>, String>),
     OpenFile(PathBuf),
-    AiResponse(Result<String, AiError>),
+    AiResponse(Result<Vec<String>, AiError>),
 }
 
 pub struct PaperShellApp {
@@ -40,8 +40,8 @@ pub struct PaperShellApp {
     sidebar_backend: Arc<SidebarBackend>,
     time_backend: TimeBackend,
     ai_backend: Arc<AiBackend>,
-    ai_response_sender: Sender<Result<String, AiError>>,
-    ai_response_receiver: Receiver<Result<String, AiError>>,
+    ai_response_sender: Sender<Result<Vec<String>, AiError>>,
+    ai_response_receiver: Receiver<Result<Vec<String>, AiError>>,
 }
 
 impl Default for PaperShellApp {
@@ -432,7 +432,8 @@ impl PaperShellApp {
                         tracing::info!("AI response received");
                     }
                     Err(e) => {
-                        self.editor.set_ai_response(format!("Error: {}", e));
+                        self.editor
+                            .set_ai_response([format!("Error: {}", e)].to_vec());
                         tracing::error!("AI request failed: {}", e);
                     }
                 },

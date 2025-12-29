@@ -356,7 +356,7 @@ impl Editor {
         self.ai_panel.set_processing(processing);
     }
 
-    pub fn set_ai_response(&mut self, response: String) {
+    pub fn set_ai_response(&mut self, response: Vec<String>) {
         self.ai_panel.set_response(response);
     }
 }

@@ -15,6 +15,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
+type LoadFileResult = (FileData, HashMap<usize, Mark>, Option<Vec<String>>);
+
 pub struct PaperShellApp {
     editor: Editor,
     response_sender: Sender<ResponseMessage>,
@@ -92,7 +94,7 @@ impl PaperShellApp {
     fn load_file_data(
         &self,
         path: &PathBuf,
-    ) -> Result<(FileData, HashMap<usize, Mark>, Option<Vec<String>>), String> {
+    ) -> Result<LoadFileResult, String> {
         let content = std::fs::read_to_string(path)
             .map_err(|e: std::io::Error| format!("Failed to read file {:?}: {}", path, e))?;
 

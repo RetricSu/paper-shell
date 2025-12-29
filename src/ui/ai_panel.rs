@@ -1,21 +1,11 @@
 use egui::{Align2, Color32, Frame, RichText};
 
+#[derive(Default)]
 pub struct AiPanel {
     pub is_visible: bool,
     pub is_processing: bool,
     pub last_response: Option<Vec<String>>,
     narrative_map_changed: bool,
-}
-
-impl Default for AiPanel {
-    fn default() -> Self {
-        Self {
-            is_visible: true,
-            is_processing: false,
-            last_response: None,
-            narrative_map_changed: false,
-        }
-    }
 }
 
 impl AiPanel {

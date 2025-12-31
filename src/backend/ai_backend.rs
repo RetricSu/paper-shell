@@ -106,8 +106,7 @@ For each narrative section (chapter, scene, or key beat), generate only a headli
 A headline is a single, descriptive sentence (Present tense, Active voice) that summarizes the main action. 
 Do NOT generate generic headline like Introduction or The Meeting.
 You MUST use plain and simple language in the headline regardless the original style of the text.
-You MUST generate a few but MEANINGFUL headlines that is not overly detailed.
-Do NOT Generate over 10 headlines for the entire text.
+You MUST generate a few (10 max) but MEANINGFUL headlines that is not overly detailed.
 Return ONLY raw JSON. No markdown formatting.:\n\n{}",
                     content
                 );

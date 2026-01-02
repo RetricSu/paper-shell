@@ -47,16 +47,16 @@ impl Editor {
                 .desired_rows(30)
                 .font(egui::FontId::monospace(14.0))
                 .show(ui);
+            // 3. Sidebar Rendering
+            self.render_sidebar(&output, ui, sidebar_width);
 
             // =========================================================
             //   enable auto-scroll to cursor when typing or selecting
             // =========================================================
-            if output.response.has_focus() {
-                Self::enable_scroll_to_cursor(ui, &output);
-            }
+            Self::enable_scroll_to_cursor(ui, &output);
             Self::fix_macos_ime(&output, ui);
-
             self.draw_underline_decoration_at_focus_line(&output, ui);
+            self.add_context_menu(&output);
 
             let editor_response = output.response;
 
@@ -64,33 +64,10 @@ impl Editor {
             self.content = content;
 
             if editor_response.changed() {
-                self.cached_word_count = None; // 标记为脏
+                self.cached_word_count = None;
             }
-
             if editor_response.clicked() {
                 editor_response.request_focus();
-            }
-
-            // 3. Delegate sidebar rendering to Sidebar component
-            // Calculate height based on content height and visible area
-            let content_height = editor_response.rect.height();
-            let min_height = ui.clip_rect().height().max(600.0);
-            let sidebar_height = content_height.max(min_height);
-
-            let sidebar_rect =
-                Rect::from_min_size(sidebar_origin, Vec2::new(sidebar_width, sidebar_height));
-
-            if let Some(galley) = &self.last_galley {
-                let clip_rect = ui.clip_rect();
-                let text_offset = output.galley_pos;
-                self.sidebar.show(
-                    ui,
-                    &self.content,
-                    galley,
-                    sidebar_rect,
-                    clip_rect,
-                    text_offset,
-                );
             }
         });
 
@@ -254,34 +231,37 @@ impl Editor {
     }
 
     fn enable_scroll_to_cursor(ui: &mut Ui, output: &egui::text_edit::TextEditOutput) {
-        let should_scroll_to_cursor = ui.input(|i| {
-            // Condition A: Left mouse button is held down (dragging to select text)
-            let is_dragging_select = i.pointer.is_decidedly_dragging();
+        if output.response.has_focus() {
+            let should_scroll_to_cursor = ui.input(|i| {
+                // Condition A: Left mouse button is held down (dragging to select text)
+                let is_dragging_select = i.pointer.is_decidedly_dragging();
 
-            // Condition B: There are keyboard key presses or text input (typing or moving cursor with arrow keys)
-            // We need to exclude pure scroll wheel events and only respond to key-related events
-            let is_typing_or_navigating = i.events.iter().any(|e| {
-                matches!(
-                    e,
-                    egui::Event::Key { .. } | egui::Event::Text(_) | egui::Event::Paste(_)
-                )
+                // Condition B: There are keyboard key presses or text input (typing or moving cursor with arrow keys)
+                // We need to exclude pure scroll wheel events and only respond to key-related events
+                let is_typing_or_navigating = i.events.iter().any(|e| {
+                    matches!(
+                        e,
+                        egui::Event::Key { .. } | egui::Event::Text(_) | egui::Event::Paste(_)
+                    )
+                });
+
+                is_dragging_select || is_typing_or_navigating
             });
 
-            is_dragging_select || is_typing_or_navigating
-        });
+            // Execute scrolling logic
+            if should_scroll_to_cursor && let Some(cursor_range) = output.cursor_range {
+                let cursor_relative_rect = output.galley.pos_from_cursor(cursor_range.primary);
 
-        // Execute scrolling logic
-        if should_scroll_to_cursor && let Some(cursor_range) = output.cursor_range {
-            let cursor_relative_rect = output.galley.pos_from_cursor(cursor_range.primary);
+                // Convert to absolute screen position
+                let global_cursor_rect =
+                    cursor_relative_rect.translate(output.galley_pos.to_vec2());
 
-            // Convert to absolute screen position
-            let global_cursor_rect = cursor_relative_rect.translate(output.galley_pos.to_vec2());
+                // Slightly expand the rectangle to provide visual padding
+                let padded_rect = global_cursor_rect.expand(2.0);
 
-            // Slightly expand the rectangle to provide visual padding
-            let padded_rect = global_cursor_rect.expand(2.0);
-
-            // Force ScrollArea to scroll to the cursor position
-            ui.scroll_to_rect(padded_rect, None);
+                // Force ScrollArea to scroll to the cursor position
+                ui.scroll_to_rect(padded_rect, None);
+            }
         }
     }
 
@@ -358,6 +338,108 @@ impl Editor {
             self.cursor_index = None;
         }
     }
+
+    fn add_context_menu(&mut self, output: &egui::text_edit::TextEditOutput) {
+        // Add context menu for copy-paste operations
+        output.response.context_menu(|ui| {
+            // Get selected text if any
+            let selected_text = if let Some(cursor_range) = output.cursor_range {
+                if cursor_range.is_empty() {
+                    None
+                } else {
+                    let start = cursor_range.primary.index.min(cursor_range.secondary.index);
+                    let end = cursor_range.primary.index.max(cursor_range.secondary.index);
+                    let start_byte = self
+                        .content
+                        .char_indices()
+                        .nth(start)
+                        .map(|(i, _)| i)
+                        .unwrap_or(0);
+                    let end_byte = self
+                        .content
+                        .char_indices()
+                        .nth(end)
+                        .map(|(i, _)| i)
+                        .unwrap_or(self.content.len());
+                    Some(self.content[start_byte..end_byte].to_string())
+                }
+            } else {
+                None
+            };
+          
+            if ui.button("剪切").clicked() {
+                if let Some(selected) = &selected_text {
+                    ui.ctx().copy_text(selected.clone());
+                    // Remove selected text
+                    if let Some(cursor_range) = output.cursor_range {
+                        let start = cursor_range.primary.index.min(cursor_range.secondary.index);
+                        let end = cursor_range.primary.index.max(cursor_range.secondary.index);
+                        let start_byte = self
+                            .content
+                            .char_indices()
+                            .nth(start)
+                            .map(|(i, _)| i)
+                            .unwrap_or(0);
+                        let end_byte = self
+                            .content
+                            .char_indices()
+                            .nth(end)
+                            .map(|(i, _)| i)
+                            .unwrap_or(self.content.len());
+                        self.content.replace_range(start_byte..end_byte, "");
+                    }
+                } else {
+                    ui.ctx().copy_text(self.content.clone());
+                    self.content.clear();
+                }
+                ui.close();
+            }
+            if ui.button("复制").clicked() {
+                if let Some(selected) = &selected_text {
+                    ui.ctx().copy_text(selected.clone());
+                } else {
+                    ui.ctx().copy_text(self.content.clone());
+                }
+                ui.close();
+            }
+            if ui.button("粘贴").clicked() {
+                // Request focus to ensure paste works
+                output.response.request_focus();
+                ui.close();
+            }
+        });
+    }
+
+    fn render_sidebar(
+        &mut self,
+        output: &egui::text_edit::TextEditOutput,
+        ui: &mut Ui,
+        sidebar_width: f32,
+    ) {
+        let sidebar_origin = ui.cursor().min;
+        // Delegate sidebar rendering to Sidebar component
+        // Calculate height based on content height and visible area
+        let content_height = output.response.rect.height();
+        let min_height = ui.clip_rect().height().max(600.0);
+        let sidebar_height = content_height.max(min_height);
+
+        let sidebar_rect =
+            Rect::from_min_size(sidebar_origin, Vec2::new(sidebar_width, sidebar_height));
+
+        if let Some(galley) = &self.last_galley {
+            let clip_rect = ui.clip_rect();
+            let text_offset = output.galley_pos;
+            self.sidebar.show(
+                ui,
+                &self.content,
+                galley,
+                sidebar_rect,
+                clip_rect,
+                text_offset,
+            );
+        }
+    }
+
     // AI Panel control methods
     pub fn get_ai_panel_mut(&mut self) -> &mut AiPanel {
         &mut self.ai_panel

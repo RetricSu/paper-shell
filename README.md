@@ -12,7 +12,7 @@ cargo build --release
 
 - [ ] fix open-with on Mac and other system
 - [ ] search and replace
-- [ ] support copy-paste and right click context menu
+- [x] support copy-paste and right click context menu
 - [ ] select a text and high-light all the matched ones
 - [ ] fix line display for punch tailing
 - [ ] add ai-ask/dictionary-lookup panel

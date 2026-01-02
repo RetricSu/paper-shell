@@ -100,6 +100,10 @@ pub struct Settings {
     /// Using fixed-size array won't make much difference on performance
     #[serde(default)]
     pub recent_files: Vec<PathBuf>,
+
+    /// AI Panel configuration
+    #[serde(default)]
+    pub ai_panel: AiPanelConfig,
 }
 
 impl Default for Settings {
@@ -109,6 +113,32 @@ impl Default for Settings {
             autosave_interval: 300, // 5 minutes
             font_size: 14.0,
             recent_files: Vec::new(),
+            ai_panel: AiPanelConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiPanelConfig {
+    /// API key for AI service
+    #[serde(default)]
+    pub api_key: String,
+
+    /// API URL for AI service
+    #[serde(default)]
+    pub api_url: String,
+
+    /// Model name for AI service
+    #[serde(default)]
+    pub model_name: String,
+}
+
+impl Default for AiPanelConfig {
+    fn default() -> Self {
+        Self {
+            api_key: String::new(),
+            api_url: "https://generativelanguage.googleapis.com/v1beta/models/".to_string(),
+            model_name: "gemini-2.5-flash-lite-preview-09-2025".to_string(),
         }
     }
 }

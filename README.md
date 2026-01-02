@@ -7,3 +7,17 @@ Working in progress: A simple, concise and informative text editor for everyday 
 ```bash
 cargo build --release
 ```
+
+## TODOs
+
+- [ ] fix open-with on Mac and other system
+- [ ] search and replace
+- [ ] support copy-paste and right click context menu
+- [ ] select a text and high-light all the matched ones
+- [ ] fix line display for punch tailing
+- [ ] add ai-ask/dictionary-lookup panel
+- [ ] support narrative map with click-to-jump function
+- [ ] add a test panel that use AI as readers to give feedbacks
+- [ ] informative data records on paragraph or full text
+- [ ] add a add-ons/plugin system for export
+- [ ] support print document

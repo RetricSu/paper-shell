@@ -518,6 +518,24 @@ impl eframe::App for PaperShellApp {
         self.try_save_narrative_map_if_changed();
         self.update_time_backend_if_focus_changed();
 
+        // --- MACOS FILE HANDLER POLLING ---
+        #[cfg(target_os = "macos")]
+        {
+            // Poll for files opened via "Open With"
+            if let Ok(mut files) = crate::open_with::PENDING_FILES.lock() {
+                if !files.is_empty() {
+                    for path_str in files.drain(..) {
+                        let path = std::path::PathBuf::from(&path_str);
+                        println!("[Paper Shell] Processing file: {:?}", path);
+                        self.open_file(path);
+                    }
+                    // Important: Repaint immediately to show the new file
+                    ctx.request_repaint();
+                }
+            }
+        }
+        // ------------------------------
+
         // Title Bar
         egui::TopBottomPanel::top("title_bar_panel").show(ctx, |ui| {
             let (total_words, cursor_words) = self.editor.get_stats();

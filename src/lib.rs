@@ -10,3 +10,4 @@ pub mod file;
 pub mod messages;
 pub mod style;
 pub mod ui;
+pub mod open_with;

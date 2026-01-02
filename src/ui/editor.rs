@@ -52,107 +52,13 @@ impl Editor {
             //   enable auto-scroll to cursor when typing or selecting
             // =========================================================
             if output.response.has_focus() {
-                let should_scroll_to_cursor = ui.input(|i| {
-                    // Condition A: Left mouse button is held down (dragging to select text)
-                    let is_dragging_select = i.pointer.is_decidedly_dragging();
-
-                    // Condition B: There are keyboard key presses or text input (typing or moving cursor with arrow keys)
-                    // We need to exclude pure scroll wheel events and only respond to key-related events
-                    let is_typing_or_navigating = i.events.iter().any(|e| {
-                        matches!(
-                            e,
-                            egui::Event::Key { .. } | egui::Event::Text(_) | egui::Event::Paste(_)
-                        )
-                    });
-
-                    is_dragging_select || is_typing_or_navigating
-                });
-
-                // Execute scrolling logic
-                if should_scroll_to_cursor && let Some(cursor_range) = output.cursor_range {
-                    let cursor_relative_rect = output.galley.pos_from_cursor(cursor_range.primary);
-
-                    // Convert to absolute screen position
-                    let global_cursor_rect =
-                        cursor_relative_rect.translate(output.galley_pos.to_vec2());
-
-                    // Slightly expand the rectangle to provide visual padding
-                    let padded_rect = global_cursor_rect.expand(2.0);
-
-                    // Force ScrollArea to scroll to the cursor position
-                    ui.scroll_to_rect(padded_rect, None);
-                }
+                Self::enable_scroll_to_cursor(ui, &output);
             }
+            Self::fix_macos_ime(&output, ui);
 
-            // =========================================================
-            //  Critical Fixes on my macOS M1 Machine for IME candidate window Positioning
-            // =========================================================
-            if cfg!(target_os = "macos")
-                && output.response.has_focus()
-                && let Some(cursor_range) = output.cursor_range
-            {
-                // 1. Calculate the absolute position of the cursor on the screen
-                // output.galley_pos includes scroll offset and padding, making it the most accurate reference point
-                let cursor_rect_in_galley = output.galley.pos_from_cursor(cursor_range.primary);
-                let screen_cursor_rect =
-                    cursor_rect_in_galley.translate(output.galley_pos.to_vec2());
-
-                // 2. Force override IME position
-                ui.ctx().output_mut(|o| {
-                    // Construct a tiny rectangle representing the cursor position.
-                    const IME_CURSOR_RECT_WIDTH: f32 = 2.0;
-                    let ime_rect = egui::Rect::from_min_size(
-                        screen_cursor_rect.min,
-                        egui::vec2(IME_CURSOR_RECT_WIDTH, screen_cursor_rect.height()),
-                    );
-
-                    // Key: Set both rect (input area) and cursor_rect (cursor area) to this tiny rectangle
-                    // This "tricks" macOS into thinking the input area is only as big as the cursor,
-                    // causing the candidate window to appear right next to the cursor
-                    o.ime = Some(egui::output::IMEOutput {
-                        rect: ime_rect,
-                        cursor_rect: ime_rect,
-                    });
-                });
-            }
-            // =========================================================
+            self.draw_underline_decoration_at_focus_line(&output, ui);
 
             let editor_response = output.response;
-
-            // Capture the galley from the editor output
-            self.last_galley = Some(output.galley.clone());
-
-            // 3. Handle State & Draw Decoration
-            self.is_focused = editor_response.has_focus();
-            if let Some(cursor_range) = output.cursor_range {
-                self.cursor_index = Some(cursor_range.primary.index);
-
-                // Draw Underline
-                if self.is_focused {
-                    let cursor_rect_in_galley = output.galley.pos_from_cursor(cursor_range.primary);
-
-                    // Translate relative galley coordinates to screen coordinates
-                    let screen_cursor_rect =
-                        cursor_rect_in_galley.translate(output.galley_pos.to_vec2());
-
-                    // Define underline position
-                    let underline_y = screen_cursor_rect.max.y;
-                    let min_x = editor_response.rect.min.x;
-                    let max_x = editor_response.rect.max.x;
-
-                    ui.painter().add(egui::Shape::dashed_line(
-                        &[
-                            egui::pos2(min_x, underline_y),
-                            egui::pos2(max_x, underline_y),
-                        ],
-                        egui::Stroke::new(1.0, ui.visuals().weak_text_color()),
-                        4.0, // dash_length
-                        2.0, // gap_length
-                    ));
-                }
-            } else {
-                self.cursor_index = None;
-            }
 
             // Content is always taken back
             self.content = content;
@@ -347,6 +253,111 @@ impl Editor {
         result
     }
 
+    fn enable_scroll_to_cursor(ui: &mut Ui, output: &egui::text_edit::TextEditOutput) {
+        let should_scroll_to_cursor = ui.input(|i| {
+            // Condition A: Left mouse button is held down (dragging to select text)
+            let is_dragging_select = i.pointer.is_decidedly_dragging();
+
+            // Condition B: There are keyboard key presses or text input (typing or moving cursor with arrow keys)
+            // We need to exclude pure scroll wheel events and only respond to key-related events
+            let is_typing_or_navigating = i.events.iter().any(|e| {
+                matches!(
+                    e,
+                    egui::Event::Key { .. } | egui::Event::Text(_) | egui::Event::Paste(_)
+                )
+            });
+
+            is_dragging_select || is_typing_or_navigating
+        });
+
+        // Execute scrolling logic
+        if should_scroll_to_cursor && let Some(cursor_range) = output.cursor_range {
+            let cursor_relative_rect = output.galley.pos_from_cursor(cursor_range.primary);
+
+            // Convert to absolute screen position
+            let global_cursor_rect = cursor_relative_rect.translate(output.galley_pos.to_vec2());
+
+            // Slightly expand the rectangle to provide visual padding
+            let padded_rect = global_cursor_rect.expand(2.0);
+
+            // Force ScrollArea to scroll to the cursor position
+            ui.scroll_to_rect(padded_rect, None);
+        }
+    }
+
+    fn fix_macos_ime(output: &egui::text_edit::TextEditOutput, ui: &mut Ui) {
+        if cfg!(target_os = "macos")
+            && output.response.has_focus()
+            && let Some(cursor_range) = output.cursor_range
+        {
+            // 1. Calculate the absolute position of the cursor on the screen
+            // output.galley_pos includes scroll offset and padding, making it the most accurate reference point
+            let cursor_rect_in_galley = output.galley.pos_from_cursor(cursor_range.primary);
+            let screen_cursor_rect = cursor_rect_in_galley.translate(output.galley_pos.to_vec2());
+
+            // 2. Force override IME position
+            ui.ctx().output_mut(|o| {
+                // Construct a tiny rectangle representing the cursor position.
+                const IME_CURSOR_RECT_WIDTH: f32 = 2.0;
+                let ime_rect = egui::Rect::from_min_size(
+                    screen_cursor_rect.min,
+                    egui::vec2(IME_CURSOR_RECT_WIDTH, screen_cursor_rect.height()),
+                );
+
+                // Key: Set both rect (input area) and cursor_rect (cursor area) to this tiny rectangle
+                // This "tricks" macOS into thinking the input area is only as big as the cursor,
+                // causing the candidate window to appear right next to the cursor
+                o.ime = Some(egui::output::IMEOutput {
+                    rect: ime_rect,
+                    cursor_rect: ime_rect,
+                });
+            });
+        }
+        // =========================================================
+    }
+
+    fn draw_underline_decoration_at_focus_line(
+        &mut self,
+        output: &egui::text_edit::TextEditOutput,
+        ui: &mut Ui,
+    ) {
+        let editor_response = output.response.clone();
+
+        // Capture the galley from the editor output
+        self.last_galley = Some(output.galley.clone());
+
+        // 3. Handle State & Draw Decoration
+        self.is_focused = editor_response.has_focus();
+        if let Some(cursor_range) = output.cursor_range {
+            self.cursor_index = Some(cursor_range.primary.index);
+
+            // Draw Underline
+            if self.is_focused {
+                let cursor_rect_in_galley = output.galley.pos_from_cursor(cursor_range.primary);
+
+                // Translate relative galley coordinates to screen coordinates
+                let screen_cursor_rect =
+                    cursor_rect_in_galley.translate(output.galley_pos.to_vec2());
+
+                // Define underline position
+                let underline_y = screen_cursor_rect.max.y;
+                let min_x = editor_response.rect.min.x;
+                let max_x = editor_response.rect.max.x;
+
+                ui.painter().add(egui::Shape::dashed_line(
+                    &[
+                        egui::pos2(min_x, underline_y),
+                        egui::pos2(max_x, underline_y),
+                    ],
+                    egui::Stroke::new(1.0, ui.visuals().weak_text_color()),
+                    4.0, // dash_length
+                    2.0, // gap_length
+                ));
+            }
+        } else {
+            self.cursor_index = None;
+        }
+    }
     // AI Panel control methods
     pub fn get_ai_panel_mut(&mut self) -> &mut AiPanel {
         &mut self.ai_panel

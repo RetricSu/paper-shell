@@ -1,4 +1,4 @@
-use egui::{Galley, Rect, Sense, Ui, Vec2};
+use egui::{Galley, Pos2, Rect, Sense, Ui, Vec2};
 use std::sync::Arc;
 
 use super::ai_panel::{AiPanel, AiPanelAction};
@@ -61,9 +61,6 @@ impl Editor {
                 .layouter(&mut layouter)
                 .show(ui);
 
-            // 3. Sidebar Rendering
-            self.render_sidebar(&output, ui, sidebar_width);
-
             // =========================================================
             //   enable auto-scroll to cursor when typing or selecting
             // =========================================================
@@ -73,10 +70,12 @@ impl Editor {
             self.highlight_matches(&output, ui, &content);
             self.add_context_menu(&output, &mut content);
 
-            let editor_response = output.response;
-
+            // Capture the galley from the editor output
+            self.last_galley = Some(output.galley.clone());
             // Content is always taken back
             self.content = content;
+
+            let editor_response = &output.response;
 
             if editor_response.changed() {
                 self.cached_word_count = None;
@@ -84,6 +83,16 @@ impl Editor {
             if editor_response.clicked() {
                 editor_response.request_focus();
             }
+
+            // 3. Sidebar Rendering
+            let content_height = editor_response.rect.height();
+            self.render_sidebar(
+                sidebar_origin,
+                sidebar_width,
+                content_height,
+                output.galley_pos,
+                ui,
+            );
         });
 
         ai_action
@@ -534,14 +543,14 @@ impl Editor {
 
     fn render_sidebar(
         &mut self,
-        output: &egui::text_edit::TextEditOutput,
-        ui: &mut Ui,
+        sidebar_origin: Pos2,
         sidebar_width: f32,
+        content_height: f32,
+        galley_pos: Pos2,
+        ui: &mut Ui,
     ) {
-        let sidebar_origin = ui.cursor().min;
         // Delegate sidebar rendering to Sidebar component
         // Calculate height based on content height and visible area
-        let content_height = output.response.rect.height();
         let min_height = ui.clip_rect().height().max(600.0);
         let sidebar_height = content_height.max(min_height);
 
@@ -550,7 +559,7 @@ impl Editor {
 
         if let Some(galley) = &self.last_galley {
             let clip_rect = ui.clip_rect();
-            let text_offset = output.galley_pos;
+            let text_offset = galley_pos;
             self.sidebar.show(
                 ui,
                 &self.content,

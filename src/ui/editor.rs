@@ -720,9 +720,14 @@ impl Editor {
             return;
         }
 
-        let mut open = true;
+        let screen_rect = ui.ctx().content_rect();
+        let pos = egui::pos2(screen_rect.max.x - 290.0, screen_rect.min.y + 26.0);
+
         egui::Window::new("查找替换")
-            .open(&mut open)
+            .title_bar(false)
+            .fixed_pos(pos)
+            .resizable(false)
+            .collapsible(false)
             .show(ui.ctx(), |ui| {
                 ui.horizontal(|ui| {
                     ui.label("查找:");
@@ -755,6 +760,9 @@ impl Editor {
                     if ui.button("上一个").clicked() {
                         self.previous_match();
                     }
+                    if ui.button("退出").clicked() {
+                        self.search_replace.show_dialog = false;
+                    }
                 });
 
                 if !self.search_replace.matches.is_empty() {
@@ -765,13 +773,6 @@ impl Editor {
                     ));
                 }
             });
-
-        if !open {
-            self.search_replace.show_dialog = false;
-            self.search_replace.matches.clear();
-            self.search_replace.current_match = None;
-            self.search_replace.match_index = 0;
-        }
     }
 
     fn find_matches(&mut self) {

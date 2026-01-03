@@ -70,8 +70,8 @@ impl Editor {
             Self::enable_scroll_to_cursor(ui, &output);
             Self::fix_macos_ime(&output, ui);
             self.draw_underline_decoration_at_focus_line(&output, ui);
-            self.highlight_matches(&output, ui);
-            self.add_context_menu(&output);
+            self.highlight_matches(&output, ui, &content);
+            self.add_context_menu(&output, &mut content);
 
             let editor_response = output.response;
 
@@ -354,7 +354,12 @@ impl Editor {
         }
     }
 
-    fn highlight_matches(&self, output: &egui::text_edit::TextEditOutput, ui: &mut Ui) {
+    fn highlight_matches(
+        &self,
+        output: &egui::text_edit::TextEditOutput,
+        ui: &mut Ui,
+        content: &str,
+    ) {
         let cursor_range = match output.cursor_range {
             Some(range) => range,
             None => return,
@@ -369,20 +374,18 @@ impl Editor {
         }
 
         // Convert char indices to byte indices to get the substring
-        let start_byte = self
-            .content
+        let start_byte = content
             .char_indices()
             .nth(start)
             .map(|(i, _)| i)
             .unwrap_or(0);
-        let end_byte = self
-            .content
+        let end_byte = content
             .char_indices()
             .nth(end)
             .map(|(i, _)| i)
-            .unwrap_or(self.content.len());
+            .unwrap_or(content.len());
 
-        let selected_text = &self.content[start_byte..end_byte];
+        let selected_text = &content[start_byte..end_byte];
 
         // Skip if selection is just whitespace to avoid excessive highlighting
         if selected_text.trim().is_empty() {
@@ -393,8 +396,8 @@ impl Editor {
         // Optimization: For very large files this could be slow.
         // We find byte indices first, then convert to char indices for the galley.
         let mut matches = Vec::new();
-        for (match_byte_start, part) in self.content.match_indices(selected_text) {
-            let match_char_start = self.content[..match_byte_start].chars().count();
+        for (match_byte_start, part) in content.match_indices(selected_text) {
+            let match_char_start = content[..match_byte_start].chars().count();
             let match_char_end = match_char_start + part.chars().count();
             matches.push(match_char_start..match_char_end);
         }
@@ -462,7 +465,7 @@ impl Editor {
         }
     }
 
-    fn add_context_menu(&mut self, output: &egui::text_edit::TextEditOutput) {
+    fn add_context_menu(&mut self, output: &egui::text_edit::TextEditOutput, content: &mut String) {
         // Add context menu for copy-paste operations
         output.response.context_menu(|ui| {
             // Get selected text if any
@@ -472,19 +475,17 @@ impl Editor {
                 } else {
                     let start = cursor_range.primary.index.min(cursor_range.secondary.index);
                     let end = cursor_range.primary.index.max(cursor_range.secondary.index);
-                    let start_byte = self
-                        .content
+                    let start_byte = content
                         .char_indices()
                         .nth(start)
                         .map(|(i, _)| i)
                         .unwrap_or(0);
-                    let end_byte = self
-                        .content
+                    let end_byte = content
                         .char_indices()
                         .nth(end)
                         .map(|(i, _)| i)
-                        .unwrap_or(self.content.len());
-                    Some(self.content[start_byte..end_byte].to_string())
+                        .unwrap_or(content.len());
+                    Some(content[start_byte..end_byte].to_string())
                 }
             } else {
                 None
@@ -497,23 +498,21 @@ impl Editor {
                     if let Some(cursor_range) = output.cursor_range {
                         let start = cursor_range.primary.index.min(cursor_range.secondary.index);
                         let end = cursor_range.primary.index.max(cursor_range.secondary.index);
-                        let start_byte = self
-                            .content
+                        let start_byte = content
                             .char_indices()
                             .nth(start)
                             .map(|(i, _)| i)
                             .unwrap_or(0);
-                        let end_byte = self
-                            .content
+                        let end_byte = content
                             .char_indices()
                             .nth(end)
                             .map(|(i, _)| i)
-                            .unwrap_or(self.content.len());
-                        self.content.replace_range(start_byte..end_byte, "");
+                            .unwrap_or(content.len());
+                        content.replace_range(start_byte..end_byte, "");
                     }
                 } else {
-                    ui.ctx().copy_text(self.content.clone());
-                    self.content.clear();
+                    ui.ctx().copy_text(content.clone());
+                    content.clear();
                 }
                 ui.close();
             }
@@ -521,7 +520,7 @@ impl Editor {
                 if let Some(selected) = &selected_text {
                     ui.ctx().copy_text(selected.clone());
                 } else {
-                    ui.ctx().copy_text(self.content.clone());
+                    ui.ctx().copy_text(content.clone());
                 }
                 ui.close();
             }

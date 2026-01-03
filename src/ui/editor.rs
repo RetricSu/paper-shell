@@ -40,13 +40,27 @@ impl Editor {
             );
 
             // 2. Editor Area
+            let mut layouter = |ui: &Ui, string: &dyn egui::TextBuffer, wrap_width: f32| {
+                let mut job = egui::text::LayoutJob::simple(
+                    string.as_str().to_owned(),
+                    egui::FontId::monospace(14.0),
+                    ui.visuals().text_color(),
+                    wrap_width,
+                );
+                // "Punch Tailing" fix: changing break_anywhere to false prevents
+                // breaks in the middle of words (and ideally keeps punctuation with text).
+                job.wrap.break_anywhere = false;
+                ui.painter().layout_job(job)
+            };
+
             let output = egui::TextEdit::multiline(&mut content)
                 .id(id)
                 .frame(false)
                 .desired_width(available_width)
                 .desired_rows(30)
-                .font(egui::FontId::monospace(14.0))
+                .layouter(&mut layouter)
                 .show(ui);
+
             // 3. Sidebar Rendering
             self.render_sidebar(&output, ui, sidebar_width);
 
@@ -56,6 +70,7 @@ impl Editor {
             Self::enable_scroll_to_cursor(ui, &output);
             Self::fix_macos_ime(&output, ui);
             self.draw_underline_decoration_at_focus_line(&output, ui);
+            self.highlight_matches(&output, ui);
             self.add_context_menu(&output);
 
             let editor_response = output.response;
@@ -339,6 +354,114 @@ impl Editor {
         }
     }
 
+    fn highlight_matches(&self, output: &egui::text_edit::TextEditOutput, ui: &mut Ui) {
+        let cursor_range = match output.cursor_range {
+            Some(range) => range,
+            None => return,
+        };
+
+        // Get the selected text
+        let start = cursor_range.primary.index.min(cursor_range.secondary.index);
+        let end = cursor_range.primary.index.max(cursor_range.secondary.index);
+
+        if start == end {
+            return; // No selection
+        }
+
+        // Convert char indices to byte indices to get the substring
+        let start_byte = self
+            .content
+            .char_indices()
+            .nth(start)
+            .map(|(i, _)| i)
+            .unwrap_or(0);
+        let end_byte = self
+            .content
+            .char_indices()
+            .nth(end)
+            .map(|(i, _)| i)
+            .unwrap_or(self.content.len());
+
+        let selected_text = &self.content[start_byte..end_byte];
+
+        // Skip if selection is just whitespace to avoid excessive highlighting
+        if selected_text.trim().is_empty() {
+            return;
+        }
+
+        // Find all matches
+        // Optimization: For very large files this could be slow.
+        // We find byte indices first, then convert to char indices for the galley.
+        let mut matches = Vec::new();
+        for (match_byte_start, part) in self.content.match_indices(selected_text) {
+            let match_char_start = self.content[..match_byte_start].chars().count();
+            let match_char_end = match_char_start + part.chars().count();
+            matches.push(match_char_start..match_char_end);
+        }
+
+        if matches.is_empty() {
+            return;
+        }
+
+        // Iterate rows to draw highlights
+        let mut row_start_char_idx = 0;
+        for row in &output.galley.rows {
+            let row_char_count = row.char_count_excluding_newline();
+            let row_end_char_idx = row_start_char_idx + row_char_count; // exclusive of newline
+
+            // Check overlaps with matches
+            for range in &matches {
+                let match_start = range.start;
+                let match_end = range.end;
+
+                // Logic: intersection of [match_start, match_end) and [row_start_char_idx, row_end_char_idx)
+                let intersect_start = match_start.max(row_start_char_idx);
+                let intersect_end = match_end.min(row_end_char_idx);
+
+                if intersect_start < intersect_end {
+                    // Found overlap in this row
+                    let rel_start = intersect_start - row_start_char_idx;
+                    let rel_end = intersect_end - row_start_char_idx;
+
+                    let x_start = row.x_offset(rel_start);
+                    let x_end = row.x_offset(rel_end);
+
+                    // Construct rect
+                    // row.rect() is relative to galley origin.
+                    // output.galley.rect.min is usually (0,0) relative to galley?
+                    // Wait, row.rect() is relative to galley start.
+                    // output.galley_pos is the screen position of galley start.
+
+                    let screen_min =
+                        output.galley_pos + row.rect().min.to_vec2() + egui::vec2(x_start, 0.0);
+                    let screen_max = output.galley_pos
+                        + row.rect().min.to_vec2()
+                        + egui::vec2(x_end, row.rect().height());
+
+                    let highlight_rect = egui::Rect::from_min_max(screen_min, screen_max);
+
+                    // Draw
+                    let fill_color = ui.visuals().selection.bg_fill.linear_multiply(0.3);
+                    let stroke =
+                        egui::Stroke::new(1.0, ui.visuals().selection.bg_fill.linear_multiply(0.6));
+                    ui.painter().rect(
+                        highlight_rect,
+                        2.0,
+                        fill_color,
+                        stroke,
+                        egui::StrokeKind::Middle,
+                    );
+                }
+            }
+
+            // Advance counters
+            row_start_char_idx += row_char_count;
+            if row.ends_with_newline {
+                row_start_char_idx += 1;
+            }
+        }
+    }
+
     fn add_context_menu(&mut self, output: &egui::text_edit::TextEditOutput) {
         // Add context menu for copy-paste operations
         output.response.context_menu(|ui| {
@@ -366,7 +489,7 @@ impl Editor {
             } else {
                 None
             };
-          
+
             if ui.button("剪切").clicked() {
                 if let Some(selected) = &selected_text {
                     ui.ctx().copy_text(selected.clone());

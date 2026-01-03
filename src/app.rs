@@ -546,6 +546,9 @@ impl eframe::App for PaperShellApp {
                     crate::ui::title_bar::TitleBarAction::OpenFile(path) => self.open_file(path),
                     crate::ui::title_bar::TitleBarAction::Format => self.editor.format(),
                     crate::ui::title_bar::TitleBarAction::History => self.try_load_history(),
+                    crate::ui::title_bar::TitleBarAction::SearchReplace => {
+                        self.editor.open_search_replace();
+                    }
                     crate::ui::title_bar::TitleBarAction::Settings => {
                         // TODO: Settings logic
                     }

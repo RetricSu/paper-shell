@@ -11,9 +11,9 @@ cargo build --release
 ## TODOs
 
 - [ ] fix open-with on Mac and other system
-- [ ] search and replace
+- [x] search and replace
 - [x] support copy-paste and right click context menu
-- [ ] select a text and high-light all the matched ones
+- [x] select a text and high-light all the matched ones
 - [ ] fix line display for punch tailing
 - [ ] add ai-ask/dictionary-lookup panel
 - [ ] support narrative map with click-to-jump function

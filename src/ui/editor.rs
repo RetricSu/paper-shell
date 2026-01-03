@@ -8,6 +8,18 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 #[derive(Default)]
+struct SearchReplaceState {
+    show_dialog: bool,
+    search_text: String,
+    replace_text: String,
+    case_sensitive: bool,
+    whole_word: bool,
+    current_match: Option<(usize, usize)>, // (start, end) byte indices
+    matches: Vec<(usize, usize)>,          // All matches as (start, end) byte indices
+    match_index: usize,                    // Current match index
+}
+
+#[derive(Default)]
 pub struct Editor {
     content: String,
     cursor_index: Option<usize>,
@@ -18,6 +30,8 @@ pub struct Editor {
     current_file: Option<PathBuf>,
     current_file_total_time: u64,
     cached_word_count: Option<usize>,
+    // Search and replace state
+    search_replace: SearchReplaceState,
 }
 
 impl Editor {
@@ -68,6 +82,7 @@ impl Editor {
             Self::fix_macos_ime(&output, ui);
             self.draw_underline_decoration_at_focus_line(&output, ui);
             self.highlight_matches(&output, ui, &content);
+            self.highlight_search_matches(&output, ui, &content);
             self.add_context_menu(&output, &mut content);
 
             // Capture the galley from the editor output
@@ -79,6 +94,10 @@ impl Editor {
 
             if editor_response.changed() {
                 self.cached_word_count = None;
+                // Clear search matches when content changes
+                self.search_replace.matches.clear();
+                self.search_replace.current_match = None;
+                self.search_replace.match_index = 0;
             }
             if editor_response.clicked() {
                 editor_response.request_focus();
@@ -94,6 +113,9 @@ impl Editor {
                 ui,
             );
         });
+
+        // Show search and replace dialog
+        self.show_search_replace_dialog(ui);
 
         ai_action
     }
@@ -474,6 +496,94 @@ impl Editor {
         }
     }
 
+    fn highlight_search_matches(
+        &self,
+        output: &egui::text_edit::TextEditOutput,
+        ui: &mut Ui,
+        content: &str,
+    ) {
+        if self.search_replace.matches.is_empty() {
+            return;
+        }
+
+        // Convert byte indices to char indices for all matches
+        let mut char_matches = Vec::new();
+        for (start_byte, end_byte) in &self.search_replace.matches {
+            let start_char = content[..*start_byte].chars().count();
+            let end_char = content[..*end_byte].chars().count();
+            char_matches.push(start_char..end_char);
+        }
+
+        // Highlight current match differently
+        let current_match_range =
+            if let Some((start_byte, end_byte)) = self.search_replace.current_match {
+                let start_char = content[..start_byte].chars().count();
+                let end_char = content[..end_byte].chars().count();
+                Some(start_char..end_char)
+            } else {
+                None
+            };
+
+        // Iterate rows to draw highlights
+        let mut row_start_char_idx = 0;
+        for row in &output.galley.rows {
+            let row_char_count = row.char_count_excluding_newline();
+            let row_end_char_idx = row_start_char_idx + row_char_count;
+
+            // Check overlaps with matches
+            for range in &char_matches {
+                let match_start = range.start;
+                let match_end = range.end;
+
+                let intersect_start = match_start.max(row_start_char_idx);
+                let intersect_end = match_end.min(row_end_char_idx);
+
+                if intersect_start < intersect_end {
+                    let rel_start = intersect_start - row_start_char_idx;
+                    let rel_end = intersect_end - row_start_char_idx;
+
+                    let x_start = row.x_offset(rel_start);
+                    let x_end = row.x_offset(rel_end);
+
+                    let screen_min =
+                        output.galley_pos + row.rect().min.to_vec2() + egui::vec2(x_start, 0.0);
+                    let screen_max = output.galley_pos
+                        + row.rect().min.to_vec2()
+                        + egui::vec2(x_end, row.rect().height());
+
+                    let highlight_rect = egui::Rect::from_min_max(screen_min, screen_max);
+
+                    // Different color for current match vs other matches
+                    let is_current = current_match_range.as_ref() == Some(range);
+                    let (fill_color, stroke_color) = if is_current {
+                        (
+                            egui::Color32::from_rgb(255, 255, 0), // Yellow for current
+                            egui::Color32::from_rgb(200, 200, 0),
+                        )
+                    } else {
+                        (
+                            egui::Color32::from_rgb(200, 200, 255), // Light blue for others
+                            egui::Color32::from_rgb(150, 150, 200),
+                        )
+                    };
+
+                    ui.painter().rect(
+                        highlight_rect,
+                        2.0,
+                        fill_color,
+                        egui::Stroke::new(1.0, stroke_color),
+                        egui::StrokeKind::Middle,
+                    );
+                }
+            }
+
+            row_start_char_idx += row_char_count;
+            if row.ends_with_newline {
+                row_start_char_idx += 1;
+            }
+        }
+    }
+
     fn add_context_menu(&mut self, output: &egui::text_edit::TextEditOutput, content: &mut String) {
         // Add context menu for copy-paste operations
         output.response.context_menu(|ui| {
@@ -598,6 +708,196 @@ impl Editor {
 
     pub fn reset_narrative_map_changed(&mut self) {
         self.ai_panel.reset_narrative_map_changed();
+    }
+
+    // Search and replace functionality
+    pub fn open_search_replace(&mut self) {
+        self.search_replace.show_dialog = true;
+    }
+
+    fn show_search_replace_dialog(&mut self, ui: &mut Ui) {
+        if !self.search_replace.show_dialog {
+            return;
+        }
+
+        let mut open = true;
+        egui::Window::new("查找替换")
+            .open(&mut open)
+            .show(ui.ctx(), |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("查找:");
+                    ui.text_edit_singleline(&mut self.search_replace.search_text);
+                });
+
+                ui.horizontal(|ui| {
+                    ui.label("替换:");
+                    ui.text_edit_singleline(&mut self.search_replace.replace_text);
+                });
+
+                ui.horizontal(|ui| {
+                    ui.checkbox(&mut self.search_replace.case_sensitive, "区分大小写");
+                    ui.checkbox(&mut self.search_replace.whole_word, "全词匹配");
+                });
+
+                ui.horizontal(|ui| {
+                    if ui.button("查找").clicked() {
+                        self.find_matches();
+                    }
+                    if ui.button("替换").clicked() {
+                        self.replace_current();
+                    }
+                    if ui.button("全部替换").clicked() {
+                        self.replace_all();
+                    }
+                    if ui.button("下一个").clicked() {
+                        self.next_match();
+                    }
+                    if ui.button("上一个").clicked() {
+                        self.previous_match();
+                    }
+                });
+
+                if !self.search_replace.matches.is_empty() {
+                    ui.label(format!(
+                        "找到 {} 个匹配 (当前: {})",
+                        self.search_replace.matches.len(),
+                        self.search_replace.match_index + 1
+                    ));
+                }
+            });
+
+        if !open {
+            self.search_replace.show_dialog = false;
+            self.search_replace.matches.clear();
+            self.search_replace.current_match = None;
+            self.search_replace.match_index = 0;
+        }
+    }
+
+    fn find_matches(&mut self) {
+        self.search_replace.matches.clear();
+        self.search_replace.match_index = 0;
+        self.search_replace.current_match = None;
+
+        if self.search_replace.search_text.is_empty() {
+            return;
+        }
+
+        let search = if self.search_replace.case_sensitive {
+            self.search_replace.search_text.clone()
+        } else {
+            self.search_replace.search_text.to_lowercase()
+        };
+
+        let content = if self.search_replace.case_sensitive {
+            self.content.clone()
+        } else {
+            self.content.to_lowercase()
+        };
+
+        let mut start = 0;
+        while let Some(pos) = if self.search_replace.whole_word {
+            self.find_whole_word(&content, &search, start)
+        } else {
+            content[start..].find(&search).map(|p| p + start)
+        } {
+            let end = pos + search.len();
+            self.search_replace.matches.push((pos, end));
+            start = end;
+        }
+
+        if !self.search_replace.matches.is_empty() {
+            self.search_replace.current_match = Some(self.search_replace.matches[0]);
+        }
+    }
+
+    fn find_whole_word(&self, content: &str, search: &str, start: usize) -> Option<usize> {
+        let chars: Vec<char> = content.chars().collect();
+        let search_chars: Vec<char> = search.chars().collect();
+
+        for i in start..chars.len().saturating_sub(search_chars.len()) {
+            // Check if this is a word boundary at start
+            let is_word_start = i == 0 || !chars[i - 1].is_alphanumeric();
+            // Check if this is a word boundary at end
+            let is_word_end = i + search_chars.len() == chars.len()
+                || !chars[i + search_chars.len()].is_alphanumeric();
+
+            if is_word_start && is_word_end {
+                let mut matches = true;
+                for (j, &ch) in search_chars.iter().enumerate() {
+                    if chars[i + j] != ch {
+                        matches = false;
+                        break;
+                    }
+                }
+                if matches {
+                    return Some(i);
+                }
+            }
+        }
+        None
+    }
+
+    fn next_match(&mut self) {
+        if self.search_replace.matches.is_empty() {
+            return;
+        }
+        self.search_replace.match_index =
+            (self.search_replace.match_index + 1) % self.search_replace.matches.len();
+        self.search_replace.current_match =
+            Some(self.search_replace.matches[self.search_replace.match_index]);
+    }
+
+    fn previous_match(&mut self) {
+        if self.search_replace.matches.is_empty() {
+            return;
+        }
+        self.search_replace.match_index = if self.search_replace.match_index == 0 {
+            self.search_replace.matches.len() - 1
+        } else {
+            self.search_replace.match_index - 1
+        };
+        self.search_replace.current_match =
+            Some(self.search_replace.matches[self.search_replace.match_index]);
+    }
+
+    fn replace_current(&mut self) {
+        if let Some((start, end)) = self.search_replace.current_match {
+            self.content
+                .replace_range(start..end, &self.search_replace.replace_text);
+            // Update matches after replacement
+            self.find_matches();
+            // Try to find the next match at the same position or after
+            if self.search_replace.match_index < self.search_replace.matches.len() {
+                self.search_replace.current_match =
+                    Some(self.search_replace.matches[self.search_replace.match_index]);
+            } else if !self.search_replace.matches.is_empty() {
+                self.search_replace.match_index = 0;
+                self.search_replace.current_match = Some(self.search_replace.matches[0]);
+            }
+        }
+    }
+
+    fn replace_all(&mut self) {
+        if self.search_replace.search_text.is_empty() {
+            return;
+        }
+
+        let mut new_content = String::new();
+        let mut last_end = 0;
+
+        for (start, end) in &self.search_replace.matches {
+            new_content.push_str(&self.content[last_end..*start]);
+            new_content.push_str(&self.search_replace.replace_text);
+            last_end = *end;
+        }
+        new_content.push_str(&self.content[last_end..]);
+
+        self.content = new_content;
+        self.search_replace.matches.clear();
+        self.search_replace.current_match = None;
+        self.search_replace.match_index = 0;
+        self.cached_word_count = None; // Invalidate cache
     }
 }
 

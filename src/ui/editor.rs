@@ -557,19 +557,19 @@ impl Editor {
                     let is_current = current_match_range.as_ref() == Some(range);
                     let (fill_color, stroke_color) = if is_current {
                         (
-                            egui::Color32::from_rgb(255, 255, 0), // Yellow for current
+                            egui::Color32::from_rgb(255, 255, 0).linear_multiply(0.5), // Yellow for current
                             egui::Color32::from_rgb(200, 200, 0),
                         )
                     } else {
                         (
-                            egui::Color32::from_rgb(200, 200, 255), // Light blue for others
+                            egui::Color32::from_rgb(200, 200, 255).linear_multiply(0.5), // Light blue for others
                             egui::Color32::from_rgb(150, 150, 200),
                         )
                     };
 
                     ui.painter().rect(
                         highlight_rect,
-                        2.0,
+                        1.0,
                         fill_color,
                         egui::Stroke::new(1.0, stroke_color),
                         egui::StrokeKind::Middle,
@@ -717,6 +717,10 @@ impl Editor {
 
     fn show_search_replace_dialog(&mut self, ui: &mut Ui) {
         if !self.search_replace.show_dialog {
+            // Clear search matches when content changes
+            self.search_replace.matches.clear();
+            self.search_replace.current_match = None;
+            self.search_replace.match_index = 0;
             return;
         }
 

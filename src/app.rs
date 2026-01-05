@@ -19,7 +19,7 @@ type LoadFileResult = (FileData, HashMap<usize, Mark>, Option<Vec<String>>);
 
 pub struct PaperShellApp {
     editor: Editor,
-    response_sender: Sender<ResponseMessage>,
+    pub response_sender: Sender<ResponseMessage>,
     response_receiver: Receiver<ResponseMessage>,
 
     history_window: HistoryWindow,

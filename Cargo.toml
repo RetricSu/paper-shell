@@ -36,6 +36,12 @@ uuid = { version = "1.0", features = ["v4"] }
 thiserror = "2.0"
 similar = "2.5"
 reqwest = { version = "0.11", features = ["blocking", "json"] }
+once_cell = "1.21.3"
 
 [target.'cfg(unix)'.dependencies]
 xattr = "1.0"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6.3"
+objc2-app-kit = "0.3.2"
+objc2-foundation = "0.3.2"

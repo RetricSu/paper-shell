@@ -10,7 +10,7 @@ cargo build --release
 
 ## TODOs
 
-- [ ] fix open-with on Mac and other system
+- [x] fix open-with on Mac and other system
 - [x] search and replace
 - [x] support copy-paste and right click context menu
 - [x] select a text and high-light all the matched ones

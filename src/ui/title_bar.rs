@@ -11,6 +11,7 @@ pub enum TitleBarAction {
     Format,
     FontChange(String),
     ToggleAiPanel,
+    SearchReplace,
 }
 
 pub struct TitleBar;
@@ -105,6 +106,10 @@ impl TitleBar {
                     action = Some(TitleBarAction::NewWindow);
                 }
                 ui.menu_button("编辑", |ui| {
+                    if ui.button("查找替换").clicked() {
+                        action = Some(TitleBarAction::SearchReplace);
+                        ui.close();
+                    }
                     if ui.button("格式化").clicked() {
                         action = Some(TitleBarAction::Format);
                         ui.close();

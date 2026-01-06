@@ -9,11 +9,17 @@ use egui::{Color32, Context, RichText, ScrollArea, Ui};
 // Re-export public types
 pub use types::{DiffLine, DiffLineType, HistoryVersionData};
 
+#[derive(Debug)]
+pub enum HistoryAction {
+    RollbackToVersion(String), // hash
+}
+
 pub struct HistoryWindow {
     open: bool,
     history_data: Option<Vec<HistoryVersionData>>,
     selected_index: Option<usize>,
     viewport_id: egui::ViewportId,
+    pending_action: Option<HistoryAction>,
 }
 
 impl Default for HistoryWindow {
@@ -29,6 +35,7 @@ impl HistoryWindow {
             history_data: None,
             selected_index: None,
             viewport_id: egui::ViewportId::from_hash_of("history_window"),
+            pending_action: None,
         }
     }
 
@@ -116,6 +123,10 @@ impl HistoryWindow {
                 }
             },
         );
+    }
+
+    pub fn take_pending_action(&mut self) -> Option<HistoryAction> {
+        self.pending_action.take()
     }
 
     fn show_title_bar(&mut self, ui: &mut Ui) {
@@ -236,8 +247,25 @@ impl HistoryWindow {
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| {
-                                    ui.label(RichText::new(&version_data.entry.hash).monospace());
-                                    ui.label(RichText::new("Hash:").strong());
+                                    // Rollback button
+                                    ui.horizontal(|ui| {
+                                        ui.with_layout(
+                                            egui::Layout::right_to_left(egui::Align::Center),
+                                            |ui| {
+                                                if ui.button("🔄 回滚到此版本").clicked() {
+                                                    self.pending_action =
+                                                        Some(HistoryAction::RollbackToVersion(
+                                                            version_data.entry.hash.clone(),
+                                                        ));
+                                                    self.open = false; // Close the window after rollback
+                                                }
+                                            },
+                                        );
+                                    });
+                                    ui.label(
+                                        RichText::new(format!("Hash:{}", &version_data.entry.hash))
+                                            .monospace(),
+                                    );
                                 },
                             );
                         });

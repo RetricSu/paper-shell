@@ -8,7 +8,7 @@ use crate::messages::ResponseMessage;
 use crate::style::configure_style;
 use crate::ui::ai_panel::AiPanelAction;
 use crate::ui::editor::Editor;
-use crate::ui::history::HistoryWindow;
+use crate::ui::history::{HistoryAction, HistoryWindow};
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -509,6 +509,21 @@ impl PaperShellApp {
             }
         }
     }
+    fn handle_history_action(&mut self, action: HistoryAction) {
+        match action {
+            HistoryAction::RollbackToVersion(hash) => {
+                match self.editor_backend.restore_version(&hash) {
+                    Ok(content) => {
+                        self.editor.set_content(content);
+                        tracing::info!("Rolled back to version: {}", hash);
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to rollback to version {}: {}", hash, e);
+                    }
+                }
+            }
+        }
+    }
 }
 
 impl eframe::App for PaperShellApp {
@@ -584,6 +599,9 @@ impl eframe::App for PaperShellApp {
 
         // History Window
         self.history_window.show(ctx);
+        if let Some(action) = self.history_window.take_pending_action() {
+            self.handle_history_action(action);
+        }
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {

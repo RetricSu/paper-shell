@@ -14,7 +14,7 @@ cargo build --release
 - [x] search and replace
 - [x] support copy-paste and right click context menu
 - [x] select a text and high-light all the matched ones
-- [ ] fix line display for punch tailing
+- [ ] prevent leading punctuation for Chinese text, may require using [cosmic-text](https://github.com/pop-os/) to rewrite editor component for egui
 - [ ] add ai-ask/dictionary-lookup panel
 - [ ] support narrative map with click-to-jump function
 - [ ] add a test panel that use AI as readers to give feedbacks

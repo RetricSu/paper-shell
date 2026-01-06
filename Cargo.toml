@@ -2,7 +2,7 @@
 name = "paper-shell"
 version = "0.1.0"
 edition = "2024"
-description = "A simple, concise and informative text editor for everyday writing."
+description = "A simple, compact and informative text editor for everyday writing."
 
 [package.metadata.bundle]
 name = "Paper Shell"
@@ -11,7 +11,7 @@ category = "Productivity"
 copyright = "© 2025 RetricSu"
 short_description = "A writing editor"
 long_description = """
-A simple, concise and informative text editor for everyday writing.
+A simple, compact and informative text editor for everyday writing.
 """
 osx_info_plist_exts = ["InfoAdditions.plist"]
 

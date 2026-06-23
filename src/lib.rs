@@ -9,5 +9,6 @@ pub mod constant;
 pub mod file;
 pub mod messages;
 pub mod open_with;
+pub mod plugin;
 pub mod style;
 pub mod ui;

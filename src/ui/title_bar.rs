@@ -1,3 +1,4 @@
+use crate::plugin::PluginMetadata;
 use egui::{Align, Layout, Ui};
 use std::path::PathBuf;
 
@@ -12,6 +13,12 @@ pub enum TitleBarAction {
     FontChange(String),
     ToggleAiPanel,
     SearchReplace,
+    /// Run an installed plugin by its id.
+    RunPlugin(String),
+    /// Open the configuration window for a built-in plugin.
+    ConfigurePlugin(String),
+    /// Open the plugins directory in the system file manager.
+    OpenPluginsFolder,
 }
 
 pub struct TitleBar;
@@ -26,6 +33,7 @@ pub struct TitleBarState<'a> {
     pub current_font: &'a str,
     pub recent_files: &'a [PathBuf],
     pub is_ai_panel_visible: bool,
+    pub plugins: &'a [PluginMetadata],
 }
 
 impl TitleBar {
@@ -44,6 +52,7 @@ impl TitleBar {
             current_font,
             recent_files,
             is_ai_panel_visible,
+            plugins,
         } = state;
 
         let mut action = None;
@@ -129,6 +138,40 @@ impl TitleBar {
                                 }
                             }
                         });
+                });
+                ui.menu_button("插件", |ui| {
+                    if plugins.is_empty() {
+                        ui.label("暂无已安装插件");
+                    } else {
+                        for plugin in plugins {
+                            if ui
+                                .button(&plugin.name)
+                                .on_hover_text(&plugin.description)
+                                .clicked()
+                            {
+                                action = Some(TitleBarAction::RunPlugin(plugin.id.clone()));
+                                ui.close();
+                            }
+                        }
+
+                        if plugins.iter().any(|p| p.id == "github_publish") {
+                            if ui.button("配置 GitHub 发布…").clicked() {
+                                action = Some(TitleBarAction::ConfigurePlugin(
+                                    "github_publish".to_string(),
+                                ));
+                                ui.close();
+                            }
+                        }
+                    }
+                    ui.separator();
+                    if ui
+                        .button("打开插件目录…")
+                        .on_hover_text("在此目录放入插件文件夹即可安装")
+                        .clicked()
+                    {
+                        action = Some(TitleBarAction::OpenPluginsFolder);
+                        ui.close();
+                    }
                 });
                 if ui
                     .add_enabled(has_current_file, egui::Button::new("历史"))

@@ -7,6 +7,8 @@ use std::path::PathBuf;
 use paper_shell::open_with::{complete_app_setup, install_open_with_delegate};
 
 fn main() -> eframe::Result {
+    paper_shell::process_env::initialize_process_path();
+
     // On macOS, set up early defaults
     #[cfg(target_os = "macos")]
     install_open_with_delegate();

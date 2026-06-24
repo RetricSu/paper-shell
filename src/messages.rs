@@ -14,4 +14,9 @@ pub enum ResponseMessage {
     NarrativeMapLoaded(Result<Option<Vec<String>>, String>),
     OpenFile(PathBuf),
     AiResponse(Result<Vec<String>, AiError>),
+    /// A plugin finished running: (plugin display name, Ok(message) | Err(error)).
+    PluginFinished {
+        name: String,
+        result: Result<String, String>,
+    },
 }

@@ -5,10 +5,12 @@ use crate::backend::sidebar_backend::{Mark, SidebarBackend};
 use crate::backend::time_backend::TimeBackend;
 use crate::file::FileData;
 use crate::messages::ResponseMessage;
+use crate::plugin::{PluginContext, PluginManager};
 use crate::style::configure_style;
 use crate::ui::ai_panel::AiPanelAction;
 use crate::ui::editor::Editor;
 use crate::ui::history::{HistoryAction, HistoryWindow};
+use crate::ui::plugins::{GithubPublishConfigWindow, PluginOutputWindow, PublishDialog};
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -35,6 +37,12 @@ pub struct PaperShellApp {
     ai_panel_backend: Arc<AiPanelBackend>,
     time_backend: TimeBackend,
     ai_backend: Arc<AiBackend>,
+
+    plugin_manager: PluginManager,
+    plugin_metadata: Vec<crate::plugin::PluginMetadata>,
+    plugin_output: PluginOutputWindow,
+    plugin_config_window: GithubPublishConfigWindow,
+    publish_dialog: PublishDialog,
 }
 
 impl Default for PaperShellApp {
@@ -63,6 +71,11 @@ impl Default for PaperShellApp {
             Some(config.settings.ai_panel.api_key.clone()),
         ));
 
+        let plugins_dir = config.data_dir().join("plugins");
+        let plugin_manager =
+            PluginManager::new(plugins_dir, config.settings.github_publish.clone());
+        let plugin_metadata = plugin_manager.metadata();
+
         Self {
             editor,
             editor_backend: Arc::new(EditorBackend::default()),
@@ -77,6 +90,11 @@ impl Default for PaperShellApp {
             current_font: "Default".to_string(),
             last_focus_state: false,
             config,
+            plugin_manager,
+            plugin_metadata,
+            plugin_output: PluginOutputWindow::new(),
+            plugin_config_window: GithubPublishConfigWindow::new(),
+            publish_dialog: PublishDialog::new(),
         }
     }
 }
@@ -490,6 +508,14 @@ impl PaperShellApp {
                         tracing::error!("AI request failed: {}", e);
                     }
                 },
+                ResponseMessage::PluginFinished { name, result } => {
+                    if let Err(e) = &result {
+                        tracing::error!("Plugin '{}' failed: {}", name, e);
+                    } else {
+                        tracing::info!("Plugin '{}' finished", name);
+                    }
+                    self.plugin_output.finish(name, result);
+                }
             }
         }
     }
@@ -524,6 +550,54 @@ impl PaperShellApp {
             }
         }
     }
+
+    /// Runs an installed plugin by id on a background thread, snapshotting the
+    /// current editing context so the plugin stays decoupled from live state.
+    fn run_plugin(&mut self, id: String) {
+        let Some(plugin) = self.plugin_manager.get(&id) else {
+            tracing::warn!("Plugin not found: {}", id);
+            return;
+        };
+
+        let name = plugin.metadata().name;
+        self.plugin_output.start(&name);
+
+        let ctx = PluginContext {
+            file_path: self.editor.get_current_file().cloned(),
+            content: self.editor.get_content(),
+            data_dir: self.config.data_dir(),
+            title: None,
+            description: None,
+            collection: None,
+        };
+        let sender = self.response_sender.clone();
+
+        std::thread::spawn(move || {
+            let result = plugin.run(&ctx).map_err(|e| e.to_string());
+            let _ = sender.send(ResponseMessage::PluginFinished { name, result });
+        });
+    }
+
+    /// Ensures the plugins directory exists and opens it in the system file
+    /// manager so users can install plugins by dropping folders into it.
+    fn open_plugins_folder(&self) {
+        let dir = self.config.data_dir().join("plugins");
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            tracing::error!("Failed to create plugins dir {:?}: {}", dir, e);
+            return;
+        }
+
+        #[cfg(target_os = "macos")]
+        let opener = "open";
+        #[cfg(target_os = "windows")]
+        let opener = "explorer";
+        #[cfg(all(unix, not(target_os = "macos")))]
+        let opener = "xdg-open";
+
+        if let Err(e) = std::process::Command::new(opener).arg(&dir).spawn() {
+            tracing::error!("Failed to open plugins dir: {}", e);
+        }
+    }
 }
 
 impl eframe::App for PaperShellApp {
@@ -550,6 +624,7 @@ impl eframe::App for PaperShellApp {
                     current_font: &self.current_font,
                     recent_files: &self.config.settings.recent_files,
                     is_ai_panel_visible: self.editor.get_ai_panel_mut().is_visible,
+                    plugins: &self.plugin_metadata,
                 },
             ) {
                 match action {
@@ -577,6 +652,28 @@ impl eframe::App for PaperShellApp {
                         let panel = self.editor.get_ai_panel_mut();
                         panel.is_visible = !panel.is_visible;
                     }
+                    crate::ui::title_bar::TitleBarAction::RunPlugin(id) => {
+                        if id == "github_publish" {
+                            if self.config.settings.github_publish.repo.trim().is_empty() {
+                                self.plugin_config_window
+                                    .open(&self.config.settings.github_publish, true);
+                            } else {
+                                self.publish_dialog
+                                    .open(&self.config.settings.github_publish);
+                            }
+                        } else {
+                            self.run_plugin(id);
+                        }
+                    }
+                    crate::ui::title_bar::TitleBarAction::OpenPluginsFolder => {
+                        self.open_plugins_folder();
+                    }
+                    crate::ui::title_bar::TitleBarAction::ConfigurePlugin(id) => {
+                        if id == "github_publish" {
+                            self.plugin_config_window
+                                .open(&self.config.settings.github_publish, false);
+                        }
+                    }
                 }
             }
         });
@@ -601,6 +698,45 @@ impl eframe::App for PaperShellApp {
         self.history_window.show(ctx);
         if let Some(action) = self.history_window.take_pending_action() {
             self.handle_history_action(action);
+        }
+
+        // Plugin output window
+        self.plugin_output.show(ctx);
+
+        if let Some(new_config) = self.plugin_config_window.show(ctx) {
+            self.config.settings.github_publish = new_config.clone();
+            let settings = self.config.settings.clone();
+            std::thread::spawn(move || {
+                if let Err(e) = confy::store(crate::constant::APP_NAME, None, &settings) {
+                    tracing::error!("Failed to save plugin config: {}", e);
+                }
+            });
+            let plugins_dir = self.config.data_dir().join("plugins");
+            self.plugin_manager = crate::plugin::PluginManager::new(plugins_dir, new_config);
+            self.plugin_metadata = self.plugin_manager.metadata();
+        }
+
+        if let Some(params) = self.publish_dialog.show(ctx) {
+            if let Some(plugin) = self.plugin_manager.get("github_publish") {
+                let name = plugin.metadata().name;
+                self.plugin_output.start(&name);
+                let plugin_ctx = PluginContext {
+                    file_path: self.editor.get_current_file().cloned(),
+                    content: self.editor.get_content(),
+                    data_dir: self.config.data_dir(),
+                    title: Some(params.title),
+                    description: params.description,
+                    collection: Some(params.collection_dir),
+                };
+                let sender = self.response_sender.clone();
+
+                std::thread::spawn(move || {
+                    let result = plugin.run(&plugin_ctx).map_err(|e| e.to_string());
+                    let _ = sender.send(ResponseMessage::PluginFinished { name, result });
+                });
+            } else {
+                tracing::warn!("Plugin not found: github_publish");
+            }
         }
     }
 

@@ -104,6 +104,10 @@ pub struct Settings {
     /// AI Panel configuration
     #[serde(default)]
     pub ai_panel: AiPanelConfig,
+
+    /// GitHub publish plugin configuration
+    #[serde(default)]
+    pub github_publish: crate::plugin::builtin::github_publish::GithubPublishConfig,
 }
 
 impl Default for Settings {
@@ -114,6 +118,7 @@ impl Default for Settings {
             font_size: 14.0,
             recent_files: Vec::new(),
             ai_panel: AiPanelConfig::default(),
+            github_publish: crate::plugin::builtin::github_publish::GithubPublishConfig::default(),
         }
     }
 }

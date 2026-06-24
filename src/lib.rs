@@ -10,5 +10,6 @@ pub mod file;
 pub mod messages;
 pub mod open_with;
 pub mod plugin;
+pub mod process_env;
 pub mod style;
 pub mod ui;

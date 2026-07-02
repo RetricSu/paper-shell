@@ -4,8 +4,10 @@ use crate::plugin::{Plugin, PluginContext, PluginError, PluginMetadata};
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 const DEFAULT_MARGIN_POINTS: u16 = 72;
+static PRINT_JOB_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 pub struct PrintPlugin;
 
@@ -35,7 +37,10 @@ impl Plugin for PrintPlugin {
         let document_name = document_name(ctx);
         let margin = ctx.print_margin_points.unwrap_or(DEFAULT_MARGIN_POINTS);
 
-        print_with_system_command(&print_file, &document_name, ctx.printer.as_deref(), margin)?;
+        let print_result =
+            print_with_system_command(&print_file, &document_name, ctx.printer.as_deref(), margin);
+        let _ = fs::remove_file(&print_file);
+        print_result?;
 
         let printer = ctx.printer.as_deref().unwrap_or("默认打印机");
         Ok(format!("已发送到 {printer}：{document_name}"))
@@ -53,7 +58,8 @@ fn write_print_snapshot(ctx: &PluginContext) -> Result<PathBuf, PluginError> {
         .and_then(|path| path.extension())
         .and_then(|extension| extension.to_str())
         .unwrap_or("txt");
-    let file_name = format!("paper-shell-print-{}.{}", std::process::id(), extension);
+    let job_id = PRINT_JOB_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let file_name = format!("paper-shell-print-{}-{}.{}", std::process::id(), job_id, extension);
     let path = std::env::temp_dir().join(file_name);
 
     fs::write(&path, &ctx.content)?;

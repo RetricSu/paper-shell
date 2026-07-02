@@ -10,7 +10,9 @@ use crate::style::configure_style;
 use crate::ui::ai_panel::AiPanelAction;
 use crate::ui::editor::Editor;
 use crate::ui::history::{HistoryAction, HistoryWindow};
-use crate::ui::plugins::{GithubPublishConfigWindow, PluginOutputWindow, PublishDialog};
+use crate::ui::plugins::{
+    GithubPublishConfigWindow, PluginOutputWindow, PrintDialog, PublishDialog,
+};
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -43,6 +45,7 @@ pub struct PaperShellApp {
     plugin_output: PluginOutputWindow,
     plugin_config_window: GithubPublishConfigWindow,
     publish_dialog: PublishDialog,
+    print_dialog: PrintDialog,
 }
 
 impl Default for PaperShellApp {
@@ -95,6 +98,7 @@ impl Default for PaperShellApp {
             plugin_output: PluginOutputWindow::new(),
             plugin_config_window: GithubPublishConfigWindow::new(),
             publish_dialog: PublishDialog::new(),
+            print_dialog: PrintDialog::new(),
         }
     }
 }
@@ -569,6 +573,8 @@ impl PaperShellApp {
             title: None,
             description: None,
             collection: None,
+            printer: None,
+            print_margin_points: None,
         };
         let sender = self.response_sender.clone();
 
@@ -662,7 +668,19 @@ impl eframe::App for PaperShellApp {
                                     .open(&self.config.settings.github_publish);
                             }
                         } else {
-                            self.run_plugin(id);
+                            if id == "print" {
+                                let document_name = self
+                                    .editor
+                                    .get_current_file()
+                                    .and_then(|path| path.file_name())
+                                    .and_then(|name| name.to_str())
+                                    .unwrap_or("未命名文档")
+                                    .to_string();
+                                self.print_dialog
+                                    .open(document_name, self.editor.get_content());
+                            } else {
+                                self.run_plugin(id);
+                            }
                         }
                     }
                     crate::ui::title_bar::TitleBarAction::OpenPluginsFolder => {
@@ -727,6 +745,8 @@ impl eframe::App for PaperShellApp {
                     title: Some(params.title),
                     description: params.description,
                     collection: Some(params.collection_dir),
+                    printer: None,
+                    print_margin_points: None,
                 };
                 let sender = self.response_sender.clone();
 
@@ -736,6 +756,31 @@ impl eframe::App for PaperShellApp {
                 });
             } else {
                 tracing::warn!("Plugin not found: github_publish");
+            }
+        }
+
+        if let Some(params) = self.print_dialog.show(ctx) {
+            if let Some(plugin) = self.plugin_manager.get("print") {
+                let name = plugin.metadata().name;
+                self.plugin_output.start(&name);
+                let plugin_ctx = PluginContext {
+                    file_path: self.editor.get_current_file().cloned(),
+                    content: self.editor.get_content(),
+                    data_dir: self.config.data_dir(),
+                    title: None,
+                    description: None,
+                    collection: None,
+                    printer: params.printer,
+                    print_margin_points: Some(params.margin_points),
+                };
+                let sender = self.response_sender.clone();
+
+                std::thread::spawn(move || {
+                    let result = plugin.run(&plugin_ctx).map_err(|e| e.to_string());
+                    let _ = sender.send(ResponseMessage::PluginFinished { name, result });
+                });
+            } else {
+                tracing::warn!("Plugin not found: print");
             }
         }
     }

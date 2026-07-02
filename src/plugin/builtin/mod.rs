@@ -6,6 +6,7 @@
 //! [`builtin_plugins`].
 
 pub mod github_publish;
+pub mod print;
 
 use super::Plugin;
 use std::sync::Arc;
@@ -15,7 +16,8 @@ use std::sync::Arc;
 pub fn builtin_plugins(
     github_publish: github_publish::GithubPublishConfig,
 ) -> Vec<Arc<dyn Plugin>> {
-    vec![Arc::new(github_publish::GithubPublishPlugin::new(
-        github_publish,
-    ))]
+    vec![
+        Arc::new(print::PrintPlugin::new()),
+        Arc::new(github_publish::GithubPublishPlugin::new(github_publish)),
+    ]
 }

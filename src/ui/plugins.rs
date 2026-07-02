@@ -5,7 +5,7 @@
 //! by calling [`PluginOutputWindow::start`] when launching a plugin and
 //! [`PluginOutputWindow::finish`] when the result arrives.
 
-use egui::{Color32, Context, RichText};
+use egui::{Color32, Context, RichText, Vec2};
 
 #[derive(Default)]
 pub struct PluginOutputWindow {
@@ -239,6 +239,156 @@ pub struct PublishParams {
     pub title: String,
     pub description: Option<String>,
     pub collection_dir: String,
+}
+
+pub struct PrintParams {
+    pub printer: Option<String>,
+    pub margin_points: u16,
+}
+
+pub struct PrintDialog {
+    open: bool,
+    document_name: String,
+    preview: String,
+    printers: Vec<String>,
+    selected_printer: usize,
+    margin_points: u16,
+    viewport_id: egui::ViewportId,
+}
+
+impl PrintDialog {
+    pub fn new() -> Self {
+        Self {
+            open: false,
+            document_name: String::new(),
+            preview: String::new(),
+            printers: Vec::new(),
+            selected_printer: 0,
+            margin_points: 72,
+            viewport_id: egui::ViewportId::from_hash_of("print_preview_window"),
+        }
+    }
+
+    pub fn open(&mut self, document_name: String, preview: String) {
+        self.document_name = document_name;
+        self.preview = preview;
+        self.printers = crate::plugin::builtin::print::available_printers();
+        self.selected_printer = 0;
+        self.margin_points = 72;
+        self.open = true;
+    }
+
+    pub fn show(&mut self, ctx: &Context) -> Option<PrintParams> {
+        if !self.open {
+            return None;
+        }
+
+        let mut submitted = None;
+
+        ctx.show_viewport_immediate(
+            self.viewport_id,
+            egui::ViewportBuilder::default()
+                .with_title("打印预览")
+                .with_inner_size(Vec2::new(620.0, 640.0))
+                .with_min_inner_size(Vec2::new(520.0, 480.0))
+                .with_resizable(true),
+            |ctx, _class| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        ui.label("打印机");
+                        egui::ComboBox::from_id_salt("print_printer")
+                            .selected_text(self.selected_printer_label())
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(&mut self.selected_printer, 0, "默认打印机");
+                                for (index, printer) in self.printers.iter().enumerate() {
+                                    ui.selectable_value(
+                                        &mut self.selected_printer,
+                                        index + 1,
+                                        printer,
+                                    );
+                                }
+                            });
+
+                        ui.add_space(12.0);
+                        ui.label("边距");
+                        egui::ComboBox::from_id_salt("print_margin")
+                            .selected_text(format!("{} pt", self.margin_points))
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(&mut self.margin_points, 54, "54 pt");
+                                ui.selectable_value(&mut self.margin_points, 72, "72 pt");
+                                ui.selectable_value(&mut self.margin_points, 90, "90 pt");
+                            });
+                    });
+
+                    if self.printers.is_empty() {
+                        ui.label(RichText::new("未读取到打印机，将使用系统默认打印机").small());
+                    }
+
+                    ui.add_space(8.0);
+                    ui.separator();
+                    ui.add_space(8.0);
+
+                    let margin = self.margin_points as f32 / 3.0;
+                    egui::Frame::new()
+                        .fill(Color32::from_rgb(248, 247, 244))
+                        .stroke(egui::Stroke::new(1.0, Color32::from_rgb(205, 202, 194)))
+                        .inner_margin(egui::Margin::same(margin as i8))
+                        .show(ui, |ui| {
+                            ui.set_min_height(420.0);
+                            ui.label(RichText::new(&self.document_name).strong());
+                            ui.add_space(8.0);
+                            egui::ScrollArea::vertical()
+                                .max_height(460.0)
+                                .show(ui, |ui| {
+                                    ui.label(RichText::new(&self.preview).monospace());
+                                });
+                        });
+
+                    ui.add_space(10.0);
+                    ui.horizontal(|ui| {
+                        if ui.button("打印").clicked() {
+                            submitted = Some(PrintParams {
+                                printer: self.selected_printer_name(),
+                                margin_points: self.margin_points,
+                            });
+                            self.open = false;
+                            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                        }
+
+                        if ui.button("取消").clicked() {
+                            self.open = false;
+                            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                        }
+                    });
+                });
+                if ctx.input(|i| i.viewport().close_requested()) {
+                    self.open = false;
+                }
+            },
+        );
+
+        submitted
+    }
+
+    fn selected_printer_label(&self) -> &str {
+        if self.selected_printer == 0 {
+            "默认打印机"
+        } else {
+            self.printers
+                .get(self.selected_printer - 1)
+                .map(String::as_str)
+                .unwrap_or("默认打印机")
+        }
+    }
+
+    fn selected_printer_name(&self) -> Option<String> {
+        if self.selected_printer == 0 {
+            None
+        } else {
+            self.printers.get(self.selected_printer - 1).cloned()
+        }
+    }
 }
 
 pub struct PublishDialog {

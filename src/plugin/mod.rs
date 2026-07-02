@@ -58,6 +58,8 @@ pub struct PluginContext {
     pub title: Option<String>,
     pub description: Option<String>,
     pub collection: Option<String>,
+    pub printer: Option<String>,
+    pub print_margin_points: Option<u16>,
 }
 
 /// Errors a plugin can report while running.

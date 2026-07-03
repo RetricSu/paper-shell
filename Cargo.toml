@@ -14,6 +14,7 @@ long_description = """
 A simple, compact and informative text editor for everyday writing.
 """
 osx_info_plist_exts = ["InfoAdditions.plist"]
+icon = ["assets/app-icon.icns"]
 
 [lib]
 name = "paper_shell"

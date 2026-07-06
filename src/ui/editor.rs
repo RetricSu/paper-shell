@@ -690,24 +690,8 @@ impl Editor {
         self.ai_panel.set_processing(processing);
     }
 
-    pub fn set_ai_response(&mut self, response: Vec<String>) {
+    pub fn set_ai_response(&mut self, response: String) {
         self.ai_panel.set_response(response);
-    }
-
-    pub fn apply_narrative_map(&mut self, map: Vec<String>) {
-        self.ai_panel.apply_narrative_map(map);
-    }
-
-    pub fn narrative_map_changed(&self) -> bool {
-        self.ai_panel.narrative_map_changed()
-    }
-
-    pub fn get_narrative_map(&self) -> Option<&Vec<String>> {
-        self.ai_panel.get_narrative_map()
-    }
-
-    pub fn reset_narrative_map_changed(&mut self) {
-        self.ai_panel.reset_narrative_map_changed();
     }
 
     // Search and replace functionality

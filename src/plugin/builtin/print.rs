@@ -59,7 +59,12 @@ fn write_print_snapshot(ctx: &PluginContext) -> Result<PathBuf, PluginError> {
         .and_then(|extension| extension.to_str())
         .unwrap_or("txt");
     let job_id = PRINT_JOB_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let file_name = format!("paper-shell-print-{}-{}.{}", std::process::id(), job_id, extension);
+    let file_name = format!(
+        "paper-shell-print-{}-{}.{}",
+        std::process::id(),
+        job_id,
+        extension
+    );
     let path = std::env::temp_dir().join(file_name);
 
     fs::write(&path, &ctx.content)?;

@@ -202,11 +202,15 @@ fn build_target_path(target_dir: &str, filename: &str) -> String {
 
 fn build_frontmatter(title: &str, description: Option<&str>, now: NaiveDateTime) -> String {
     const MONTHS: [&str; 12] = [
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov",
-        "Dec",
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
     ];
 
-    let pub_date = format!("{} {} {}", MONTHS[now.month0() as usize], now.day(), now.year());
+    let pub_date = format!(
+        "{} {} {}",
+        MONTHS[now.month0() as usize],
+        now.day(),
+        now.year()
+    );
     let mut frontmatter = format!("---\ntitle: '{}'\npubDate: '{}'\n", title, pub_date);
     if let Some(description) = description {
         if !description.trim().is_empty() {
@@ -330,7 +334,11 @@ fn is_git_repo(dir: &Path) -> bool {
 /// `base_branch` at this point, so no `post/*` branch is checked out.
 fn cleanup_old_post_branches(clone_dir: &Path) {
     let list = match Command::new("git")
-        .args(["for-each-ref", "--format=%(refname:short)", "refs/heads/post/"])
+        .args([
+            "for-each-ref",
+            "--format=%(refname:short)",
+            "refs/heads/post/",
+        ])
         .current_dir(clone_dir)
         .output()
     {
@@ -393,7 +401,10 @@ fn run_command(
         stderr
     };
     tracing::error!("{} failed: {}", program, detail);
-    Err(PluginError::Execution(format!("{} 命令执行失败：{}", program, detail)))
+    Err(PluginError::Execution(format!(
+        "{} 命令执行失败：{}",
+        program, detail
+    )))
 }
 
 fn path_to_string(path: &Path) -> Result<String, PluginError> {

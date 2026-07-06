@@ -1,5 +1,4 @@
 use crate::backend::ai_backend::AiBackend;
-use crate::backend::ai_panel_backend::AiPanelBackend;
 use crate::backend::editor_backend::EditorBackend;
 use crate::backend::sidebar_backend::{Mark, SidebarBackend};
 use crate::backend::time_backend::TimeBackend;
@@ -13,13 +12,14 @@ use crate::ui::history::{HistoryAction, HistoryWindow};
 use crate::ui::plugins::{
     GithubPublishConfigWindow, PluginOutputWindow, PrintDialog, PublishDialog,
 };
+use crate::ui::settings::SettingsWindow;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
-type LoadFileResult = (FileData, HashMap<usize, Mark>, Option<Vec<String>>);
+type LoadFileResult = (FileData, HashMap<usize, Mark>);
 
 pub struct PaperShellApp {
     editor: Editor,
@@ -36,7 +36,6 @@ pub struct PaperShellApp {
 
     editor_backend: Arc<EditorBackend>,
     sidebar_backend: Arc<SidebarBackend>,
-    ai_panel_backend: Arc<AiPanelBackend>,
     time_backend: TimeBackend,
     ai_backend: Arc<AiBackend>,
 
@@ -46,6 +45,7 @@ pub struct PaperShellApp {
     plugin_config_window: GithubPublishConfigWindow,
     publish_dialog: PublishDialog,
     print_dialog: PrintDialog,
+    settings_window: SettingsWindow,
 }
 
 impl Default for PaperShellApp {
@@ -62,17 +62,9 @@ impl Default for PaperShellApp {
             tracing::error!("Failed to initialize SidebarBackend: {}", e);
             panic!("Cannot continue without SidebarBackend");
         }));
-        let ai_panel_backend = Arc::new(AiPanelBackend::new().unwrap_or_else(|e| {
-            tracing::error!("Failed to initialize AiPanelBackend: {}", e);
-            panic!("Cannot continue without AiPanelBackend");
-        }));
         let available_fonts = crate::ui::font::enumerate_chinese_fonts();
         let config = crate::config::Config::default();
-        let ai_backend = Arc::new(AiBackend::new(
-            Some(config.settings.ai_panel.model_name.clone()),
-            Some(config.settings.ai_panel.api_url.clone()),
-            Some(config.settings.ai_panel.api_key.clone()),
-        ));
+        let ai_backend = Arc::new(AiBackend::from_config(&config.settings.ai_panel));
 
         let plugins_dir = config.data_dir().join("plugins");
         let plugin_manager =
@@ -83,7 +75,6 @@ impl Default for PaperShellApp {
             editor,
             editor_backend: Arc::new(EditorBackend::default()),
             sidebar_backend,
-            ai_panel_backend,
             time_backend: TimeBackend::default(),
             ai_backend,
             response_receiver: receiver,
@@ -99,6 +90,7 @@ impl Default for PaperShellApp {
             plugin_config_window: GithubPublishConfigWindow::new(),
             publish_dialog: PublishDialog::new(),
             print_dialog: PrintDialog::new(),
+            settings_window: SettingsWindow::new(),
         }
     }
 }
@@ -139,11 +131,6 @@ impl PaperShellApp {
             .load_marks(&uuid)
             .map_err(|e| format!("Failed to load marks: {}", e))?;
 
-        let narrative_map = self
-            .ai_panel_backend
-            .load_narrative_map(&uuid)
-            .map_err(|e| format!("Failed to load narrative map: {}", e))?;
-
         Ok((
             FileData {
                 uuid,
@@ -152,7 +139,6 @@ impl PaperShellApp {
                 content,
             },
             marks,
-            narrative_map,
         ))
     }
 
@@ -160,7 +146,6 @@ impl PaperShellApp {
     fn try_load_file_data(&mut self, path: PathBuf) {
         let backend = Arc::clone(&self.editor_backend);
         let sidebar_backend = Arc::clone(&self.sidebar_backend);
-        let ai_panel_backend = Arc::clone(&self.ai_panel_backend);
         let sender = self.response_sender.clone();
 
         std::thread::spawn(move || match std::fs::read_to_string(&path) {
@@ -175,11 +160,6 @@ impl PaperShellApp {
 
                     let marks_result = sidebar_backend.load_marks(&uuid).map_err(|e| e.to_string());
                     let _ = sender.send(ResponseMessage::MarksLoaded(marks_result));
-
-                    let narrative_map_result = ai_panel_backend
-                        .load_narrative_map(&uuid)
-                        .map_err(|e| e.to_string());
-                    let _ = sender.send(ResponseMessage::NarrativeMapLoaded(narrative_map_result));
                 }
                 Err(e) => {
                     let _ = sender.send(ResponseMessage::FileLoaded(Err(format!(
@@ -214,11 +194,8 @@ impl PaperShellApp {
 
     fn open_file(&mut self, path: PathBuf) {
         match self.load_file_data(&path) {
-            Ok((file_data, marks, narrative_map)) => {
+            Ok((file_data, marks)) => {
                 self.apply_load_file_data(file_data, Some(marks));
-                if let Some(map) = narrative_map {
-                    self.editor.apply_narrative_map(map);
-                }
             }
             Err(e) => {
                 tracing::error!("{}", e);
@@ -258,27 +235,6 @@ impl PaperShellApp {
             std::thread::spawn(move || {
                 if let Err(e) = sidebar_backend.save_marks(&uuid, &marks) {
                     tracing::error!("Failed to save marks in background: {}", e);
-                }
-            });
-        }
-    }
-
-    fn try_save_narrative_map_if_changed(&mut self) {
-        // Check if narrative map has changed and save in background if needed
-        if self.editor.narrative_map_changed()
-            && let Some(uuid) = self.editor.get_sidebar_uuid()
-            && let Some(map) = self.editor.get_narrative_map()
-        {
-            let map = map.clone();
-            let uuid = uuid.clone();
-            let ai_panel_backend = Arc::clone(&self.ai_panel_backend);
-
-            // Reset the changed flag immediately to avoid duplicate saves
-            self.editor.reset_narrative_map_changed();
-
-            std::thread::spawn(move || {
-                if let Err(e) = ai_panel_backend.save_narrative_map(&uuid, &map) {
-                    tracing::error!("Failed to save narrative map in background: {}", e);
                 }
             });
         }
@@ -488,16 +444,6 @@ impl PaperShellApp {
                     }
                     Err(e) => tracing::error!("Failed to load marks: {}", e),
                 },
-                ResponseMessage::NarrativeMapLoaded(result) => match result {
-                    Ok(Some(map)) => {
-                        self.editor.apply_narrative_map(map);
-                        tracing::info!("Narrative map loaded");
-                    }
-                    Ok(None) => {
-                        // No saved narrative map for this file
-                    }
-                    Err(e) => tracing::error!("Failed to load narrative map: {}", e),
-                },
                 ResponseMessage::OpenFile(path) => {
                     self.try_load_file_data(path);
                 }
@@ -507,8 +453,7 @@ impl PaperShellApp {
                         tracing::info!("AI response received");
                     }
                     Err(e) => {
-                        self.editor
-                            .set_ai_response([format!("Error: {}", e)].to_vec());
+                        self.editor.set_ai_response(format!("Error: {}", e));
                         tracing::error!("AI request failed: {}", e);
                     }
                 },
@@ -526,7 +471,7 @@ impl PaperShellApp {
 
     fn handle_ai_panel_action(&mut self, action: AiPanelAction) {
         match action {
-            AiPanelAction::SendRequest => {
+            AiPanelAction::SendRequest { conversation } => {
                 let content = self.editor.get_content();
 
                 self.editor.set_ai_processing(true);
@@ -535,7 +480,11 @@ impl PaperShellApp {
                 let ai_backend = Arc::clone(&self.ai_backend);
                 let response_sender = self.response_sender.clone();
 
-                ai_backend.generate_narrative_map(content.as_str(), response_sender);
+                ai_backend.discuss_writing_context(
+                    content.as_str(),
+                    &conversation,
+                    response_sender,
+                );
             }
         }
     }
@@ -610,7 +559,6 @@ impl eframe::App for PaperShellApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         self.check_response_messages();
         self.try_save_marks_if_changed();
-        self.try_save_narrative_map_if_changed();
         self.update_time_backend_if_focus_changed();
 
         // Title Bar
@@ -646,7 +594,7 @@ impl eframe::App for PaperShellApp {
                         self.editor.open_search_replace();
                     }
                     crate::ui::title_bar::TitleBarAction::Settings => {
-                        // TODO: Settings logic
+                        self.settings_window.open(&self.config.settings.ai_panel);
                     }
                     crate::ui::title_bar::TitleBarAction::FontChange(font_name) => {
                         let new_fonts = crate::ui::font::apply_font(&font_name);
@@ -696,6 +644,21 @@ impl eframe::App for PaperShellApp {
             }
         });
 
+        let mut ai_panel_action = None;
+        if self.editor.get_ai_panel_mut().is_visible {
+            egui::SidePanel::right("ai_panel_side")
+                .default_width(340.0)
+                .min_width(260.0)
+                .max_width(520.0)
+                .resizable(true)
+                .show(ctx, |ui| {
+                    ai_panel_action = self.editor.get_ai_panel_mut().show(ui);
+                });
+        }
+        if let Some(action) = ai_panel_action {
+            self.handle_ai_panel_action(action);
+        }
+
         // Main Content
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
@@ -707,11 +670,6 @@ impl eframe::App for PaperShellApp {
             });
         });
 
-        // AI 助手独立窗口
-        if let Some(action) = self.editor.get_ai_panel_mut().show(ctx) {
-            self.handle_ai_panel_action(action);
-        }
-
         // History Window
         self.history_window.show(ctx);
         if let Some(action) = self.history_window.take_pending_action() {
@@ -720,6 +678,17 @@ impl eframe::App for PaperShellApp {
 
         // Plugin output window
         self.plugin_output.show(ctx);
+
+        if let Some(ai_config) = self.settings_window.show(ctx) {
+            self.config.settings.ai_panel = ai_config;
+            self.ai_backend = Arc::new(AiBackend::from_config(&self.config.settings.ai_panel));
+            let settings = self.config.settings.clone();
+            std::thread::spawn(move || {
+                if let Err(e) = confy::store(crate::constant::APP_NAME, None, &settings) {
+                    tracing::error!("Failed to save settings: {}", e);
+                }
+            });
+        }
 
         if let Some(new_config) = self.plugin_config_window.show(ctx) {
             self.config.settings.github_publish = new_config.clone();

@@ -205,10 +205,7 @@ impl GithubPublishConfigWindow {
 
                 ui.horizontal(|ui| {
                     if ui
-                        .add_enabled(
-                            !self.repo.trim().is_empty(),
-                            egui::Button::new("保存"),
-                        )
+                        .add_enabled(!self.repo.trim().is_empty(), egui::Button::new("保存"))
                         .clicked()
                     {
                         saved = Some(
@@ -410,10 +407,7 @@ impl PublishDialog {
         }
     }
 
-    pub fn open(
-        &mut self,
-        config: &crate::plugin::builtin::github_publish::GithubPublishConfig,
-    ) {
+    pub fn open(&mut self, config: &crate::plugin::builtin::github_publish::GithubPublishConfig) {
         self.title.clear();
         self.description.clear();
         self.collection = 0;
@@ -464,10 +458,7 @@ impl PublishDialog {
 
                 ui.horizontal(|ui| {
                     if ui
-                        .add_enabled(
-                            !self.title.trim().is_empty(),
-                            egui::Button::new("发布"),
-                        )
+                        .add_enabled(!self.title.trim().is_empty(), egui::Button::new("发布"))
                         .clicked()
                     {
                         published = Some(PublishParams {

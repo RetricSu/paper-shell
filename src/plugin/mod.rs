@@ -130,9 +130,6 @@ impl PluginManager {
 
     /// Looks up a plugin by its stable id.
     pub fn get(&self, id: &str) -> Option<Arc<dyn Plugin>> {
-        self.plugins
-            .iter()
-            .find(|p| p.metadata().id == id)
-            .cloned()
+        self.plugins.iter().find(|p| p.metadata().id == id).cloned()
     }
 }

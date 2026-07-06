@@ -125,7 +125,12 @@ impl Default for Settings {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AiPanelConfig {
+    /// AI provider: "ollama" or "kimi"
+    #[serde(default = "default_ai_provider")]
+    pub provider: String,
+
     /// API key for AI service
+    /// Optional; local Ollama does not require one.
     #[serde(default)]
     pub api_key: String,
 
@@ -141,9 +146,14 @@ pub struct AiPanelConfig {
 impl Default for AiPanelConfig {
     fn default() -> Self {
         Self {
+            provider: default_ai_provider(),
             api_key: String::new(),
-            api_url: "https://generativelanguage.googleapis.com/v1beta/models/".to_string(),
-            model_name: "gemini-2.5-flash-lite-preview-09-2025".to_string(),
+            api_url: "http://localhost:11434/api/chat".to_string(),
+            model_name: "qwen3:8b".to_string(),
         }
     }
+}
+
+fn default_ai_provider() -> String {
+    "ollama".to_string()
 }

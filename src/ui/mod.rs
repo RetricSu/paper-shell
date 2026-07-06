@@ -3,6 +3,7 @@ pub mod editor;
 pub mod font;
 pub mod history;
 pub mod plugins;
+pub mod settings;
 pub mod sidebar;
 pub mod title_bar;
 pub mod viewport;

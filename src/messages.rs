@@ -11,9 +11,8 @@ pub enum ResponseMessage {
     FileLoaded(Result<FileData, String>),     // FileData, error
     HistoryLoaded(Result<Vec<HistoryEntry>, String>),
     MarksLoaded(Result<HashMap<usize, Mark>, String>),
-    NarrativeMapLoaded(Result<Option<Vec<String>>, String>),
     OpenFile(PathBuf),
-    AiResponse(Result<Vec<String>, AiError>),
+    AiResponse(Result<String, AiError>),
     /// A plugin finished running: (plugin display name, Ok(message) | Err(error)).
     PluginFinished {
         name: String,

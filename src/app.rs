@@ -449,11 +449,15 @@ impl PaperShellApp {
                 }
                 ResponseMessage::AiResponse(result) => match result {
                     Ok(response) => {
+                        tracing::info!(
+                            "AI response received: content_chars={}, tool_calls={}",
+                            response.content.chars().count(),
+                            response.tool_calls.len()
+                        );
                         self.editor.set_ai_response(response);
-                        tracing::info!("AI response received");
                     }
                     Err(e) => {
-                        self.editor.set_ai_response(format!("Error: {}", e));
+                        self.editor.set_ai_error(e.to_string());
                         tracing::error!("AI request failed: {}", e);
                     }
                 },
@@ -474,7 +478,7 @@ impl PaperShellApp {
             AiPanelAction::SendRequest { conversation } => {
                 let content = self.editor.get_content();
 
-                self.editor.set_ai_processing(true);
+                self.editor.begin_ai_request(content.clone());
                 tracing::info!("Sending AI request");
 
                 let ai_backend = Arc::clone(&self.ai_backend);
@@ -485,6 +489,22 @@ impl PaperShellApp {
                     &conversation,
                     response_sender,
                 );
+            }
+            AiPanelAction::ApplyEdit {
+                proposal_index,
+                base_content,
+                original_text,
+                replacement_text,
+            } => {
+                let result =
+                    self.editor
+                        .apply_ai_edit(&base_content, &original_text, &replacement_text);
+                if let Err(error) = &result {
+                    tracing::warn!("AI edit was not applied: {}", error);
+                } else {
+                    tracing::info!("AI edit applied after user confirmation");
+                }
+                self.editor.set_ai_edit_result(proposal_index, result);
             }
         }
     }

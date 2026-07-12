@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use super::ai_panel::{AiPanel, AiPanelAction};
 use super::sidebar::Sidebar;
+use crate::backend::ai_backend::AiAgentResponse;
 use crate::backend::sidebar_backend::Mark;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -686,12 +687,47 @@ impl Editor {
         &mut self.ai_panel
     }
 
-    pub fn set_ai_processing(&mut self, processing: bool) {
-        self.ai_panel.set_processing(processing);
+    pub fn begin_ai_request(&mut self, editor_snapshot: String) {
+        self.ai_panel.begin_request(editor_snapshot);
     }
 
-    pub fn set_ai_response(&mut self, response: String) {
+    pub fn set_ai_response(&mut self, response: AiAgentResponse) {
         self.ai_panel.set_response(response);
+    }
+
+    pub fn set_ai_error(&mut self, error: String) {
+        self.ai_panel.set_error(error);
+    }
+
+    pub fn apply_ai_edit(
+        &mut self,
+        base_content: &str,
+        original_text: &str,
+        replacement_text: &str,
+    ) -> Result<(), String> {
+        if self.content != base_content {
+            return Err("请求后正文已发生变化，请重新生成提案".to_string());
+        }
+        if original_text.is_empty() {
+            return Err("模型没有提供可定位的原文".to_string());
+        }
+
+        let mut matches = self.content.match_indices(original_text);
+        let Some((start, _)) = matches.next() else {
+            return Err("正文中找不到提案引用的原文".to_string());
+        };
+        if matches.next().is_some() {
+            return Err("提案引用的原文不唯一，请缩小修改范围".to_string());
+        }
+
+        let end = start + original_text.len();
+        self.content.replace_range(start..end, replacement_text);
+        self.cached_word_count = None;
+        Ok(())
+    }
+
+    pub fn set_ai_edit_result(&mut self, proposal_index: usize, result: Result<(), String>) {
+        self.ai_panel.set_edit_result(proposal_index, result);
     }
 
     // Search and replace functionality
@@ -985,5 +1021,41 @@ mod tests {
             Editor::add_paragraph_indentation("    Extra spaces."),
             "  Extra spaces."
         );
+    }
+
+    #[test]
+    fn ai_edit_applies_an_exact_unique_match() {
+        let mut editor = Editor::default();
+        editor.set_content("开头。旧句。结尾。".to_string());
+        let base = editor.get_content();
+
+        editor.apply_ai_edit(&base, "旧句", "新句").unwrap();
+
+        assert_eq!(editor.get_content(), "开头。新句。结尾。");
+    }
+
+    #[test]
+    fn ai_edit_rejects_a_stale_document_snapshot() {
+        let mut editor = Editor::default();
+        editor.set_content("旧内容".to_string());
+        let base = editor.get_content();
+        editor.set_content("用户刚刚改过".to_string());
+
+        let error = editor.apply_ai_edit(&base, "旧内容", "新内容").unwrap_err();
+
+        assert!(error.contains("正文已发生变化"));
+        assert_eq!(editor.get_content(), "用户刚刚改过");
+    }
+
+    #[test]
+    fn ai_edit_rejects_an_ambiguous_match() {
+        let mut editor = Editor::default();
+        editor.set_content("重复，重复".to_string());
+        let base = editor.get_content();
+
+        let error = editor.apply_ai_edit(&base, "重复", "替换").unwrap_err();
+
+        assert!(error.contains("原文不唯一"));
+        assert_eq!(editor.get_content(), base);
     }
 }

@@ -1,4 +1,4 @@
-use crate::backend::ai_backend::AiError;
+use crate::backend::ai_backend::{AiAgentResponse, AiError};
 use crate::backend::editor_backend::HistoryEntry;
 use crate::backend::sidebar_backend::Mark;
 use crate::file::FileData;
@@ -12,7 +12,7 @@ pub enum ResponseMessage {
     HistoryLoaded(Result<Vec<HistoryEntry>, String>),
     MarksLoaded(Result<HashMap<usize, Mark>, String>),
     OpenFile(PathBuf),
-    AiResponse(Result<String, AiError>),
+    AiResponse(Result<AiAgentResponse, AiError>),
     /// A plugin finished running: (plugin display name, Ok(message) | Err(error)).
     PluginFinished {
         name: String,

@@ -1,9 +1,14 @@
-use egui::{Galley, Pos2, Rect, Sense, Ui, Vec2};
+use egui::{Align, Color32, Frame, Galley, Layout, Pos2, Rect, RichText, Sense, Ui, Vec2};
+#[cfg(test)]
+use similar::{ChangeTag, TextDiff};
+use std::ops::Range;
 use std::sync::Arc;
 
-use super::ai_panel::{AiPanel, AiPanelAction};
+use super::ai_panel::{AiEditPreview, AiPanel, AiPanelAction};
 use super::sidebar::Sidebar;
-use crate::backend::ai_backend::AiAgentResponse;
+use crate::backend::ai_backend::{
+    AiAgentResponse, AiError, AiProgressEvent, AiRequestId, AiSelectionContext,
+};
 use crate::backend::sidebar_backend::Mark;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -20,6 +25,42 @@ struct SearchReplaceState {
     match_index: usize,                    // Current match index
 }
 
+#[cfg(test)]
+#[derive(Clone, Debug, PartialEq)]
+enum AiDiffSegmentKind {
+    Context,
+    Removed,
+    Added,
+}
+
+#[cfg(test)]
+#[derive(Clone, Debug, PartialEq)]
+struct AiDiffSegment {
+    text: String,
+    kind: AiDiffSegmentKind,
+}
+
+#[cfg(test)]
+#[derive(Clone, Debug, PartialEq)]
+struct AiInlineDiff {
+    text: String,
+    segments: Vec<AiDiffSegment>,
+    change_start: usize,
+}
+
+#[derive(Clone, Debug)]
+struct SelectionAnchor {
+    context: AiSelectionContext,
+    screen_rect: Rect,
+    stale: bool,
+}
+
+#[derive(Clone, Debug)]
+struct AiUndoEntry {
+    before: String,
+    after: String,
+}
+
 #[derive(Default)]
 pub struct Editor {
     content: String,
@@ -31,14 +72,47 @@ pub struct Editor {
     current_file: Option<PathBuf>,
     current_file_total_time: u64,
     cached_word_count: Option<usize>,
+    ai_preview_scrolled_to: Option<usize>,
+    selection_anchor: Option<SelectionAnchor>,
+    next_selection_anchor_id: u64,
+    inline_ai_open: bool,
+    inline_ai_draft: String,
+    ai_undo_stack: Vec<AiUndoEntry>,
     // Search and replace state
     search_replace: SearchReplaceState,
 }
 
 impl Editor {
+    fn handle_ai_undo(&mut self, ui: &mut Ui) {
+        let can_undo = self
+            .ai_undo_stack
+            .last()
+            .is_some_and(|entry| entry.after == self.content);
+        let shortcut = can_undo
+            && ui.input(|input| {
+                input.modifiers.command && !input.modifiers.shift && input.key_pressed(egui::Key::Z)
+            });
+        if shortcut
+            && ui.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::Z))
+            && let Some(entry) = self.ai_undo_stack.pop()
+        {
+            self.content = entry.before;
+            self.cached_word_count = None;
+        }
+    }
+
     pub fn show(&mut self, ui: &mut Ui) -> Option<AiPanelAction> {
-        let ai_action = None;
+        self.handle_ai_undo(ui);
+        let mut ai_action = None;
         let mut content = std::mem::take(&mut self.content);
+        let active_preview = self.ai_panel.active_edit_preview();
+        let preview_location = active_preview.as_ref().map(|proposal| {
+            locate_ai_edit_range(&content, &proposal.base_content, &proposal.original_text)
+        });
+        let diff_range_for_layout = preview_location
+            .as_ref()
+            .and_then(|result| result.as_ref().ok())
+            .cloned();
         let id = ui.make_persistent_id("main_editor");
 
         // Sidebar width
@@ -54,18 +128,16 @@ impl Editor {
                 Sense::hover(),
             );
 
-            // 2. Editor Area
-            let mut layouter = |ui: &Ui, string: &dyn egui::TextBuffer, wrap_width: f32| {
-                let mut job = egui::text::LayoutJob::simple(
-                    string.as_str().to_owned(),
-                    egui::FontId::monospace(14.0),
-                    ui.visuals().text_color(),
+            // 2. Editor Area. A pending AI edit only changes the layouter and adds
+            // an anchored review surface; the actual text editor stays interactive.
+            let diff_range = diff_range_for_layout.clone();
+            let mut layouter = move |ui: &Ui, string: &dyn egui::TextBuffer, wrap_width: f32| {
+                ui.painter().layout_job(ai_live_diff_layout_job(
+                    ui,
+                    string.as_str(),
+                    diff_range.as_ref(),
                     wrap_width,
-                );
-                // "Punch Tailing" fix: changing break_anywhere to false prevents
-                // breaks in the middle of words (and ideally keeps punctuation with text).
-                job.wrap.break_anywhere = false;
-                ui.painter().layout_job(job)
+                ))
             };
 
             let output = egui::TextEdit::multiline(&mut content)
@@ -76,26 +148,43 @@ impl Editor {
                 .layouter(&mut layouter)
                 .show(ui);
 
-            // =========================================================
-            //   enable auto-scroll to cursor when typing or selecting
-            // =========================================================
             Self::enable_scroll_to_cursor(ui, &output);
             Self::fix_macos_ime(&output, ui);
             self.draw_underline_decoration_at_focus_line(&output, ui);
             self.highlight_matches(&output, ui, &content);
             self.highlight_search_matches(&output, ui, &content);
             self.add_context_menu(&output, &mut content);
+            self.capture_ai_selection(&output, &content, ui);
 
-            // Capture the galley from the editor output
+            if let (Some(proposal), Some(location)) = (&active_preview, &preview_location) {
+                if let Ok(range) = location
+                    && self.ai_preview_scrolled_to != Some(proposal.proposal_index)
+                    && is_valid_text_byte_range(&content, range)
+                {
+                    let start_char = content[..range.start].chars().count();
+                    if let Some(change_rect) = text_range_screen_rect(
+                        &output,
+                        start_char,
+                        start_char + content[range.clone()].chars().count(),
+                    ) {
+                        ui.scroll_to_rect(
+                            change_rect.expand2(egui::vec2(8.0, 64.0)),
+                            Some(Align::Center),
+                        );
+                    }
+                    self.ai_preview_scrolled_to = Some(proposal.proposal_index);
+                }
+                ai_action = show_ai_edit_overlay(ui.ctx(), &output, proposal, location);
+            } else {
+                self.ai_preview_scrolled_to = None;
+            }
+
             self.last_galley = Some(output.galley.clone());
-            // Content is always taken back
             self.content = content;
 
             let editor_response = &output.response;
-
             if editor_response.changed() {
                 self.cached_word_count = None;
-                // Clear search matches when content changes
                 self.search_replace.matches.clear();
                 self.search_replace.current_match = None;
                 self.search_replace.match_index = 0;
@@ -104,7 +193,6 @@ impl Editor {
                 editor_response.request_focus();
             }
 
-            // 3. Sidebar Rendering
             let content_height = editor_response.rect.height();
             self.render_sidebar(
                 sidebar_origin,
@@ -114,6 +202,10 @@ impl Editor {
                 ui,
             );
         });
+
+        if active_preview.is_none() && ai_action.is_none() {
+            ai_action = self.show_selection_ai(ui.ctx());
+        }
 
         // Show search and replace dialog
         self.show_search_replace_dialog(ui);
@@ -128,6 +220,7 @@ impl Editor {
     pub fn set_content(&mut self, content: String) {
         self.content = content;
         self.cached_word_count = None; // 清除缓存
+        self.ai_undo_stack.clear();
     }
 
     pub fn get_word_count(&mut self) -> usize {
@@ -652,6 +745,298 @@ impl Editor {
         });
     }
 
+    fn capture_ai_selection(
+        &mut self,
+        output: &egui::text_edit::TextEditOutput,
+        content: &str,
+        ui: &Ui,
+    ) {
+        let Some(cursor_range) = output.cursor_range else {
+            return;
+        };
+        let start = cursor_range.primary.index.min(cursor_range.secondary.index);
+        let end = cursor_range.primary.index.max(cursor_range.secondary.index);
+        if start == end {
+            if output.response.has_focus() && !self.inline_ai_open {
+                self.selection_anchor = None;
+            }
+            return;
+        }
+        let Some(selected_text) = char_range_text(content, start, end) else {
+            return;
+        };
+        if selected_text.trim().is_empty() {
+            return;
+        }
+        let Some(screen_rect) = text_range_screen_rect(output, start, end) else {
+            return;
+        };
+
+        if let Some(anchor) = self.selection_anchor.as_mut()
+            && anchor.context.start_char == start
+            && anchor.context.end_char == end
+            && anchor.context.text == selected_text
+        {
+            anchor.screen_rect = screen_rect;
+            anchor.stale = false;
+            return;
+        }
+
+        let pointer_down = ui.input(|input| input.pointer.primary_down());
+        if pointer_down {
+            return;
+        }
+        self.next_selection_anchor_id = self.next_selection_anchor_id.wrapping_add(1).max(1);
+        self.selection_anchor = Some(SelectionAnchor {
+            context: AiSelectionContext {
+                anchor_id: self.next_selection_anchor_id,
+                start_char: start,
+                end_char: end,
+                text: selected_text,
+            },
+            screen_rect,
+            stale: false,
+        });
+        self.inline_ai_open = false;
+        self.inline_ai_draft.clear();
+    }
+
+    fn refresh_selection_anchor(&mut self) {
+        let Some(anchor) = self.selection_anchor.as_mut() else {
+            return;
+        };
+        if char_range_text(
+            &self.content,
+            anchor.context.start_char,
+            anchor.context.end_char,
+        )
+        .as_deref()
+            == Some(anchor.context.text.as_str())
+        {
+            anchor.stale = false;
+            return;
+        }
+
+        let mut matches = self.content.match_indices(&anchor.context.text);
+        let Some((byte_start, _)) = matches.next() else {
+            anchor.stale = true;
+            return;
+        };
+        if matches.next().is_some() {
+            anchor.stale = true;
+            return;
+        }
+        let start_char = self.content[..byte_start].chars().count();
+        anchor.context.start_char = start_char;
+        anchor.context.end_char = start_char + anchor.context.text.chars().count();
+        anchor.stale = false;
+    }
+
+    fn show_selection_ai(&mut self, ctx: &egui::Context) -> Option<AiPanelAction> {
+        self.refresh_selection_anchor();
+        let anchor = self.selection_anchor.clone()?;
+        let screen = ctx.content_rect();
+        let button_pos = egui::pos2(
+            (anchor.screen_rect.max.x + 6.0).min(screen.max.x - 72.0),
+            (anchor.screen_rect.max.y + 4.0).min(screen.max.y - 32.0),
+        );
+
+        if !self.inline_ai_open {
+            let clicked = egui::Area::new(egui::Id::new((
+                "selection_ai_button",
+                anchor.context.anchor_id,
+            )))
+            .order(egui::Order::Foreground)
+            .fixed_pos(button_pos)
+            .show(ctx, |ui| {
+                Frame::new()
+                    .fill(Color32::from_rgb(239, 241, 237))
+                    .stroke(egui::Stroke::new(1.0, Color32::from_rgb(195, 202, 192)))
+                    .corner_radius(5.0)
+                    .inner_margin(egui::Margin::symmetric(5, 3))
+                    .show(ui, |ui| ui.small_button("问 AI").clicked())
+                    .inner
+            })
+            .inner;
+            if clicked {
+                self.inline_ai_open = true;
+                self.ai_panel.attach_selection(anchor.context.clone());
+            }
+            return None;
+        }
+
+        let width = (screen.width() - 24.0).clamp(220.0, 336.0);
+        let estimated_height = 350.0;
+        let x = (anchor.screen_rect.max.x + 10.0)
+            .min(screen.max.x - width - 8.0)
+            .max(screen.min.x + 8.0);
+        let below = anchor.screen_rect.max.y + 8.0;
+        let y = if below + estimated_height <= screen.max.y {
+            below
+        } else {
+            (anchor.screen_rect.min.y - estimated_height - 8.0).max(screen.min.y + 8.0)
+        };
+
+        let messages = self.ai_panel.selection_messages(anchor.context.anchor_id);
+        let status = self.ai_panel.request_status_for(anchor.context.anchor_id);
+        let partial = self
+            .ai_panel
+            .partial_response_for(anchor.context.anchor_id)
+            .map(str::to_string);
+        let is_processing = self.ai_panel.is_processing_for(anchor.context.anchor_id);
+        let any_processing = self.ai_panel.is_processing;
+        let request_id = self.ai_panel.active_request_id();
+        let mut close = false;
+        let mut open_side = false;
+        let mut send = false;
+        let mut stop = false;
+
+        egui::Area::new(egui::Id::new((
+            "selection_ai_popover",
+            anchor.context.anchor_id,
+        )))
+        .order(egui::Order::Foreground)
+        .fixed_pos(egui::pos2(x, y))
+        .show(ctx, |ui| {
+            Frame::new()
+                .fill(Color32::from_rgb(249, 249, 246))
+                .stroke(egui::Stroke::new(1.0, Color32::from_rgb(191, 196, 188)))
+                .corner_radius(7.0)
+                .inner_margin(egui::Margin::same(10))
+                .show(ui, |ui| {
+                    ui.set_width(width);
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("讨论选区").size(11.0).strong());
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if ui.small_button("×").on_hover_text("关闭讨论框").clicked() {
+                                close = true;
+                            }
+                            if ui.small_button("在侧栏打开").clicked() {
+                                open_side = true;
+                            }
+                        });
+                    });
+                    ui.label(
+                        RichText::new(format!(
+                            "“{}”",
+                            preview_selection_text(&anchor.context.text, 100)
+                        ))
+                        .size(10.0)
+                        .italics()
+                        .color(Color32::from_gray(88)),
+                    );
+
+                    if !messages.is_empty() || partial.is_some() {
+                        ui.separator();
+                        egui::ScrollArea::vertical()
+                            .id_salt(("selection_thread", anchor.context.anchor_id))
+                            .max_height(150.0)
+                            .stick_to_bottom(true)
+                            .show(ui, |ui| {
+                                for message in messages.iter().rev().take(6).rev() {
+                                    let role = if message.role == "user" { "你" } else { "AI" };
+                                    ui.label(
+                                        RichText::new(role)
+                                            .size(9.0)
+                                            .strong()
+                                            .color(Color32::from_gray(104)),
+                                    );
+                                    ui.label(
+                                        RichText::new(&message.content)
+                                            .size(11.0)
+                                            .color(Color32::from_gray(48)),
+                                    );
+                                    ui.add_space(5.0);
+                                }
+                                if let Some(partial) = &partial {
+                                    ui.label(
+                                        RichText::new("AI · 正在回复")
+                                            .size(9.0)
+                                            .strong()
+                                            .color(Color32::from_gray(104)),
+                                    );
+                                    ui.label(RichText::new(partial).size(11.0));
+                                }
+                            });
+                    }
+
+                    if let Some(status) = &status {
+                        ui.label(
+                            RichText::new(status)
+                                .size(9.0)
+                                .color(Color32::from_rgb(78, 91, 74)),
+                        );
+                    }
+                    if anchor.stale {
+                        ui.label(
+                            RichText::new("选区已变化，请重新选择后继续")
+                                .size(10.0)
+                                .color(Color32::from_rgb(126, 56, 50)),
+                        );
+                    }
+
+                    let input = egui::TextEdit::multiline(&mut self.inline_ai_draft)
+                        .id(egui::Id::new((
+                            "selection_ai_input",
+                            anchor.context.anchor_id,
+                        )))
+                        .hint_text("就这段文字提问…")
+                        .desired_rows(2);
+                    let response = ui.add_sized([width, 48.0], input);
+                    let shortcut = response.has_focus()
+                        && ctx.input(|input| {
+                            input.modifiers.command && input.key_pressed(egui::Key::Enter)
+                        });
+                    ui.horizontal(|ui| {
+                        if is_processing {
+                            if ui.button("停止").clicked() {
+                                stop = true;
+                            }
+                        } else if any_processing {
+                            ui.add_enabled(false, egui::Button::new("AI 正在处理另一条消息"));
+                        } else if ui
+                            .add_enabled(
+                                !anchor.stale && !self.inline_ai_draft.trim().is_empty(),
+                                egui::Button::new("发送"),
+                            )
+                            .clicked()
+                        {
+                            send = true;
+                        }
+                        ui.label(
+                            RichText::new("⌘/Ctrl + Enter")
+                                .size(9.0)
+                                .color(Color32::from_gray(128)),
+                        );
+                    });
+                    if shortcut && !any_processing && !anchor.stale {
+                        send = true;
+                    }
+                });
+        });
+
+        if ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
+            close = true;
+        }
+        if open_side {
+            self.ai_panel.is_visible = true;
+            self.ai_panel.attach_selection(anchor.context.clone());
+        }
+        if close {
+            self.inline_ai_open = false;
+        }
+        if stop {
+            return request_id.map(|request_id| AiPanelAction::CancelRequest { request_id });
+        }
+        if send {
+            let message = std::mem::take(&mut self.inline_ai_draft);
+            return self
+                .ai_panel
+                .send_selection_message(message, anchor.context.clone());
+        }
+        None
+    }
+
     fn render_sidebar(
         &mut self,
         sidebar_origin: Pos2,
@@ -687,16 +1072,72 @@ impl Editor {
         &mut self.ai_panel
     }
 
-    pub fn begin_ai_request(&mut self, editor_snapshot: String) {
-        self.ai_panel.begin_request(editor_snapshot);
+    pub fn begin_ai_request(
+        &mut self,
+        request_id: AiRequestId,
+        editor_snapshot: String,
+        selection: Option<AiSelectionContext>,
+    ) {
+        self.ai_panel
+            .begin_request(request_id, editor_snapshot, selection);
     }
 
-    pub fn set_ai_response(&mut self, response: AiAgentResponse) {
-        self.ai_panel.set_response(response);
+    pub fn apply_ai_progress(&mut self, request_id: AiRequestId, event: AiProgressEvent) {
+        self.ai_panel.apply_progress(request_id, event);
     }
 
-    pub fn set_ai_error(&mut self, error: String) {
-        self.ai_panel.set_error(error);
+    pub fn set_ai_response(&mut self, request_id: AiRequestId, response: AiAgentResponse) {
+        self.ai_panel.set_response(request_id, response);
+    }
+
+    pub fn set_ai_error(&mut self, request_id: AiRequestId, error: AiError) {
+        self.ai_panel.set_error(request_id, error);
+    }
+
+    pub fn cancel_ai_request(&mut self, request_id: AiRequestId) {
+        self.ai_panel.cancel_request(request_id);
+    }
+
+    pub fn preview_ai_edit(&mut self, proposal_index: usize) {
+        self.ai_panel.preview_edit(proposal_index);
+        self.ai_preview_scrolled_to = None;
+    }
+
+    pub fn reject_ai_edit(&mut self, proposal_index: usize) {
+        self.ai_panel.reject_edit(proposal_index);
+        self.ai_preview_scrolled_to = None;
+    }
+
+    pub fn navigate_ai_edit(&mut self, direction: i32) {
+        self.ai_panel.navigate_edit(direction);
+        self.ai_preview_scrolled_to = None;
+    }
+
+    pub fn apply_all_ai_edits(&mut self) -> (usize, usize) {
+        let proposals = self.ai_panel.ready_edit_previews();
+        let mut applied = 0;
+        let mut failed = 0;
+        for proposal in proposals {
+            let result = self.apply_ai_edit(
+                &proposal.base_content,
+                &proposal.original_text,
+                &proposal.replacement_text,
+            );
+            if result.is_ok() {
+                applied += 1;
+            } else {
+                failed += 1;
+            }
+            self.ai_panel
+                .set_edit_result(proposal.proposal_index, result);
+        }
+        self.ai_preview_scrolled_to = None;
+        (applied, failed)
+    }
+
+    pub fn reject_all_ai_edits(&mut self) {
+        self.ai_panel.reject_all_edits();
+        self.ai_preview_scrolled_to = None;
     }
 
     pub fn apply_ai_edit(
@@ -705,23 +1146,14 @@ impl Editor {
         original_text: &str,
         replacement_text: &str,
     ) -> Result<(), String> {
-        if self.content != base_content {
-            return Err("请求后正文已发生变化，请重新生成提案".to_string());
+        let range = locate_ai_edit_range(&self.content, base_content, original_text)?;
+        let before = self.content.clone();
+        self.content.replace_range(range, replacement_text);
+        let after = self.content.clone();
+        self.ai_undo_stack.push(AiUndoEntry { before, after });
+        if self.ai_undo_stack.len() > 20 {
+            self.ai_undo_stack.remove(0);
         }
-        if original_text.is_empty() {
-            return Err("模型没有提供可定位的原文".to_string());
-        }
-
-        let mut matches = self.content.match_indices(original_text);
-        let Some((start, _)) = matches.next() else {
-            return Err("正文中找不到提案引用的原文".to_string());
-        };
-        if matches.next().is_some() {
-            return Err("提案引用的原文不唯一，请缩小修改范围".to_string());
-        }
-
-        let end = start + original_text.len();
-        self.content.replace_range(start..end, replacement_text);
         self.cached_word_count = None;
         Ok(())
     }
@@ -926,6 +1358,377 @@ impl Editor {
     }
 }
 
+fn char_range_text(content: &str, start: usize, end: usize) -> Option<String> {
+    if start >= end {
+        return None;
+    }
+    let start_byte = content
+        .char_indices()
+        .nth(start)
+        .map(|(index, _)| index)
+        .unwrap_or(content.len());
+    let end_byte = content
+        .char_indices()
+        .nth(end)
+        .map(|(index, _)| index)
+        .unwrap_or(content.len());
+    (start_byte < end_byte).then(|| content[start_byte..end_byte].to_string())
+}
+
+fn text_range_screen_rect(
+    output: &egui::text_edit::TextEditOutput,
+    start: usize,
+    end: usize,
+) -> Option<Rect> {
+    let mut row_start = 0;
+    let mut combined: Option<Rect> = None;
+    for row in &output.galley.rows {
+        let row_chars = row.char_count_excluding_newline();
+        let row_end = row_start + row_chars;
+        let intersect_start = start.max(row_start);
+        let intersect_end = end.min(row_end);
+        if intersect_start < intersect_end {
+            let x_start = row.x_offset(intersect_start - row_start);
+            let x_end = row.x_offset(intersect_end - row_start);
+            let min = output.galley_pos + row.rect().min.to_vec2() + egui::vec2(x_start, 0.0);
+            let max = output.galley_pos
+                + row.rect().min.to_vec2()
+                + egui::vec2(x_end, row.rect().height());
+            let rect = Rect::from_min_max(min, max);
+            combined = Some(combined.map_or(rect, |combined| combined.union(rect)));
+        }
+        row_start = row_end + usize::from(row.ends_with_newline);
+    }
+    combined
+}
+
+fn preview_selection_text(text: &str, limit: usize) -> String {
+    if limit == 0 {
+        return if text.chars().any(|c| !c.is_whitespace()) {
+            "…".to_string()
+        } else {
+            String::new()
+        };
+    }
+
+    let mut preview = String::with_capacity(limit.saturating_add(4));
+    let mut chars = text.chars();
+    let mut char_count = 0;
+    let mut last_was_whitespace = true;
+
+    while let Some(c) = chars.next() {
+        if c.is_whitespace() {
+            if last_was_whitespace || char_count == 0 {
+                last_was_whitespace = true;
+                continue;
+            }
+            preview.push(' ');
+            last_was_whitespace = true;
+        } else {
+            preview.push(c);
+            last_was_whitespace = false;
+        }
+        char_count += 1;
+        if char_count >= limit {
+            break;
+        }
+    }
+
+    let preview = preview.trim_end();
+    if chars.next().is_some() {
+        format!("{}…", preview)
+    } else {
+        preview.to_string()
+    }
+}
+
+fn preview_diff_text(text: &str, limit: usize) -> String {
+    let mut chars = text.chars();
+    let preview = chars.by_ref().take(limit).collect::<String>();
+    if chars.next().is_some() {
+        format!("{}\n…", preview)
+    } else {
+        preview
+    }
+}
+
+fn locate_ai_edit_range(
+    content: &str,
+    base_content: &str,
+    original_text: &str,
+) -> Result<Range<usize>, String> {
+    if original_text.is_empty() {
+        return Err("模型没有提供可定位的原文".to_string());
+    }
+
+    let mut base_matches = base_content.match_indices(original_text);
+    if base_matches.next().is_none() {
+        return Err("提案引用的原文不在请求时的文档中".to_string());
+    }
+    if base_matches.next().is_some() {
+        return Err("提案引用的原文在请求时并不唯一，请让 AI 缩小修改范围".to_string());
+    }
+
+    let mut matches = content.match_indices(original_text);
+    let Some((start, _)) = matches.next() else {
+        return Err("目标文字已经发生变化，无法安全应用这项修改".to_string());
+    };
+    if matches.next().is_some() {
+        return Err("当前正文中出现了多处相同原文，无法安全定位这项修改".to_string());
+    }
+
+    Ok(start..start + original_text.len())
+}
+
+#[cfg(test)]
+fn build_ai_inline_diff(
+    content: &str,
+    base_content: &str,
+    original_text: &str,
+    replacement_text: &str,
+) -> Result<AiInlineDiff, String> {
+    let range = locate_ai_edit_range(content, base_content, original_text)?;
+    let mut segments = Vec::new();
+    let prefix = &content[..range.start];
+    let suffix = &content[range.end..];
+    let original_start = prefix.chars().count();
+    let mut display_cursor = original_start;
+    let mut change_start = None;
+
+    if !prefix.is_empty() {
+        segments.push(AiDiffSegment {
+            text: prefix.to_string(),
+            kind: AiDiffSegmentKind::Context,
+        });
+    }
+
+    for change in TextDiff::from_chars(original_text, replacement_text).iter_all_changes() {
+        let kind = match change.tag() {
+            ChangeTag::Equal => AiDiffSegmentKind::Context,
+            ChangeTag::Delete => AiDiffSegmentKind::Removed,
+            ChangeTag::Insert => AiDiffSegmentKind::Added,
+        };
+        if !matches!(change.tag(), ChangeTag::Equal) && change_start.is_none() {
+            change_start = Some(display_cursor);
+        }
+        display_cursor += change.value().chars().count();
+        segments.push(AiDiffSegment {
+            text: change.value().to_string(),
+            kind,
+        });
+    }
+
+    if !suffix.is_empty() {
+        segments.push(AiDiffSegment {
+            text: suffix.to_string(),
+            kind: AiDiffSegmentKind::Context,
+        });
+    }
+
+    let text = segments
+        .iter()
+        .map(|segment| segment.text.as_str())
+        .collect();
+    Ok(AiInlineDiff {
+        text,
+        segments,
+        change_start: change_start.unwrap_or(original_start),
+    })
+}
+
+fn ai_live_diff_layout_job(
+    ui: &Ui,
+    text: &str,
+    removed_range: Option<&Range<usize>>,
+    wrap_width: f32,
+) -> egui::text::LayoutJob {
+    let font_id = egui::FontId::monospace(14.0);
+    let normal = egui::TextFormat {
+        font_id: font_id.clone(),
+        color: ui.visuals().text_color(),
+        ..Default::default()
+    };
+    let mut job = egui::text::LayoutJob::default();
+
+    if let Some(range) = removed_range
+        && range.start <= range.end
+        && range.end <= text.len()
+        && text.is_char_boundary(range.start)
+        && text.is_char_boundary(range.end)
+    {
+        job.append(&text[..range.start], 0.0, normal.clone());
+        job.append(
+            &text[range.clone()],
+            0.0,
+            egui::TextFormat {
+                font_id: font_id.clone(),
+                color: Color32::from_rgb(126, 52, 52),
+                background: Color32::from_rgb(250, 226, 224),
+                strikethrough: egui::Stroke::new(1.0, Color32::from_rgb(126, 52, 52)),
+                ..Default::default()
+            },
+        );
+        job.append(&text[range.end..], 0.0, normal);
+    } else {
+        job.append(text, 0.0, normal);
+    }
+    job.wrap.max_width = wrap_width;
+    job.wrap.break_anywhere = false;
+    job
+}
+
+fn show_ai_edit_overlay(
+    ctx: &egui::Context,
+    output: &egui::text_edit::TextEditOutput,
+    proposal: &AiEditPreview,
+    location: &Result<Range<usize>, String>,
+) -> Option<AiPanelAction> {
+    let anchor_rect = location
+        .as_ref()
+        .ok()
+        .and_then(|range| {
+            let text = output.galley.text();
+            if is_valid_text_byte_range(text, range) {
+                let start = text[..range.start].chars().count();
+                let end = start + text[range.clone()].chars().count();
+                text_range_screen_rect(output, start, end)
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| {
+            Rect::from_min_size(
+                output.response.rect.right_top(),
+                egui::vec2(1.0, output.response.rect.height().min(24.0)),
+            )
+        });
+    let screen = ctx.content_rect();
+    let width = (screen.width() - 24.0).clamp(220.0, 330.0);
+    let right_x = anchor_rect.max.x + 10.0;
+    let x = if right_x + width <= screen.max.x - 8.0 {
+        right_x
+    } else {
+        (anchor_rect.min.x - width - 10.0)
+            .max(screen.min.x + 8.0)
+            .min(screen.max.x - width - 8.0)
+    };
+    let y = anchor_rect
+        .min
+        .y
+        .max(screen.min.y + 8.0)
+        .min(screen.max.y - 250.0);
+    let mut action = None;
+
+    egui::Area::new(egui::Id::new(("ai_edit_overlay", proposal.proposal_index)))
+        .order(egui::Order::Foreground)
+        .fixed_pos(egui::pos2(x, y))
+        .show(ctx, |ui| {
+            Frame::new()
+                .fill(Color32::from_rgb(249, 249, 246))
+                .stroke(egui::Stroke::new(1.0, Color32::from_rgb(190, 196, 187)))
+                .corner_radius(7.0)
+                .inner_margin(egui::Margin::same(10))
+                .show(ui, |ui| {
+                    ui.set_width(width);
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new(format!(
+                                "修改 {} / {}",
+                                proposal.review_position, proposal.review_total
+                            ))
+                            .size(11.0)
+                            .strong(),
+                        );
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if ui.small_button("›").on_hover_text("下一处修改").clicked() {
+                                action = Some(AiPanelAction::NavigateEdit { direction: 1 });
+                            }
+                            if ui.small_button("‹").on_hover_text("上一处修改").clicked() {
+                                action = Some(AiPanelAction::NavigateEdit { direction: -1 });
+                            }
+                        });
+                    });
+
+                    match location {
+                        Ok(_) => {
+                            ui.label(
+                                RichText::new("− 原文已在正文中标记")
+                                    .size(9.0)
+                                    .color(Color32::from_rgb(126, 52, 52)),
+                            );
+                            Frame::new()
+                                .fill(Color32::from_rgb(225, 242, 230))
+                                .stroke(egui::Stroke::new(1.0, Color32::from_rgb(181, 216, 190)))
+                                .corner_radius(4.0)
+                                .inner_margin(egui::Margin::same(7))
+                                .show(ui, |ui| {
+                                    ui.label(
+                                        RichText::new(format!(
+                                            "+ {}",
+                                            preview_diff_text(&proposal.replacement_text, 1_600)
+                                        ))
+                                        .size(11.0)
+                                        .color(Color32::from_rgb(39, 91, 59)),
+                                    );
+                                });
+                            if !proposal.explanation.trim().is_empty() {
+                                ui.label(
+                                    RichText::new(&proposal.explanation)
+                                        .size(10.0)
+                                        .color(Color32::from_gray(88)),
+                                );
+                            }
+                            ui.horizontal(|ui| {
+                                if ui.button("接受修改").clicked() {
+                                    action = Some(AiPanelAction::ApplyEdit {
+                                        proposal_index: proposal.proposal_index,
+                                        base_content: proposal.base_content.clone(),
+                                        original_text: proposal.original_text.clone(),
+                                        replacement_text: proposal.replacement_text.clone(),
+                                    });
+                                }
+                                if ui.button("拒绝修改").clicked() {
+                                    action = Some(AiPanelAction::RejectEdit {
+                                        proposal_index: proposal.proposal_index,
+                                    });
+                                }
+                            });
+                            if proposal.review_total > 1 {
+                                ui.horizontal(|ui| {
+                                    if ui.small_button("全部接受").clicked() {
+                                        action = Some(AiPanelAction::ApplyAllEdits);
+                                    }
+                                    if ui.small_button("全部拒绝").clicked() {
+                                        action = Some(AiPanelAction::RejectAllEdits);
+                                    }
+                                });
+                            }
+                        }
+                        Err(error) => {
+                            ui.label(
+                                RichText::new(error)
+                                    .size(10.0)
+                                    .color(Color32::from_rgb(126, 52, 52)),
+                            );
+                            if ui.button("关闭这项提案").clicked() {
+                                action = Some(AiPanelAction::RejectEdit {
+                                    proposal_index: proposal.proposal_index,
+                                });
+                            }
+                        }
+                    }
+                });
+        });
+    action
+}
+
+fn is_valid_text_byte_range(text: &str, range: &Range<usize>) -> bool {
+    range.start <= range.end
+        && range.end <= text.len()
+        && text.is_char_boundary(range.start)
+        && text.is_char_boundary(range.end)
+}
+
 fn is_cjk(c: char) -> bool {
     ('\u{4E00}'..='\u{9FFF}').contains(&c)
         || ('\u{3400}'..='\u{4DBF}').contains(&c)
@@ -1024,6 +1827,26 @@ mod tests {
     }
 
     #[test]
+    fn preview_selection_text_compacts_text_lazily() {
+        assert_eq!(
+            preview_selection_text("  第一段\n\n第二段\t第三段  ", 7),
+            "第一段 第二段…"
+        );
+        assert_eq!(preview_selection_text("短句", 100), "短句");
+        assert_eq!(preview_selection_text("   ", 100), "");
+    }
+
+    #[test]
+    fn text_byte_range_validation_rejects_stale_or_split_ranges() {
+        let text = "a你b";
+
+        assert!(is_valid_text_byte_range(text, &(1..4)));
+        assert!(!is_valid_text_byte_range(text, &(1..99)));
+        assert!(!is_valid_text_byte_range(text, &(3..2)));
+        assert!(!is_valid_text_byte_range(text, &(2..4)));
+    }
+
+    #[test]
     fn ai_edit_applies_an_exact_unique_match() {
         let mut editor = Editor::default();
         editor.set_content("开头。旧句。结尾。".to_string());
@@ -1043,7 +1866,7 @@ mod tests {
 
         let error = editor.apply_ai_edit(&base, "旧内容", "新内容").unwrap_err();
 
-        assert!(error.contains("正文已发生变化"));
+        assert!(error.contains("目标文字已经发生变化"));
         assert_eq!(editor.get_content(), "用户刚刚改过");
     }
 
@@ -1055,7 +1878,77 @@ mod tests {
 
         let error = editor.apply_ai_edit(&base, "重复", "替换").unwrap_err();
 
-        assert!(error.contains("原文不唯一"));
+        assert!(error.contains("不唯一"));
         assert_eq!(editor.get_content(), base);
+    }
+
+    #[test]
+    fn ai_inline_diff_keeps_document_context_and_marks_character_changes() {
+        let content = "开头。旧句。结尾。";
+
+        let preview = build_ai_inline_diff(content, content, "旧句", "新句").unwrap();
+
+        assert_eq!(preview.text, "开头。旧新句。结尾。");
+        assert_eq!(preview.change_start, 3);
+        assert!(preview.segments.iter().any(|segment| {
+            segment.kind == AiDiffSegmentKind::Removed && segment.text == "旧"
+        }));
+        assert!(
+            preview
+                .segments
+                .iter()
+                .any(|segment| segment.kind == AiDiffSegmentKind::Added && segment.text == "新")
+        );
+    }
+
+    #[test]
+    fn ai_inline_diff_rejects_a_stale_preview() {
+        let error = build_ai_inline_diff("用户改过", "旧内容", "旧", "新").unwrap_err();
+
+        assert!(error.contains("目标文字已经发生变化"));
+    }
+
+    #[test]
+    fn ai_edit_rebases_when_only_other_document_regions_changed() {
+        let base = "目标句。后文。".to_string();
+        let mut editor = Editor::default();
+        editor.set_content("新增开头。目标句。后文。".to_string());
+
+        editor.apply_ai_edit(&base, "目标句", "改写句").unwrap();
+
+        assert_eq!(editor.get_content(), "新增开头。改写句。后文。");
+        let undo = editor.ai_undo_stack.last().unwrap();
+        assert_eq!(undo.before, "新增开头。目标句。后文。");
+        assert_eq!(undo.after, "新增开头。改写句。后文。");
+    }
+
+    #[test]
+    fn batch_review_applies_each_safe_proposal_and_keeps_undo_entries() {
+        let mut editor = Editor::default();
+        let base = "第一句。第二句。".to_string();
+        editor.set_content(base.clone());
+        editor.begin_ai_request(9, base.clone(), None);
+        editor.set_ai_response(
+            9,
+            AiAgentResponse {
+                content: String::new(),
+                tool_calls: vec![
+                    crate::backend::ai_backend::AiToolCall::ProposeDocumentEdit {
+                        original_text: "第一句".to_string(),
+                        replacement_text: "第一处".to_string(),
+                        explanation: String::new(),
+                    },
+                    crate::backend::ai_backend::AiToolCall::ProposeDocumentEdit {
+                        original_text: "第二句".to_string(),
+                        replacement_text: "第二处".to_string(),
+                        explanation: String::new(),
+                    },
+                ],
+            },
+        );
+
+        assert_eq!(editor.apply_all_ai_edits(), (2, 0));
+        assert_eq!(editor.get_content(), "第一处。第二处。");
+        assert_eq!(editor.ai_undo_stack.len(), 2);
     }
 }

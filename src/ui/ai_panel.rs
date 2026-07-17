@@ -792,13 +792,42 @@ fn same_selection(left: Option<&AiSelectionContext>, right: Option<&AiSelectionC
 }
 
 fn preview_inline(text: &str, limit: usize) -> String {
-    let compact = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    let mut chars = compact.chars();
-    let preview = chars.by_ref().take(limit).collect::<String>();
+    if limit == 0 {
+        return if text.chars().any(|c| !c.is_whitespace()) {
+            "…".to_string()
+        } else {
+            String::new()
+        };
+    }
+
+    let mut preview = String::with_capacity(limit.saturating_add(4));
+    let mut chars = text.chars();
+    let mut char_count = 0;
+    let mut last_was_whitespace = true;
+
+    while let Some(c) = chars.next() {
+        if c.is_whitespace() {
+            if last_was_whitespace || char_count == 0 {
+                last_was_whitespace = true;
+                continue;
+            }
+            preview.push(' ');
+            last_was_whitespace = true;
+        } else {
+            preview.push(c);
+            last_was_whitespace = false;
+        }
+        char_count += 1;
+        if char_count >= limit {
+            break;
+        }
+    }
+
+    let preview = preview.trim_end();
     if chars.next().is_some() {
         format!("{}…", preview)
     } else {
-        preview
+        preview.to_string()
     }
 }
 
@@ -1257,6 +1286,16 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn preview_inline_compacts_text_without_full_join() {
+        assert_eq!(
+            preview_inline("  第一段\n\n第二段\t第三段  ", 7),
+            "第一段 第二段…"
+        );
+        assert_eq!(preview_inline("短句", 36), "短句");
+        assert_eq!(preview_inline("   ", 36), "");
     }
 
     #[test]

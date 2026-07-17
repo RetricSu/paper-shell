@@ -526,10 +526,14 @@ impl PaperShellApp {
                 self.active_ai_request = Some(handle);
             }
             AiPanelAction::CancelRequest { request_id } => {
-                if let Some(request) = self.active_ai_request.take()
-                    && request.id == request_id
+                if self
+                    .active_ai_request
+                    .as_ref()
+                    .is_some_and(|request| request.id == request_id)
                 {
-                    request.cancel();
+                    if let Some(request) = self.active_ai_request.take() {
+                        request.cancel();
+                    }
                 }
                 self.editor.cancel_ai_request(request_id);
                 tracing::info!("Stopped AI request {}", request_id);

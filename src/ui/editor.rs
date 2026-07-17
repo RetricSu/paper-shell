@@ -159,6 +159,7 @@ impl Editor {
             if let (Some(proposal), Some(location)) = (&active_preview, &preview_location) {
                 if let Ok(range) = location
                     && self.ai_preview_scrolled_to != Some(proposal.proposal_index)
+                    && is_valid_text_byte_range(&content, range)
                 {
                     let start_char = content[..range.start].chars().count();
                     if let Some(change_rect) = text_range_screen_rect(
@@ -1402,13 +1403,42 @@ fn text_range_screen_rect(
 }
 
 fn preview_selection_text(text: &str, limit: usize) -> String {
-    let compact = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    let mut chars = compact.chars();
-    let preview = chars.by_ref().take(limit).collect::<String>();
+    if limit == 0 {
+        return if text.chars().any(|c| !c.is_whitespace()) {
+            "…".to_string()
+        } else {
+            String::new()
+        };
+    }
+
+    let mut preview = String::with_capacity(limit.saturating_add(4));
+    let mut chars = text.chars();
+    let mut char_count = 0;
+    let mut last_was_whitespace = true;
+
+    while let Some(c) = chars.next() {
+        if c.is_whitespace() {
+            if last_was_whitespace || char_count == 0 {
+                last_was_whitespace = true;
+                continue;
+            }
+            preview.push(' ');
+            last_was_whitespace = true;
+        } else {
+            preview.push(c);
+            last_was_whitespace = false;
+        }
+        char_count += 1;
+        if char_count >= limit {
+            break;
+        }
+    }
+
+    let preview = preview.trim_end();
     if chars.next().is_some() {
         format!("{}…", preview)
     } else {
-        preview
+        preview.to_string()
     }
 }
 
@@ -1558,9 +1588,13 @@ fn show_ai_edit_overlay(
         .ok()
         .and_then(|range| {
             let text = output.galley.text();
-            let start = text[..range.start].chars().count();
-            let end = start + text[range.clone()].chars().count();
-            text_range_screen_rect(output, start, end)
+            if is_valid_text_byte_range(text, range) {
+                let start = text[..range.start].chars().count();
+                let end = start + text[range.clone()].chars().count();
+                text_range_screen_rect(output, start, end)
+            } else {
+                None
+            }
         })
         .unwrap_or_else(|| {
             Rect::from_min_size(
@@ -1688,6 +1722,13 @@ fn show_ai_edit_overlay(
     action
 }
 
+fn is_valid_text_byte_range(text: &str, range: &Range<usize>) -> bool {
+    range.start <= range.end
+        && range.end <= text.len()
+        && text.is_char_boundary(range.start)
+        && text.is_char_boundary(range.end)
+}
+
 fn is_cjk(c: char) -> bool {
     ('\u{4E00}'..='\u{9FFF}').contains(&c)
         || ('\u{3400}'..='\u{4DBF}').contains(&c)
@@ -1783,6 +1824,26 @@ mod tests {
             Editor::add_paragraph_indentation("    Extra spaces."),
             "  Extra spaces."
         );
+    }
+
+    #[test]
+    fn preview_selection_text_compacts_text_lazily() {
+        assert_eq!(
+            preview_selection_text("  第一段\n\n第二段\t第三段  ", 7),
+            "第一段 第二段…"
+        );
+        assert_eq!(preview_selection_text("短句", 100), "短句");
+        assert_eq!(preview_selection_text("   ", 100), "");
+    }
+
+    #[test]
+    fn text_byte_range_validation_rejects_stale_or_split_ranges() {
+        let text = "a你b";
+
+        assert!(is_valid_text_byte_range(text, &(1..4)));
+        assert!(!is_valid_text_byte_range(text, &(1..99)));
+        assert!(!is_valid_text_byte_range(text, &(3..2)));
+        assert!(!is_valid_text_byte_range(text, &(2..4)));
     }
 
     #[test]

@@ -624,14 +624,9 @@ fn read_openai_stream(
         if count == 0 {
             break;
         }
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with("event:") {
+        let Some(payload) = openai_sse_payload(&line) else {
             continue;
-        }
-        let payload = trimmed
-            .strip_prefix("data:")
-            .map(str::trim)
-            .unwrap_or(trimmed);
+        };
         if payload == "[DONE]" {
             break;
         }
@@ -685,6 +680,14 @@ fn read_openai_stream(
         tool_calls: finish_streaming_tools(calls),
         finish_reason,
     })
+}
+
+fn openai_sse_payload(line: &str) -> Option<&str> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() || trimmed.starts_with(':') || trimmed.starts_with("event:") {
+        return None;
+    }
+    trimmed.strip_prefix("data:").map(str::trim)
 }
 
 fn read_ollama_stream(
@@ -1801,5 +1804,19 @@ mod tests {
             [AgentInvocation::SearchDocument { query, max_results }]
                 if query == "证据" && *max_results == 3
         ));
+    }
+
+    #[test]
+    fn openai_sse_payload_only_accepts_data_lines() {
+        assert_eq!(openai_sse_payload(": keep-alive"), None);
+        assert_eq!(openai_sse_payload("event: message"), None);
+        assert_eq!(openai_sse_payload("id: 123"), None);
+        assert_eq!(openai_sse_payload("retry: 1000"), None);
+        assert_eq!(openai_sse_payload(""), None);
+        assert_eq!(openai_sse_payload("data: [DONE]"), Some("[DONE]"));
+        assert_eq!(
+            openai_sse_payload(" data: {\"choices\":[]} "),
+            Some("{\"choices\":[]}")
+        );
     }
 }

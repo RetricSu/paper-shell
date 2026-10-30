@@ -198,7 +198,12 @@ impl Sidebar {
 
                 if let Some(note) = mark_note {
                     egui::Window::new(
-                        egui::RichText::new(format!("{} words", words_before)).size(11.0),
+                        egui::RichText::new(format!(
+                            "{} {} 词",
+                            egui_phosphor::regular::NOTE_PENCIL,
+                            words_before
+                        ))
+                        .size(11.0),
                     )
                     .open(&mut open)
                     .resizable(true)

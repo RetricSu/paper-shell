@@ -584,7 +584,10 @@ impl Editor {
                 None
             };
 
-            if ui.button("剪切").clicked() {
+            if ui
+                .button(format!("{} 剪切", egui_phosphor::regular::SCISSORS))
+                .clicked()
+            {
                 if let Some(selected) = &selected_text {
                     ui.ctx().copy_text(selected.clone());
                     // Remove selected text
@@ -609,7 +612,10 @@ impl Editor {
                 }
                 ui.close();
             }
-            if ui.button("复制").clicked() {
+            if ui
+                .button(format!("{} 复制", egui_phosphor::regular::COPY))
+                .clicked()
+            {
                 if let Some(selected) = &selected_text {
                     ui.ctx().copy_text(selected.clone());
                 } else {
@@ -617,7 +623,10 @@ impl Editor {
                 }
                 ui.close();
             }
-            if ui.button("粘贴").clicked() {
+            if ui
+                .button(format!("{} 粘贴", egui_phosphor::regular::CLIPBOARD))
+                .clicked()
+            {
                 // Request focus to ensure paste works
                 output.response.request_focus();
                 ui.close();
@@ -679,47 +688,101 @@ impl Editor {
             .collapsible(false)
             .show(ui.ctx(), |ui| {
                 ui.horizontal(|ui| {
-                    ui.label("查找:");
-                    ui.text_edit_singleline(&mut self.search_replace.search_text);
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "{} 查找与替换",
+                            egui_phosphor::regular::MAGNIFYING_GLASS
+                        ))
+                        .small()
+                        .strong(),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui
+                            .button(egui_phosphor::regular::X)
+                            .on_hover_text("关闭 (Esc)")
+                            .clicked()
+                        {
+                            self.search_replace.show_dialog = false;
+                        }
+                    });
                 });
+                ui.separator();
 
                 ui.horizontal(|ui| {
-                    ui.label("替换:");
-                    ui.text_edit_singleline(&mut self.search_replace.replace_text);
-                });
-
-                ui.horizontal(|ui| {
-                    ui.checkbox(&mut self.search_replace.case_sensitive, "区分大小写");
-                    ui.checkbox(&mut self.search_replace.whole_word, "全词匹配");
-                });
-
-                ui.horizontal(|ui| {
-                    if ui.button("查找").clicked() {
+                    ui.label(egui::RichText::new("查找:").small());
+                    let search_response = ui.add(
+                        egui::TextEdit::singleline(&mut self.search_replace.search_text)
+                            .desired_width(120.0),
+                    );
+                    if search_response.changed() {
                         self.find_matches();
                     }
-                    if ui.button("替换").clicked() {
-                        self.replace_current();
-                    }
-                    if ui.button("全部替换").clicked() {
-                        self.replace_all();
-                    }
-                    if ui.button("下一个").clicked() {
-                        self.next_match();
-                    }
-                    if ui.button("上一个").clicked() {
+
+                    if ui
+                        .button(egui_phosphor::regular::CARET_UP)
+                        .on_hover_text("上一个匹配项")
+                        .clicked()
+                    {
                         self.previous_match();
                     }
-                    if ui.button("退出").clicked() {
-                        self.search_replace.show_dialog = false;
+                    if ui
+                        .button(egui_phosphor::regular::CARET_DOWN)
+                        .on_hover_text("下一个匹配项")
+                        .clicked()
+                    {
+                        self.next_match();
+                    }
+                });
+
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("替换:").small());
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.search_replace.replace_text)
+                            .desired_width(120.0),
+                    );
+                    if ui.button("替换").on_hover_text("替换当前项").clicked() {
+                        self.replace_current();
+                    }
+                    if ui.button("全部").on_hover_text("替换所有匹配项").clicked() {
+                        self.replace_all();
+                    }
+                });
+
+                ui.horizontal(|ui| {
+                    let case_changed = ui
+                        .checkbox(&mut self.search_replace.case_sensitive, "区分大小写")
+                        .changed();
+                    let word_changed = ui
+                        .checkbox(&mut self.search_replace.whole_word, "全词匹配")
+                        .changed();
+                    if case_changed || word_changed {
+                        self.find_matches();
                     }
                 });
 
                 if !self.search_replace.matches.is_empty() {
-                    ui.label(format!(
-                        "找到 {} 个匹配 (当前: {})",
-                        self.search_replace.matches.len(),
-                        self.search_replace.match_index + 1
-                    ));
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "{} 匹配: {} / {}",
+                            egui_phosphor::regular::INFO,
+                            self.search_replace.match_index + 1,
+                            self.search_replace.matches.len()
+                        ))
+                        .small(),
+                    );
+                } else if !self.search_replace.search_text.is_empty() {
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "{} 未找到匹配项",
+                            egui_phosphor::regular::INFO
+                        ))
+                        .small()
+                        .weak(),
+                    );
+                }
+
+                if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                    self.search_replace.show_dialog = false;
                 }
             });
     }

@@ -72,73 +72,125 @@ impl TitleBar {
         ui.horizontal(|ui| {
             // Title label and actions
             ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                ui.label(title);
-                ui.add_space(16.0);
+                ui.label(egui::RichText::new(title).strong());
+                ui.add_space(8.0);
 
-                ui.menu_button("📂", |ui| {
-                    for path in recent_files {
-                        let file_name = path
-                            .file_name()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or("Unknown");
-                        let path_str = path.to_string_lossy();
-                        if ui
-                            .button(file_name)
-                            .on_hover_text(path_str.as_ref())
-                            .clicked()
-                        {
-                            action = Some(TitleBarAction::OpenFile(path.clone()));
-                            ui.close();
+                ui.menu_button(egui_phosphor::regular::FOLDER_OPEN, |ui| {
+                    if recent_files.is_empty() {
+                        ui.label(egui::RichText::new("无最近文件").weak());
+                    } else {
+                        ui.label(egui::RichText::new("最近文件").small().weak());
+                        for path in recent_files {
+                            let file_name = path
+                                .file_name()
+                                .and_then(|n| n.to_str())
+                                .unwrap_or("Unknown");
+                            let path_str = path.to_string_lossy();
+                            if ui
+                                .button(format!("{} {}", egui_phosphor::regular::FILE_TEXT, file_name))
+                                .on_hover_text(path_str.as_ref())
+                                .clicked()
+                            {
+                                action = Some(TitleBarAction::OpenFile(path.clone()));
+                                ui.close();
+                            }
                         }
                     }
-                    if !recent_files.is_empty() {
-                        ui.separator();
-                    }
-                    if ui.button("Open File...").clicked() {
+                    ui.separator();
+                    if ui
+                        .button(format!("{} 打开文件…", egui_phosphor::regular::FOLDER))
+                        .clicked()
+                    {
                         action = Some(TitleBarAction::Open);
                         ui.close();
                     }
                 })
                 .response
-                .on_hover_text("Open");
-                if ui.button("💾").on_hover_text("Save").clicked() {
+                .on_hover_text("打开 / 最近文件");
+
+                if ui
+                    .button(egui_phosphor::regular::FLOPPY_DISK)
+                    .on_hover_text("保存 (Ctrl+S / ⌘S)")
+                    .clicked()
+                {
                     action = Some(TitleBarAction::Save);
                 }
-                if ui.button("新建").on_hover_text("New Window").clicked() {
+
+                if ui
+                    .button(egui_phosphor::regular::FILE_PLUS)
+                    .on_hover_text("新建窗口 (Ctrl+N / ⌘N)")
+                    .clicked()
+                {
                     action = Some(TitleBarAction::NewWindow);
                 }
+
+                if ui
+                    .add_enabled(
+                        has_current_file,
+                        egui::Button::new(egui_phosphor::regular::CLOCK_COUNTER_CLOCKWISE),
+                    )
+                    .on_hover_text("版本历史")
+                    .on_disabled_hover_text("未打开任何文件")
+                    .clicked()
+                {
+                    action = Some(TitleBarAction::History);
+                }
+
+                ui.add_space(4.0);
+                ui.separator();
+                ui.add_space(4.0);
+
                 ui.menu_button("编辑", |ui| {
-                    if ui.button("查找替换").clicked() {
+                    if ui
+                        .button(format!("{} 查找替换…", egui_phosphor::regular::MAGNIFYING_GLASS))
+                        .clicked()
+                    {
                         action = Some(TitleBarAction::SearchReplace);
                         ui.close();
                     }
-                    if ui.button("格式化").clicked() {
+                    if ui
+                        .button(format!("{} 整理段落缩进", egui_phosphor::regular::TEXT_ALIGN_LEFT))
+                        .on_hover_text("自动为段落首行添加缩进空格")
+                        .clicked()
+                    {
                         action = Some(TitleBarAction::Format);
                         ui.close();
                     }
                 });
+
                 ui.menu_button("字体", |ui| {
-                    ui.label("中文:");
+                    ui.label(egui::RichText::new("选择字体:").small().weak());
                     ui.separator();
                     egui::ScrollArea::vertical()
                         .max_height(300.0)
                         .show(ui, |ui| {
                             for font_name in chinese_fonts {
                                 let is_selected = font_name == current_font;
-                                if ui.selectable_label(is_selected, font_name).clicked() {
+                                let text = if is_selected {
+                                    format!("{} {}", egui_phosphor::regular::CHECK, font_name)
+                                } else {
+                                    format!("   {}", font_name)
+                                };
+                                if ui.button(text).clicked() {
                                     action = Some(TitleBarAction::FontChange(font_name.clone()));
                                     ui.close();
                                 }
                             }
                         });
                 });
+
                 ui.menu_button("插件", |ui| {
                     if plugins.is_empty() {
-                        ui.label("暂无已安装插件");
+                        ui.label(egui::RichText::new("暂无已安装插件").weak());
                     } else {
                         for plugin in plugins {
+                            let icon = match plugin.id.as_str() {
+                                "github_publish" => egui_phosphor::regular::GITHUB_LOGO,
+                                "print" => egui_phosphor::regular::PRINTER,
+                                _ => egui_phosphor::regular::PUZZLE_PIECE,
+                            };
                             if ui
-                                .button(&plugin.name)
+                                .button(format!("{} {}", icon, &plugin.name))
                                 .on_hover_text(&plugin.description)
                                 .clicked()
                             {
@@ -147,18 +199,20 @@ impl TitleBar {
                             }
                         }
 
-                        if plugins.iter().any(|p| p.id == "github_publish") {
-                            if ui.button("配置 GitHub 发布…").clicked() {
-                                action = Some(TitleBarAction::ConfigurePlugin(
-                                    "github_publish".to_string(),
-                                ));
-                                ui.close();
-                            }
+                        if plugins.iter().any(|p| p.id == "github_publish")
+                            && ui
+                                .button(format!("{} 配置 GitHub 发布…", egui_phosphor::regular::GEAR))
+                                .clicked()
+                        {
+                            action = Some(TitleBarAction::ConfigurePlugin(
+                                "github_publish".to_string(),
+                            ));
+                            ui.close();
                         }
                     }
                     ui.separator();
                     if ui
-                        .button("打开插件目录…")
+                        .button(format!("{} 打开插件目录…", egui_phosphor::regular::FOLDER))
                         .on_hover_text("在此目录放入插件文件夹即可安装")
                         .clicked()
                     {
@@ -166,48 +220,62 @@ impl TitleBar {
                         ui.close();
                     }
                 });
-                if ui
-                    .add_enabled(has_current_file, egui::Button::new("历史"))
-                    .on_hover_text("History")
-                    .on_disabled_hover_text("No file opened")
-                    .clicked()
-                {
-                    action = Some(TitleBarAction::History);
-                }
             });
 
             // Window Controls
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                ui.spacing_mut().item_spacing.x = 8.0;
+                ui.spacing_mut().item_spacing.x = 6.0;
 
                 // Close button
-                if ui.button("❌").on_hover_text("Close").clicked() {
+                if ui
+                    .button(egui_phosphor::regular::X)
+                    .on_hover_text("关闭窗口")
+                    .clicked()
+                {
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                 }
 
                 // Fullscreen button
                 let is_fullscreen = ui.input(|i| i.viewport().fullscreen.unwrap_or(false));
-                if ui.button("⛶").on_hover_text("Fullscreen").clicked() {
+                let fs_icon = if is_fullscreen {
+                    egui_phosphor::regular::CORNERS_IN
+                } else {
+                    egui_phosphor::regular::CORNERS_OUT
+                };
+                let fs_tip = if is_fullscreen { "退出全屏" } else { "全屏" };
+                if ui.button(fs_icon).on_hover_text(fs_tip).clicked() {
                     ui.ctx()
                         .send_viewport_cmd(egui::ViewportCommand::Fullscreen(!is_fullscreen));
                 }
 
                 // Minimize button
-                if ui.button("➖").on_hover_text("Minimize").clicked() {
+                if ui
+                    .button(egui_phosphor::regular::MINUS)
+                    .on_hover_text("最小化")
+                    .clicked()
+                {
                     ui.ctx()
                         .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
                 }
 
                 // Stats
-                ui.add_space(16.0);
+                ui.add_space(12.0);
                 let time_str = Self::format_writing_time(writing_time);
                 ui.label(
                     egui::RichText::new(format!(
-                        "{} / {} | {}",
-                        cursor_word_count, word_count, time_str
+                        "{} {} / {}   {} {}",
+                        egui_phosphor::regular::TEXT_T,
+                        cursor_word_count,
+                        word_count,
+                        egui_phosphor::regular::TIMER,
+                        time_str
                     ))
                     .small(),
-                );
+                )
+                .on_hover_text(format!(
+                    "光标字数: {} / 全文字数: {}\n写作时长: {}",
+                    cursor_word_count, word_count, time_str
+                ));
             });
         });
 

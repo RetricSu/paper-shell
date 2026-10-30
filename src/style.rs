@@ -7,14 +7,20 @@ pub fn configure_style(ctx: &Context) {
     // We want a clean, white paper look.
 
     // Increase spacing for elegance
-    style.spacing.item_spacing = egui::vec2(10.0, 10.0);
-    style.spacing.window_margin = egui::Margin::same(15);
+    style.spacing.item_spacing = egui::vec2(8.0, 8.0);
+    style.spacing.button_padding = egui::vec2(6.0, 3.0);
+    style.spacing.window_margin = egui::Margin::same(12);
 
     ctx.set_style(style);
 
     let mut visuals = Visuals::light();
     visuals.window_shadow = egui::epaint::Shadow::NONE;
     visuals.popup_shadow = egui::epaint::Shadow::NONE;
+
+    // Corner radius for sleek, restrained appearance
+    visuals.widgets.inactive.corner_radius = egui::CornerRadius::same(3);
+    visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(3);
+    visuals.widgets.active.corner_radius = egui::CornerRadius::same(3);
 
     // Minimalist colors
     visuals.widgets.noninteractive.bg_stroke = Stroke::new(0.0, Color32::TRANSPARENT);

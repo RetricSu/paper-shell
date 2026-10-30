@@ -150,27 +150,47 @@ impl HistoryWindow {
         ui.horizontal(|ui| {
             // Title
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                ui.label("📜 History");
+                ui.label(
+                    egui::RichText::new(format!(
+                        "{} 版本历史",
+                        egui_phosphor::regular::CLOCK_COUNTER_CLOCKWISE
+                    ))
+                    .strong(),
+                );
             });
 
             // Window Controls
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.spacing_mut().item_spacing.x = 8.0;
+                ui.spacing_mut().item_spacing.x = 6.0;
 
                 // Close button
-                if ui.button("❌").on_hover_text("Close").clicked() {
+                if ui
+                    .button(egui_phosphor::regular::X)
+                    .on_hover_text("关闭")
+                    .clicked()
+                {
                     self.open = false;
                 }
 
                 // Maximize/Restore button
                 let is_maximized = ui.input(|i| i.viewport().maximized.unwrap_or(false));
-                if ui.button("⛶").on_hover_text("Maximize/Restore").clicked() {
+                let max_icon = if is_maximized {
+                    egui_phosphor::regular::CORNERS_IN
+                } else {
+                    egui_phosphor::regular::CORNERS_OUT
+                };
+                let max_tip = if is_maximized { "还原" } else { "最大化" };
+                if ui.button(max_icon).on_hover_text(max_tip).clicked() {
                     ui.ctx()
                         .send_viewport_cmd(egui::ViewportCommand::Maximized(!is_maximized));
                 }
 
                 // Minimize button
-                if ui.button("➖").on_hover_text("Minimize").clicked() {
+                if ui
+                    .button(egui_phosphor::regular::MINUS)
+                    .on_hover_text("最小化")
+                    .clicked()
+                {
                     ui.ctx()
                         .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
                 }
@@ -204,7 +224,11 @@ impl HistoryWindow {
                                 .format("%Y-%m-%d %H:%M:%S")
                                 .to_string();
 
-                            let version_label = timestamp.to_string();
+                            let version_label = format!(
+                                "{} {}",
+                                egui_phosphor::regular::GIT_COMMIT,
+                                timestamp
+                            );
 
                             if ui.selectable_label(is_selected, version_label).clicked() {
                                 self.selected_index = Some(i);
@@ -235,11 +259,18 @@ impl HistoryWindow {
                                     let minutes = (time % 3600) / 60;
                                     let seconds = time % 60;
                                     let time_str = if hours > 0 {
-                                        format!(" {:02}:{:02}:{:02}", hours, minutes, seconds)
+                                        format!("{:02}:{:02}:{:02}", hours, minutes, seconds)
                                     } else {
-                                        format!(" {:02}:{:02}", minutes, seconds)
+                                        format!("{:02}:{:02}", minutes, seconds)
                                     };
-                                    ui.label(RichText::new(time_str));
+                                    ui.label(
+                                        RichText::new(format!(
+                                            "{} {}",
+                                            egui_phosphor::regular::CLOCK,
+                                            time_str
+                                        ))
+                                        .small(),
+                                    );
                                 },
                             );
 
@@ -252,7 +283,13 @@ impl HistoryWindow {
                                         ui.with_layout(
                                             egui::Layout::right_to_left(egui::Align::Center),
                                             |ui| {
-                                                if ui.button("🔄 回滚到此版本").clicked() {
+                                                if ui
+                                                    .button(format!(
+                                                        "{} 回滚到此版本",
+                                                        egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE
+                                                    ))
+                                                    .clicked()
+                                                {
                                                     self.pending_action =
                                                         Some(HistoryAction::RollbackToVersion(
                                                             version_data.entry.hash.clone(),
@@ -263,8 +300,13 @@ impl HistoryWindow {
                                         );
                                     });
                                     ui.label(
-                                        RichText::new(format!("Hash:{}", &version_data.entry.hash))
-                                            .monospace(),
+                                        RichText::new(format!(
+                                            "{} {}",
+                                            egui_phosphor::regular::HASH,
+                                            &version_data.entry.hash
+                                        ))
+                                        .monospace()
+                                        .small(),
                                     );
                                 },
                             );

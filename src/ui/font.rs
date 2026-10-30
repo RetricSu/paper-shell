@@ -40,6 +40,12 @@ pub fn setup_fonts() -> FontDefinitions {
         load_fallback_font(&mut fonts, &source);
     }
 
+    // Register Phosphor icons font for clean, consistent UI glyphs
+    egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
+    if let Some(mono_keys) = fonts.families.get_mut(&FontFamily::Monospace) {
+        mono_keys.push("phosphor".into());
+    }
+
     fonts
 }
 
@@ -256,6 +262,12 @@ pub fn apply_font(font_name: &str) -> FontDefinitions {
         // If the specific font fails, try fallback
         tracing::warn!("Failed to load font '{}', using fallback", font_name);
         load_fallback_font(&mut fonts, &source);
+    }
+
+    // Keep Phosphor icons available after font changes
+    egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
+    if let Some(mono_keys) = fonts.families.get_mut(&FontFamily::Monospace) {
+        mono_keys.push("phosphor".into());
     }
 
     fonts

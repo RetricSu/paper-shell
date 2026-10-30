@@ -8,6 +8,24 @@ Working in progress: A simple, compact and informative text editor for everyday 
 cargo build --release
 ```
 
+## Acceptance check
+
+In ctx, set the acceptance command to run from the task worktree:
+
+```bash
+bash scripts/acceptance-check.sh
+```
+
+This runs the same formatting, Clippy (warnings are errors), and test checks as CI.
+It stops on the first failure with a nonzero exit code and prints a success message
+only when all checks pass. Cargo uses `Cargo.lock` without updating it.
+
+Requires Rust/Cargo with the `rustfmt` and `clippy` components installed
+(`rustup component add rustfmt clippy`). macOS matches the CI environment;
+other platforms may need native GUI build dependencies. The first run downloads
+dependencies and compiles the app, so allow extra time and network access.
+These automated checks do not cover interactive desktop UI acceptance.
+
 ## Bundle (macOS)
 
 ```bash

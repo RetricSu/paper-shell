@@ -110,6 +110,12 @@ pub struct GithubPublishConfigWindow {
     show_hint: bool,
 }
 
+impl Default for GithubPublishConfigWindow {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GithubPublishConfigWindow {
     pub fn new() -> Self {
         Self {
@@ -161,10 +167,8 @@ impl GithubPublishConfigWindow {
         .show(ctx, |ui| {
             if self.show_hint {
                 ui.label(
-                    RichText::new(
-                        "请先配置博客仓库地址（格式：owner/repo，例如 RetricSu/blog）",
-                    )
-                    .color(Color32::YELLOW),
+                    RichText::new("请先配置博客仓库地址（格式：owner/repo，例如 RetricSu/blog）")
+                        .color(Color32::YELLOW),
                 );
                 ui.add_space(8.0);
             }
@@ -212,12 +216,11 @@ impl GithubPublishConfigWindow {
                 .button(format!("{} 添加分类", egui_phosphor::regular::PLUS))
                 .clicked()
             {
-                self.collections.push(
-                    crate::plugin::builtin::github_publish::CollectionConfig {
+                self.collections
+                    .push(crate::plugin::builtin::github_publish::CollectionConfig {
                         label: String::new(),
                         dir: String::new(),
-                    },
-                );
+                    });
             }
             ui.add_space(8.0);
 
@@ -274,6 +277,12 @@ pub struct PrintDialog {
     selected_printer: usize,
     margin_points: u16,
     viewport_id: egui::ViewportId,
+}
+
+impl Default for PrintDialog {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl PrintDialog {
@@ -420,6 +429,12 @@ pub struct PublishDialog {
     description: String,
     collection: usize,
     options: Vec<(String, String)>,
+}
+
+impl Default for PublishDialog {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl PublishDialog {

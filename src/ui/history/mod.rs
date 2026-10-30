@@ -224,11 +224,8 @@ impl HistoryWindow {
                                 .format("%Y-%m-%d %H:%M:%S")
                                 .to_string();
 
-                            let version_label = format!(
-                                "{} {}",
-                                egui_phosphor::regular::GIT_COMMIT,
-                                timestamp
-                            );
+                            let version_label =
+                                format!("{} {}", egui_phosphor::regular::GIT_COMMIT, timestamp);
 
                             if ui.selectable_label(is_selected, version_label).clicked() {
                                 self.selected_index = Some(i);

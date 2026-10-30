@@ -914,8 +914,6 @@ impl Editor {
     }
 }
 
-
-
 fn is_cjk(c: char) -> bool {
     ('\u{4E00}'..='\u{9FFF}').contains(&c)
         || ('\u{3400}'..='\u{4DBF}').contains(&c)

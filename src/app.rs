@@ -570,20 +570,18 @@ impl eframe::App for PaperShellApp {
                                 self.publish_dialog
                                     .open(&self.config.settings.github_publish);
                             }
+                        } else if id == "print" {
+                            let document_name = self
+                                .editor
+                                .get_current_file()
+                                .and_then(|path| path.file_name())
+                                .and_then(|name| name.to_str())
+                                .unwrap_or("未命名文档")
+                                .to_string();
+                            self.print_dialog
+                                .open(document_name, self.editor.get_content());
                         } else {
-                            if id == "print" {
-                                let document_name = self
-                                    .editor
-                                    .get_current_file()
-                                    .and_then(|path| path.file_name())
-                                    .and_then(|name| name.to_str())
-                                    .unwrap_or("未命名文档")
-                                    .to_string();
-                                self.print_dialog
-                                    .open(document_name, self.editor.get_content());
-                            } else {
-                                self.run_plugin(id);
-                            }
+                            self.run_plugin(id);
                         }
                     }
                     crate::ui::title_bar::TitleBarAction::OpenPluginsFolder => {

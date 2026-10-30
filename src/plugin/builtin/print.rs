@@ -11,6 +11,12 @@ static PRINT_JOB_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 pub struct PrintPlugin;
 
+impl Default for PrintPlugin {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PrintPlugin {
     pub fn new() -> Self {
         Self

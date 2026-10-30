@@ -87,7 +87,11 @@ impl TitleBar {
                                 .unwrap_or("Unknown");
                             let path_str = path.to_string_lossy();
                             if ui
-                                .button(format!("{} {}", egui_phosphor::regular::FILE_TEXT, file_name))
+                                .button(format!(
+                                    "{} {}",
+                                    egui_phosphor::regular::FILE_TEXT,
+                                    file_name
+                                ))
                                 .on_hover_text(path_str.as_ref())
                                 .clicked()
                             {
@@ -142,14 +146,20 @@ impl TitleBar {
 
                 ui.menu_button("编辑", |ui| {
                     if ui
-                        .button(format!("{} 查找替换…", egui_phosphor::regular::MAGNIFYING_GLASS))
+                        .button(format!(
+                            "{} 查找替换…",
+                            egui_phosphor::regular::MAGNIFYING_GLASS
+                        ))
                         .clicked()
                     {
                         action = Some(TitleBarAction::SearchReplace);
                         ui.close();
                     }
                     if ui
-                        .button(format!("{} 整理段落缩进", egui_phosphor::regular::TEXT_ALIGN_LEFT))
+                        .button(format!(
+                            "{} 整理段落缩进",
+                            egui_phosphor::regular::TEXT_ALIGN_LEFT
+                        ))
                         .on_hover_text("自动为段落首行添加缩进空格")
                         .clicked()
                     {
@@ -201,7 +211,10 @@ impl TitleBar {
 
                         if plugins.iter().any(|p| p.id == "github_publish")
                             && ui
-                                .button(format!("{} 配置 GitHub 发布…", egui_phosphor::regular::GEAR))
+                                .button(format!(
+                                    "{} 配置 GitHub 发布…",
+                                    egui_phosphor::regular::GEAR
+                                ))
                                 .clicked()
                         {
                             action = Some(TitleBarAction::ConfigurePlugin(
@@ -242,7 +255,11 @@ impl TitleBar {
                 } else {
                     egui_phosphor::regular::CORNERS_OUT
                 };
-                let fs_tip = if is_fullscreen { "退出全屏" } else { "全屏" };
+                let fs_tip = if is_fullscreen {
+                    "退出全屏"
+                } else {
+                    "全屏"
+                };
                 if ui.button(fs_icon).on_hover_text(fs_tip).clicked() {
                     ui.ctx()
                         .send_viewport_cmd(egui::ViewportCommand::Fullscreen(!is_fullscreen));

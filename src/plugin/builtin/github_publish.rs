@@ -212,10 +212,10 @@ fn build_frontmatter(title: &str, description: Option<&str>, now: NaiveDateTime)
         now.year()
     );
     let mut frontmatter = format!("---\ntitle: '{}'\npubDate: '{}'\n", title, pub_date);
-    if let Some(description) = description {
-        if !description.trim().is_empty() {
-            frontmatter.push_str(&format!("description: '{}'\n", description));
-        }
+    if let Some(description) = description
+        && !description.trim().is_empty()
+    {
+        frontmatter.push_str(&format!("description: '{}'\n", description));
     }
     frontmatter.push_str("---\n\n");
     frontmatter

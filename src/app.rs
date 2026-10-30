@@ -538,6 +538,7 @@ impl eframe::App for PaperShellApp {
                     title: crate::constant::DEFAULT_WINDOW_TITLE,
                     word_count: total_words,
                     cursor_word_count: cursor_words,
+                    selection_word_count: self.editor.get_selection_word_count(),
                     writing_time: self.editor.get_current_file_total_time()
                         + self.time_backend.get_writing_time(),
                     document_path: document_path.as_deref(),

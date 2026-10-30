@@ -22,6 +22,7 @@ struct SearchReplaceState {
 pub struct Editor {
     content: String,
     cursor_index: Option<usize>,
+    selection: Option<egui::text::CCursorRange>,
     last_galley: Option<Arc<Galley>>,
     sidebar: Sidebar,
     is_focused: bool,
@@ -59,6 +60,13 @@ impl Editor {
                 .desired_rows(30)
                 .font(egui::FontId::monospace(14.0))
                 .show(ui);
+
+            let selection = output.cursor_range.filter(|range| !range.is_empty());
+            if self.selection != selection {
+                // The title bar is drawn before the editor, so refresh its statistics.
+                ui.ctx().request_repaint();
+            }
+            self.selection = selection;
 
             Self::enable_scroll_to_cursor(ui, &output);
             Self::fix_macos_ime(&output, ui);
@@ -101,6 +109,7 @@ impl Editor {
 
     pub fn set_content(&mut self, content: String) {
         self.content = content;
+        self.selection = None;
         self.cached_word_count = None; // 清除缓存
     }
 
@@ -109,16 +118,15 @@ impl Editor {
             return count;
         }
 
-        // 原有的计算逻辑
-        let count = self.calculate_word_count_internal();
+        let count = Self::count_words(&self.content);
         self.cached_word_count = Some(count);
         count
     }
 
-    fn calculate_word_count_internal(&self) -> usize {
+    fn count_words(text: &str) -> usize {
         let mut count = 0;
         let mut in_word = false;
-        for c in self.content.chars() {
+        for c in text.chars() {
             if c.is_whitespace() {
                 in_word = false;
             } else if is_cjk(c) {
@@ -143,22 +151,12 @@ impl Editor {
             .map(|(byte_idx, _)| byte_idx)
             .unwrap_or(self.content.len());
 
-        let text_before_cursor = &self.content[..byte_index];
+        Some(Self::count_words(&self.content[..byte_index]))
+    }
 
-        let mut count = 0;
-        let mut in_word = false;
-        for c in text_before_cursor.chars() {
-            if c.is_whitespace() {
-                in_word = false;
-            } else if is_cjk(c) {
-                count += 1;
-                in_word = false;
-            } else if !in_word {
-                count += 1;
-                in_word = true;
-            }
-        }
-        Some(count)
+    pub fn get_selection_word_count(&self) -> Option<usize> {
+        self.selection
+            .map(|range| Self::count_words(range.slice_str(&self.content)))
     }
 
     pub fn get_stats(&mut self) -> (usize, usize) {
@@ -938,6 +936,70 @@ mod tests {
 
         editor.set_content("Hello 世界".to_string());
         assert_eq!(editor.get_word_count(), 3);
+    }
+
+    #[test]
+    fn selection_statistics_follow_editor_cursor_range() {
+        use egui::text::{CCursor, CCursorRange};
+
+        for (text, start, end, expected) in [
+            ("你好世界", 1, 3, Some(2)),
+            ("你好世界", 3, 1, Some(2)),
+            ("Hello 世界\nRust editor", 0, 20, Some(5)),
+            ("Hello world", 1, 4, Some(1)),
+            ("甲😀乙", 1, 3, Some(2)),
+            ("A \n\t B", 1, 5, Some(0)),
+            ("Hello world", 3, 3, None),
+            ("", 0, 0, None),
+        ] {
+            let ctx = egui::Context::default();
+            let mut editor = Editor::default();
+            editor.set_content(text.to_string());
+            let _ = ctx.run(Default::default(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let id = ui.make_persistent_id("main_editor");
+                    let mut state = egui::text_edit::TextEditState::default();
+                    state.cursor.set_char_range(Some(CCursorRange::two(
+                        CCursor::new(start),
+                        CCursor::new(end),
+                    )));
+                    state.store(ctx, id);
+                    ui.memory_mut(|memory| memory.request_focus(id));
+                    editor.show(ui);
+                });
+            });
+            assert_eq!(editor.get_selection_word_count(), expected, "{text:?}");
+
+            // Keyboard navigation collapses the selection and clears its statistic.
+            let _ = ctx.run(
+                egui::RawInput {
+                    events: vec![egui::Event::Key {
+                        key: egui::Key::ArrowRight,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: egui::Modifiers::NONE,
+                    }],
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| editor.show(ui));
+                },
+            );
+            assert_eq!(editor.get_selection_word_count(), None);
+        }
+    }
+
+    #[test]
+    fn loading_content_clears_selection_statistics() {
+        use egui::text::{CCursor, CCursorRange};
+
+        let mut editor = Editor::default();
+        editor.set_content("你好世界".to_string());
+        editor.selection = Some(CCursorRange::two(CCursor::new(0), CCursor::new(4)));
+        assert_eq!(editor.get_selection_word_count(), Some(4));
+        editor.set_content("New document".to_string());
+        assert_eq!(editor.get_selection_word_count(), None);
     }
 
     #[test]

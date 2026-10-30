@@ -25,6 +25,7 @@ pub struct TitleBarState<'a> {
     pub title: &'a str,
     pub word_count: usize,
     pub cursor_word_count: usize,
+    pub selection_word_count: Option<usize>,
     pub writing_time: u64,
     pub document_path: Option<&'a str>,
     pub has_current_file: bool,
@@ -40,6 +41,7 @@ impl TitleBar {
             title,
             word_count,
             cursor_word_count,
+            selection_word_count,
             writing_time,
             document_path,
             has_current_file,
@@ -52,13 +54,22 @@ impl TitleBar {
         let mut action = None;
         ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
         ui.spacing_mut().interact_size.y = 20.0;
-        let show_stats = ui.available_width() >= 600.0;
+        let show_stats = ui.available_width()
+            >= if selection_word_count.is_some() {
+                700.0
+            } else {
+                600.0
+            };
         let time = Self::format_writing_time(writing_time);
+        let selection_detail = selection_word_count
+            .map(|count| format!("\n选中字数: {count}"))
+            .unwrap_or_default();
         let detail = format!(
-            "{}\n光标字数: {} / 全文字数: {}\n写作时长: {}",
+            "{}\n光标字数: {} / 全文字数: {}{}\n写作时长: {}",
             document_path.unwrap_or("未命名文档"),
             cursor_word_count,
             word_count,
+            selection_detail,
             time
         );
 
@@ -82,10 +93,13 @@ impl TitleBar {
                 Self::window_controls(ui);
                 if show_stats {
                     ui.add_space(8.0);
+                    let selection_label = selection_word_count
+                        .map(|count| format!("选中 {count}  ·  "))
+                        .unwrap_or_default();
                     ui.label(
                         egui::RichText::new(format!(
-                            "{} / {}  ·  {}",
-                            cursor_word_count, word_count, time
+                            "{}{} / {}  ·  {}",
+                            selection_label, cursor_word_count, word_count, time
                         ))
                         .small(),
                     )
@@ -328,7 +342,15 @@ mod tests {
 
     #[test]
     fn compact_title_bar_fits_narrow_windows_with_long_document_names() {
-        for width in [300.0, 480.0, 750.0] {
+        for (width, selection_word_count) in [
+            (300.0, None),
+            (480.0, Some(0)),
+            (600.0, None),
+            (720.0, Some(999_999)),
+            (750.0, Some(999_999)),
+            (780.0, Some(999_999)),
+            (1000.0, Some(999_999)),
+        ] {
             let ctx = egui::Context::default();
             let input = egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(
@@ -345,6 +367,7 @@ mod tests {
                         document_path: None,
                         word_count: 1_000_000,
                         cursor_word_count: 999_999,
+                        selection_word_count,
                         writing_time: 360_000,
                         has_current_file: true,
                         chinese_fonts: &[],

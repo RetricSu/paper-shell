@@ -38,11 +38,11 @@ impl Editor {
         let id = ui.make_persistent_id("main_editor");
 
         // Sidebar width
-        let sidebar_width = 20.0;
-        let available_width = ui.available_width() - sidebar_width;
+        let sidebar_width = 14.0;
 
         // Use horizontal layout with top-to-bottom alignment
         ui.horizontal_top(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
             // 1. Reserve space for sidebar (so editor is pushed right)
             let sidebar_origin = ui.cursor().min;
             ui.allocate_rect(
@@ -54,7 +54,8 @@ impl Editor {
             let output = egui::TextEdit::multiline(&mut content)
                 .id(id)
                 .frame(false)
-                .desired_width(available_width)
+                .margin(egui::Margin::symmetric(2, 2))
+                .desired_width(ui.available_width())
                 .desired_rows(30)
                 .font(egui::FontId::monospace(14.0))
                 .show(ui);

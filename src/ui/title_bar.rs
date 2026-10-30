@@ -26,6 +26,7 @@ pub struct TitleBarState<'a> {
     pub word_count: usize,
     pub cursor_word_count: usize,
     pub writing_time: u64,
+    pub document_path: Option<&'a str>,
     pub has_current_file: bool,
     pub chinese_fonts: &'a [String],
     pub current_font: &'a str,
@@ -34,16 +35,13 @@ pub struct TitleBarState<'a> {
 }
 
 impl TitleBar {
-    pub fn show(
-        ui: &mut Ui,
-        _frame: &mut eframe::Frame,
-        state: TitleBarState<'_>,
-    ) -> Option<TitleBarAction> {
+    pub fn show(ui: &mut Ui, state: TitleBarState<'_>) -> Option<TitleBarAction> {
         let TitleBarState {
             title,
             word_count,
             cursor_word_count,
             writing_time,
+            document_path,
             has_current_file,
             chinese_fonts,
             current_font,
@@ -52,251 +50,262 @@ impl TitleBar {
         } = state;
 
         let mut action = None;
-        let title_bar_rect = ui.available_rect_before_wrap();
+        ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
+        ui.spacing_mut().interact_size.y = 20.0;
+        let show_stats = ui.available_width() >= 600.0;
+        let time = Self::format_writing_time(writing_time);
+        let detail = format!(
+            "{}\n光标字数: {} / 全文字数: {}\n写作时长: {}",
+            document_path.unwrap_or("未命名文档"),
+            cursor_word_count,
+            word_count,
+            time
+        );
 
-        // Dragging logic - registered BEFORE widgets so they can steal input
-        let interact = ui.interact(
-            title_bar_rect,
-            ui.id().with("title_bar_drag"),
+        // Register the drag surface first so menus and window controls take precedence.
+        let drag = ui.interact(
+            ui.available_rect_before_wrap(),
+            ui.id().with("title_drag"),
             egui::Sense::click_and_drag(),
         );
-        if interact.dragged() {
+        if drag.drag_started() {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
         }
-        if interact.double_clicked() {
-            let is_fullscreen = ui.input(|i| i.viewport().fullscreen.unwrap_or(false));
+        if drag.double_clicked() {
+            let maximized = ui.input(|i| i.viewport().maximized.unwrap_or(false));
             ui.ctx()
-                .send_viewport_cmd(egui::ViewportCommand::Fullscreen(!is_fullscreen));
+                .send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
         }
 
-        ui.horizontal(|ui| {
-            // Title label and actions
-            ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                ui.label(egui::RichText::new(title).strong());
-                ui.add_space(8.0);
-
-                ui.menu_button(egui_phosphor::regular::FOLDER_OPEN, |ui| {
-                    if recent_files.is_empty() {
-                        ui.label(egui::RichText::new("无最近文件").weak());
-                    } else {
-                        ui.label(egui::RichText::new("最近文件").small().weak());
-                        for path in recent_files {
-                            let file_name = path
-                                .file_name()
-                                .and_then(|n| n.to_str())
-                                .unwrap_or("Unknown");
-                            let path_str = path.to_string_lossy();
-                            if ui
-                                .button(format!(
-                                    "{} {}",
-                                    egui_phosphor::regular::FILE_TEXT,
-                                    file_name
-                                ))
-                                .on_hover_text(path_str.as_ref())
-                                .clicked()
-                            {
-                                action = Some(TitleBarAction::OpenFile(path.clone()));
+        egui::MenuBar::new().ui(ui, |ui| {
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                Self::window_controls(ui);
+                if show_stats {
+                    ui.add_space(8.0);
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "{} / {}  ·  {}",
+                            cursor_word_count, word_count, time
+                        ))
+                        .small(),
+                    )
+                    .on_hover_text(&detail);
+                    ui.add_space(8.0);
+                }
+                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                    if ui.available_width() >= 260.0 {
+                        ui.add_sized(
+                            [36.0, 20.0],
+                            egui::Label::new(egui::RichText::new(title).strong()).truncate(),
+                        )
+                        .on_hover_text(&detail);
+                    }
+                    ui.menu_button(
+                        format!("{} 文件", egui_phosphor::regular::FOLDER_OPEN),
+                        |ui| {
+                            ui.set_min_width(220.0);
+                            if Self::menu_item(ui, "新建窗口", Some(egui::Key::N)).clicked() {
+                                action = Some(TitleBarAction::NewWindow);
                                 ui.close();
                             }
+                            if Self::menu_item(ui, "打开文件…", Some(egui::Key::O)).clicked()
+                            {
+                                action = Some(TitleBarAction::Open);
+                                ui.close();
+                            }
+                            ui.menu_button("最近打开", |ui| {
+                                ui.set_width(240.0);
+                                if recent_files.is_empty() {
+                                    ui.add_enabled(false, egui::Button::new("暂无最近文件"));
+                                }
+                                for path in recent_files {
+                                    let name = path
+                                        .file_name()
+                                        .unwrap_or(path.as_os_str())
+                                        .to_string_lossy();
+                                    let available = path.is_file();
+                                    if ui
+                                        .add_enabled(
+                                            available,
+                                            egui::Button::new(name.as_ref()).truncate(),
+                                        )
+                                        .on_hover_text(path.to_string_lossy())
+                                        .on_disabled_hover_text(format!(
+                                            "文件已移动或不存在\n{}",
+                                            path.display()
+                                        ))
+                                        .clicked()
+                                    {
+                                        action = Some(TitleBarAction::OpenFile(path.clone()));
+                                        ui.close();
+                                    }
+                                }
+                            });
+                            ui.separator();
+                            if Self::menu_item(ui, "保存", Some(egui::Key::S)).clicked() {
+                                action = Some(TitleBarAction::Save);
+                                ui.close();
+                            }
+                            if ui
+                                .add_enabled(has_current_file, egui::Button::new("版本历史…"))
+                                .on_disabled_hover_text("保存文档后可查看版本历史")
+                                .clicked()
+                            {
+                                action = Some(TitleBarAction::History);
+                                ui.close();
+                            }
+                        },
+                    );
+                    ui.menu_button(
+                        format!("{} 编辑", egui_phosphor::regular::NOTE_PENCIL),
+                        |ui| {
+                            ui.set_min_width(220.0);
+                            if Self::menu_item(ui, "查找与替换…", Some(egui::Key::F)).clicked()
+                            {
+                                action = Some(TitleBarAction::SearchReplace);
+                                ui.close();
+                            }
+                            ui.separator();
+                            if ui
+                                .button("整理段落缩进")
+                                .on_hover_text("为段落首行添加缩进空格")
+                                .clicked()
+                            {
+                                action = Some(TitleBarAction::Format);
+                                ui.close();
+                            }
+                        },
+                    );
+                    ui.menu_button(format!("{} 字体", egui_phosphor::regular::TEXT_T), |ui| {
+                        ui.set_min_width(200.0);
+                        if ui
+                            .selectable_label(current_font == "Default", "系统默认")
+                            .clicked()
+                        {
+                            action = Some(TitleBarAction::FontChange("Default".to_string()));
+                            ui.close();
                         }
-                    }
-                    ui.separator();
-                    if ui
-                        .button(format!("{} 打开文件…", egui_phosphor::regular::FOLDER))
-                        .clicked()
-                    {
-                        action = Some(TitleBarAction::Open);
-                        ui.close();
-                    }
-                })
-                .response
-                .on_hover_text("打开 / 最近文件");
-
-                if ui
-                    .button(egui_phosphor::regular::FLOPPY_DISK)
-                    .on_hover_text("保存 (Ctrl+S / ⌘S)")
-                    .clicked()
-                {
-                    action = Some(TitleBarAction::Save);
-                }
-
-                if ui
-                    .button(egui_phosphor::regular::FILE_PLUS)
-                    .on_hover_text("新建窗口 (Ctrl+N / ⌘N)")
-                    .clicked()
-                {
-                    action = Some(TitleBarAction::NewWindow);
-                }
-
-                if ui
-                    .add_enabled(
-                        has_current_file,
-                        egui::Button::new(egui_phosphor::regular::CLOCK_COUNTER_CLOCKWISE),
-                    )
-                    .on_hover_text("版本历史")
-                    .on_disabled_hover_text("未打开任何文件")
-                    .clicked()
-                {
-                    action = Some(TitleBarAction::History);
-                }
-
-                ui.add_space(4.0);
-                ui.separator();
-                ui.add_space(4.0);
-
-                ui.menu_button("编辑", |ui| {
-                    if ui
-                        .button(format!(
-                            "{} 查找替换…",
-                            egui_phosphor::regular::MAGNIFYING_GLASS
-                        ))
-                        .clicked()
-                    {
-                        action = Some(TitleBarAction::SearchReplace);
-                        ui.close();
-                    }
-                    if ui
-                        .button(format!(
-                            "{} 整理段落缩进",
-                            egui_phosphor::regular::TEXT_ALIGN_LEFT
-                        ))
-                        .on_hover_text("自动为段落首行添加缩进空格")
-                        .clicked()
-                    {
-                        action = Some(TitleBarAction::Format);
-                        ui.close();
-                    }
-                });
-
-                ui.menu_button("字体", |ui| {
-                    ui.label(egui::RichText::new("选择字体:").small().weak());
-                    ui.separator();
-                    egui::ScrollArea::vertical()
-                        .max_height(300.0)
-                        .show(ui, |ui| {
-                            for font_name in chinese_fonts {
-                                let is_selected = font_name == current_font;
-                                let text = if is_selected {
-                                    format!("{} {}", egui_phosphor::regular::CHECK, font_name)
-                                } else {
-                                    format!("   {}", font_name)
-                                };
-                                if ui.button(text).clicked() {
-                                    action = Some(TitleBarAction::FontChange(font_name.clone()));
+                        ui.separator();
+                        egui::ScrollArea::vertical()
+                            .max_height(280.0)
+                            .show(ui, |ui| {
+                                for font_name in chinese_fonts {
+                                    if ui
+                                        .selectable_label(font_name == current_font, font_name)
+                                        .clicked()
+                                    {
+                                        action =
+                                            Some(TitleBarAction::FontChange(font_name.clone()));
+                                        ui.close();
+                                    }
+                                }
+                            });
+                    });
+                    ui.menu_button(
+                        format!("{} 插件", egui_phosphor::regular::PUZZLE_PIECE),
+                        |ui| {
+                            ui.set_min_width(220.0);
+                            if plugins.is_empty() {
+                                ui.add_enabled(false, egui::Button::new("暂无已安装插件"));
+                            }
+                            for plugin in plugins {
+                                if ui
+                                    .button(&plugin.name)
+                                    .on_hover_text(&plugin.description)
+                                    .clicked()
+                                {
+                                    action = Some(TitleBarAction::RunPlugin(plugin.id.clone()));
                                     ui.close();
                                 }
                             }
-                        });
-                });
-
-                ui.menu_button("插件", |ui| {
-                    if plugins.is_empty() {
-                        ui.label(egui::RichText::new("暂无已安装插件").weak());
-                    } else {
-                        for plugin in plugins {
-                            let icon = match plugin.id.as_str() {
-                                "github_publish" => egui_phosphor::regular::GITHUB_LOGO,
-                                "print" => egui_phosphor::regular::PRINTER,
-                                _ => egui_phosphor::regular::PUZZLE_PIECE,
-                            };
-                            if ui
-                                .button(format!("{} {}", icon, &plugin.name))
-                                .on_hover_text(&plugin.description)
-                                .clicked()
+                            ui.separator();
+                            if plugins.iter().any(|p| p.id == "github_publish")
+                                && ui.button("配置 GitHub 发布…").clicked()
                             {
-                                action = Some(TitleBarAction::RunPlugin(plugin.id.clone()));
+                                action = Some(TitleBarAction::ConfigurePlugin(
+                                    "github_publish".to_string(),
+                                ));
                                 ui.close();
                             }
-                        }
-
-                        if plugins.iter().any(|p| p.id == "github_publish")
-                            && ui
-                                .button(format!(
-                                    "{} 配置 GitHub 发布…",
-                                    egui_phosphor::regular::GEAR
-                                ))
+                            if ui
+                                .button("打开插件目录…")
+                                .on_hover_text("将插件文件夹放入此目录即可安装")
                                 .clicked()
-                        {
-                            action = Some(TitleBarAction::ConfigurePlugin(
-                                "github_publish".to_string(),
-                            ));
-                            ui.close();
-                        }
-                    }
-                    ui.separator();
-                    if ui
-                        .button(format!("{} 打开插件目录…", egui_phosphor::regular::FOLDER))
-                        .on_hover_text("在此目录放入插件文件夹即可安装")
-                        .clicked()
-                    {
-                        action = Some(TitleBarAction::OpenPluginsFolder);
-                        ui.close();
-                    }
+                            {
+                                action = Some(TitleBarAction::OpenPluginsFolder);
+                                ui.close();
+                            }
+                        },
+                    );
                 });
             });
-
-            // Window Controls
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                ui.spacing_mut().item_spacing.x = 6.0;
-
-                // Close button
-                if ui
-                    .button(egui_phosphor::regular::X)
-                    .on_hover_text("关闭窗口")
-                    .clicked()
-                {
-                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-                }
-
-                // Fullscreen button
-                let is_fullscreen = ui.input(|i| i.viewport().fullscreen.unwrap_or(false));
-                let fs_icon = if is_fullscreen {
-                    egui_phosphor::regular::CORNERS_IN
-                } else {
-                    egui_phosphor::regular::CORNERS_OUT
-                };
-                let fs_tip = if is_fullscreen {
-                    "退出全屏"
-                } else {
-                    "全屏"
-                };
-                if ui.button(fs_icon).on_hover_text(fs_tip).clicked() {
-                    ui.ctx()
-                        .send_viewport_cmd(egui::ViewportCommand::Fullscreen(!is_fullscreen));
-                }
-
-                // Minimize button
-                if ui
-                    .button(egui_phosphor::regular::MINUS)
-                    .on_hover_text("最小化")
-                    .clicked()
-                {
-                    ui.ctx()
-                        .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
-                }
-
-                // Stats
-                ui.add_space(12.0);
-                let time_str = Self::format_writing_time(writing_time);
-                ui.label(
-                    egui::RichText::new(format!(
-                        "{} {} / {}   {} {}",
-                        egui_phosphor::regular::TEXT_T,
-                        cursor_word_count,
-                        word_count,
-                        egui_phosphor::regular::TIMER,
-                        time_str
-                    ))
-                    .small(),
-                )
-                .on_hover_text(format!(
-                    "光标字数: {} / 全文字数: {}\n写作时长: {}",
-                    cursor_word_count, word_count, time_str
-                ));
-            });
         });
-
         action
+    }
+
+    fn menu_item(ui: &mut Ui, label: &str, key: Option<egui::Key>) -> egui::Response {
+        let mut button = egui::Button::new(label);
+        if let Some(key) = key {
+            button = button.shortcut_text(
+                ui.ctx()
+                    .format_shortcut(&egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, key)),
+            );
+        }
+        ui.add(button)
+    }
+
+    fn window_controls(ui: &mut Ui) {
+        if ui
+            .add_sized([22.0, 20.0], egui::Button::new(egui_phosphor::regular::X))
+            .on_hover_text("关闭窗口")
+            .clicked()
+        {
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+        let fullscreen = ui.input(|i| i.viewport().fullscreen.unwrap_or(false));
+        let icon = if fullscreen {
+            egui_phosphor::regular::CORNERS_IN
+        } else {
+            egui_phosphor::regular::CORNERS_OUT
+        };
+        if ui
+            .add_sized([22.0, 20.0], egui::Button::new(icon))
+            .on_hover_text(if fullscreen { "退出全屏" } else { "全屏" })
+            .clicked()
+        {
+            ui.ctx()
+                .send_viewport_cmd(egui::ViewportCommand::Fullscreen(!fullscreen));
+        }
+        if ui
+            .add_sized(
+                [22.0, 20.0],
+                egui::Button::new(egui_phosphor::regular::MINUS),
+            )
+            .on_hover_text("最小化")
+            .clicked()
+        {
+            ui.ctx()
+                .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+        }
+    }
+
+    /// Consume shortcuts before the editor can handle the same key events.
+    pub fn shortcut(ctx: &egui::Context) -> Option<TitleBarAction> {
+        ctx.input_mut(|input| {
+            for (key, action) in [
+                (egui::Key::N, TitleBarAction::NewWindow),
+                (egui::Key::O, TitleBarAction::Open),
+                (egui::Key::S, TitleBarAction::Save),
+                (egui::Key::F, TitleBarAction::SearchReplace),
+            ] {
+                if input
+                    .consume_shortcut(&egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, key))
+                {
+                    return Some(action);
+                }
+            }
+            None
+        })
     }
 
     /// Format writing time in seconds to a readable string (MM:SS or HH:MM:SS)
@@ -309,6 +318,82 @@ impl TitleBar {
             format!("{:02}:{:02}:{:02}", hours, minutes, secs)
         } else {
             format!("{:02}:{:02}", minutes, secs)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compact_title_bar_fits_narrow_windows_with_long_document_names() {
+        for width in [300.0, 480.0, 750.0] {
+            let ctx = egui::Context::default();
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(width, 468.0),
+                )),
+                ..Default::default()
+            };
+            let _ = ctx.run(input, |ctx| {
+                egui::TopBottomPanel::top("title").show(ctx, |ui| {
+                    let available = ui.available_width();
+                    TitleBar::show(ui, TitleBarState {
+                        title: "A very long document name that must leave window controls accessible.txt",
+                        document_path: None,
+                        word_count: 1_000_000,
+                        cursor_word_count: 999_999,
+                        writing_time: 360_000,
+                        has_current_file: true,
+                        chinese_fonts: &[],
+                        current_font: "Default",
+                        recent_files: &[],
+                        plugins: &[],
+                    });
+                    assert!(ui.min_rect().width() <= available + 1.0, "title overflow at {width}");
+                    assert!(ui.min_rect().height() <= 24.0, "title bar must remain a single compact row");
+                });
+            });
+        }
+    }
+
+    #[test]
+    fn command_shortcuts_dispatch_once_and_leave_plain_typing_alone() {
+        for modifiers in [egui::Modifiers::COMMAND, egui::Modifiers::NONE] {
+            for key in [egui::Key::N, egui::Key::O, egui::Key::S, egui::Key::F] {
+                let ctx = egui::Context::default();
+                let _ = ctx.run(
+                    egui::RawInput {
+                        modifiers,
+                        events: vec![egui::Event::Key {
+                            key,
+                            physical_key: None,
+                            pressed: true,
+                            repeat: false,
+                            modifiers,
+                        }],
+                        ..Default::default()
+                    },
+                    |ctx| {
+                        let action = TitleBar::shortcut(ctx);
+                        if modifiers.command {
+                            assert!(matches!(
+                                (key, action),
+                                (egui::Key::N, Some(TitleBarAction::NewWindow))
+                                    | (egui::Key::O, Some(TitleBarAction::Open))
+                                    | (egui::Key::S, Some(TitleBarAction::Save))
+                                    | (egui::Key::F, Some(TitleBarAction::SearchReplace))
+                            ));
+                            assert!(TitleBar::shortcut(ctx).is_none());
+                        } else {
+                            assert!(action.is_none());
+                            assert!(ctx.input(|input| input.key_pressed(key)));
+                        }
+                    },
+                );
+            }
         }
     }
 }

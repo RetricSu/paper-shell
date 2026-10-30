@@ -519,30 +519,37 @@ impl PaperShellApp {
 }
 
 impl eframe::App for PaperShellApp {
-    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.check_response_messages();
         self.try_save_marks_if_changed();
         self.update_time_backend_if_focus_changed();
 
+        let shortcut_action = crate::ui::title_bar::TitleBar::shortcut(ctx);
+        let (total_words, cursor_words) = self.editor.get_stats();
         // Title Bar
         egui::TopBottomPanel::top("title_bar_panel").show(ctx, |ui| {
-            let (total_words, cursor_words) = self.editor.get_stats();
+            let document_path = self
+                .editor
+                .get_current_file()
+                .map(|path| path.to_string_lossy());
             if let Some(action) = crate::ui::title_bar::TitleBar::show(
                 ui,
-                frame,
                 crate::ui::title_bar::TitleBarState {
                     title: crate::constant::DEFAULT_WINDOW_TITLE,
                     word_count: total_words,
                     cursor_word_count: cursor_words,
                     writing_time: self.editor.get_current_file_total_time()
                         + self.time_backend.get_writing_time(),
+                    document_path: document_path.as_deref(),
                     has_current_file: self.editor.get_current_file().is_some(),
                     chinese_fonts: &self.available_fonts,
                     current_font: &self.current_font,
                     recent_files: &self.config.settings.recent_files,
                     plugins: &self.plugin_metadata,
                 },
-            ) {
+            )
+            .or(shortcut_action)
+            {
                 match action {
                     crate::ui::title_bar::TitleBarAction::NewWindow => self.spawn_new_window(),
                     crate::ui::title_bar::TitleBarAction::Save => self.try_save_file(),
@@ -556,7 +563,11 @@ impl eframe::App for PaperShellApp {
                         self.editor.open_search_replace();
                     }
                     crate::ui::title_bar::TitleBarAction::FontChange(font_name) => {
-                        let new_fonts = crate::ui::font::apply_font(&font_name);
+                        let new_fonts = if font_name == "Default" {
+                            crate::ui::font::setup_fonts()
+                        } else {
+                            crate::ui::font::apply_font(&font_name)
+                        };
                         ctx.set_fonts(new_fonts);
                         self.current_font = font_name.clone();
                         tracing::info!("Font changed to: {}", font_name);
@@ -598,13 +609,22 @@ impl eframe::App for PaperShellApp {
         });
 
         // Main Content
-        egui::CentralPanel::default().show(ctx, |ui| {
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                ui.vertical_centered(|ui| {
-                    self.editor.show(ui);
+        egui::CentralPanel::default()
+            .frame(
+                egui::Frame::central_panel(&ctx.style()).inner_margin(egui::Margin {
+                    left: 2,
+                    right: 6,
+                    top: 6,
+                    bottom: 6,
+                }),
+            )
+            .show(ctx, |ui| {
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    ui.vertical_centered(|ui| {
+                        self.editor.show(ui);
+                    });
                 });
             });
-        });
 
         // History Window
         self.history_window.show(ctx);

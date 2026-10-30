@@ -17,10 +17,18 @@ pub fn configure_style(ctx: &Context) {
     visuals.window_shadow = egui::epaint::Shadow::NONE;
     visuals.popup_shadow = egui::epaint::Shadow::NONE;
 
-    // Corner radius for sleek, restrained appearance
-    visuals.widgets.inactive.corner_radius = egui::CornerRadius::same(3);
-    visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(3);
-    visuals.widgets.active.corner_radius = egui::CornerRadius::same(3);
+    // Square edges throughout, including menus, text fields, and open controls.
+    visuals.window_corner_radius = egui::CornerRadius::ZERO;
+    visuals.menu_corner_radius = egui::CornerRadius::ZERO;
+    for widget in [
+        &mut visuals.widgets.noninteractive,
+        &mut visuals.widgets.inactive,
+        &mut visuals.widgets.hovered,
+        &mut visuals.widgets.active,
+        &mut visuals.widgets.open,
+    ] {
+        widget.corner_radius = egui::CornerRadius::ZERO;
+    }
 
     // Minimalist colors
     visuals.widgets.noninteractive.bg_stroke = Stroke::new(0.0, Color32::TRANSPARENT);

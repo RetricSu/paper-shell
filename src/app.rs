@@ -1,4 +1,3 @@
-use crate::backend::ai_backend::{AiBackend, AiDocumentContext, AiRequestHandle, AiRequestId};
 use crate::backend::editor_backend::EditorBackend;
 use crate::backend::sidebar_backend::{Mark, SidebarBackend};
 use crate::backend::time_backend::TimeBackend;
@@ -6,13 +5,11 @@ use crate::file::FileData;
 use crate::messages::ResponseMessage;
 use crate::plugin::{PluginContext, PluginManager};
 use crate::style::configure_style;
-use crate::ui::ai_panel::AiPanelAction;
 use crate::ui::editor::Editor;
 use crate::ui::history::{HistoryAction, HistoryWindow};
 use crate::ui::plugins::{
     GithubPublishConfigWindow, PluginOutputWindow, PrintDialog, PublishDialog,
 };
-use crate::ui::settings::SettingsWindow;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -37,9 +34,6 @@ pub struct PaperShellApp {
     editor_backend: Arc<EditorBackend>,
     sidebar_backend: Arc<SidebarBackend>,
     time_backend: TimeBackend,
-    ai_backend: Arc<AiBackend>,
-    next_ai_request_id: AiRequestId,
-    active_ai_request: Option<AiRequestHandle>,
 
     plugin_manager: PluginManager,
     plugin_metadata: Vec<crate::plugin::PluginMetadata>,
@@ -47,7 +41,6 @@ pub struct PaperShellApp {
     plugin_config_window: GithubPublishConfigWindow,
     publish_dialog: PublishDialog,
     print_dialog: PrintDialog,
-    settings_window: SettingsWindow,
 }
 
 impl Default for PaperShellApp {
@@ -66,7 +59,6 @@ impl Default for PaperShellApp {
         }));
         let available_fonts = crate::ui::font::enumerate_chinese_fonts();
         let config = crate::config::Config::default();
-        let ai_backend = Arc::new(AiBackend::from_config(&config.settings.ai_panel));
 
         let plugins_dir = config.data_dir().join("plugins");
         let plugin_manager =
@@ -78,9 +70,6 @@ impl Default for PaperShellApp {
             editor_backend: Arc::new(EditorBackend::default()),
             sidebar_backend,
             time_backend: TimeBackend::default(),
-            ai_backend,
-            next_ai_request_id: 1,
-            active_ai_request: None,
             response_receiver: receiver,
             response_sender: sender,
             history_window: HistoryWindow::new(),
@@ -94,7 +83,6 @@ impl Default for PaperShellApp {
             plugin_config_window: GithubPublishConfigWindow::new(),
             publish_dialog: PublishDialog::new(),
             print_dialog: PrintDialog::new(),
-            settings_window: SettingsWindow::new(),
         }
     }
 }
@@ -451,32 +439,6 @@ impl PaperShellApp {
                 ResponseMessage::OpenFile(path) => {
                     self.try_load_file_data(path);
                 }
-                ResponseMessage::AiProgress { request_id, event } => {
-                    self.editor.apply_ai_progress(request_id, event);
-                }
-                ResponseMessage::AiResponse { request_id, result } => {
-                    if self
-                        .active_ai_request
-                        .as_ref()
-                        .is_some_and(|request| request.id == request_id)
-                    {
-                        self.active_ai_request = None;
-                    }
-                    match result {
-                        Ok(response) => {
-                            tracing::info!(
-                                "AI response received: content_chars={}, tool_calls={}",
-                                response.content.chars().count(),
-                                response.tool_calls.len()
-                            );
-                            self.editor.set_ai_response(request_id, response);
-                        }
-                        Err(e) => {
-                            tracing::error!("AI request failed: {}", e);
-                            self.editor.set_ai_error(request_id, e);
-                        }
-                    }
-                }
                 ResponseMessage::PluginFinished { name, result } => {
                     if let Err(e) = &result {
                         tracing::error!("Plugin '{}' failed: {}", name, e);
@@ -489,95 +451,6 @@ impl PaperShellApp {
         }
     }
 
-    fn handle_ai_panel_action(&mut self, action: AiPanelAction) {
-        match action {
-            AiPanelAction::SendRequest {
-                conversation,
-                selection,
-            } => {
-                let content = self.editor.get_content();
-                let request_id = self.next_ai_request_id;
-                self.next_ai_request_id = self.next_ai_request_id.wrapping_add(1).max(1);
-                let title = self
-                    .editor
-                    .get_current_file()
-                    .and_then(|path| path.file_name())
-                    .and_then(|name| name.to_str())
-                    .unwrap_or("未命名文档")
-                    .to_string();
-
-                self.editor
-                    .begin_ai_request(request_id, content.clone(), selection.clone());
-                tracing::info!("Sending AI request {}", request_id);
-
-                let ai_backend = Arc::clone(&self.ai_backend);
-                let response_sender = self.response_sender.clone();
-
-                let handle = ai_backend.discuss_writing_context(
-                    AiDocumentContext {
-                        title,
-                        content,
-                        selection,
-                    },
-                    conversation,
-                    request_id,
-                    response_sender,
-                );
-                self.active_ai_request = Some(handle);
-            }
-            AiPanelAction::CancelRequest { request_id } => {
-                if self
-                    .active_ai_request
-                    .as_ref()
-                    .is_some_and(|request| request.id == request_id)
-                {
-                    if let Some(request) = self.active_ai_request.take() {
-                        request.cancel();
-                    }
-                }
-                self.editor.cancel_ai_request(request_id);
-                tracing::info!("Stopped AI request {}", request_id);
-            }
-            AiPanelAction::ApplyEdit {
-                proposal_index,
-                base_content,
-                original_text,
-                replacement_text,
-            } => {
-                let result =
-                    self.editor
-                        .apply_ai_edit(&base_content, &original_text, &replacement_text);
-                if let Err(error) = &result {
-                    tracing::warn!("AI edit was not applied: {}", error);
-                } else {
-                    tracing::info!("AI edit applied after user confirmation");
-                }
-                self.editor.set_ai_edit_result(proposal_index, result);
-            }
-            AiPanelAction::PreviewEdit { proposal_index } => {
-                self.editor.preview_ai_edit(proposal_index);
-            }
-            AiPanelAction::RejectEdit { proposal_index } => {
-                self.editor.reject_ai_edit(proposal_index);
-                tracing::info!("AI edit proposal ignored by user");
-            }
-            AiPanelAction::NavigateEdit { direction } => {
-                self.editor.navigate_ai_edit(direction);
-            }
-            AiPanelAction::ApplyAllEdits => {
-                let (applied, failed) = self.editor.apply_all_ai_edits();
-                tracing::info!(
-                    "AI batch review finished: applied={}, failed={}",
-                    applied,
-                    failed
-                );
-            }
-            AiPanelAction::RejectAllEdits => {
-                self.editor.reject_all_ai_edits();
-                tracing::info!("All pending AI edit proposals rejected");
-            }
-        }
-    }
     fn handle_history_action(&mut self, action: HistoryAction) {
         match action {
             HistoryAction::RollbackToVersion(hash) => {
@@ -648,12 +521,6 @@ impl PaperShellApp {
 impl eframe::App for PaperShellApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         self.check_response_messages();
-        if self.active_ai_request.is_some() {
-            // Background mpsc messages do not wake eframe on their own. Keep a light
-            // repaint heartbeat so streamed tokens and completions appear even when
-            // the AI panel is hidden and the user is not moving the pointer.
-            ctx.request_repaint_after(std::time::Duration::from_millis(50));
-        }
         self.try_save_marks_if_changed();
         self.update_time_backend_if_focus_changed();
 
@@ -673,7 +540,6 @@ impl eframe::App for PaperShellApp {
                     chinese_fonts: &self.available_fonts,
                     current_font: &self.current_font,
                     recent_files: &self.config.settings.recent_files,
-                    is_ai_panel_visible: self.editor.get_ai_panel_mut().is_visible,
                     plugins: &self.plugin_metadata,
                 },
             ) {
@@ -689,18 +555,11 @@ impl eframe::App for PaperShellApp {
                     crate::ui::title_bar::TitleBarAction::SearchReplace => {
                         self.editor.open_search_replace();
                     }
-                    crate::ui::title_bar::TitleBarAction::Settings => {
-                        self.settings_window.open(&self.config.settings.ai_panel);
-                    }
                     crate::ui::title_bar::TitleBarAction::FontChange(font_name) => {
                         let new_fonts = crate::ui::font::apply_font(&font_name);
                         ctx.set_fonts(new_fonts);
                         self.current_font = font_name.clone();
                         tracing::info!("Font changed to: {}", font_name);
-                    }
-                    crate::ui::title_bar::TitleBarAction::ToggleAiPanel => {
-                        let panel = self.editor.get_ai_panel_mut();
-                        panel.is_visible = !panel.is_visible;
                     }
                     crate::ui::title_bar::TitleBarAction::RunPlugin(id) => {
                         if id == "github_publish" {
@@ -740,28 +599,11 @@ impl eframe::App for PaperShellApp {
             }
         });
 
-        let mut ai_panel_action = None;
-        if self.editor.get_ai_panel_mut().is_visible {
-            egui::SidePanel::right("ai_panel_side")
-                .default_width(320.0)
-                .min_width(260.0)
-                .max_width(520.0)
-                .resizable(true)
-                .show(ctx, |ui| {
-                    ai_panel_action = self.editor.get_ai_panel_mut().show(ui);
-                });
-        }
-        if let Some(action) = ai_panel_action {
-            self.handle_ai_panel_action(action);
-        }
-
         // Main Content
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 ui.vertical_centered(|ui| {
-                    if let Some(action) = self.editor.show(ui) {
-                        self.handle_ai_panel_action(action);
-                    }
+                    self.editor.show(ui);
                 });
             });
         });
@@ -774,17 +616,6 @@ impl eframe::App for PaperShellApp {
 
         // Plugin output window
         self.plugin_output.show(ctx);
-
-        if let Some(ai_config) = self.settings_window.show(ctx) {
-            self.config.settings.ai_panel = ai_config;
-            self.ai_backend = Arc::new(AiBackend::from_config(&self.config.settings.ai_panel));
-            let settings = self.config.settings.clone();
-            std::thread::spawn(move || {
-                if let Err(e) = confy::store(crate::constant::APP_NAME, None, &settings) {
-                    tracing::error!("Failed to save settings: {}", e);
-                }
-            });
-        }
 
         if let Some(new_config) = self.plugin_config_window.show(ctx) {
             self.config.settings.github_publish = new_config.clone();

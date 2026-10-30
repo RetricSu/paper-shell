@@ -8,10 +8,8 @@ pub enum TitleBarAction {
     Open,
     OpenFile(PathBuf),
     History,
-    Settings,
     Format,
     FontChange(String),
-    ToggleAiPanel,
     SearchReplace,
     /// Run an installed plugin by its id.
     RunPlugin(String),
@@ -32,7 +30,6 @@ pub struct TitleBarState<'a> {
     pub chinese_fonts: &'a [String],
     pub current_font: &'a str,
     pub recent_files: &'a [PathBuf],
-    pub is_ai_panel_visible: bool,
     pub plugins: &'a [PluginMetadata],
 }
 
@@ -51,7 +48,6 @@ impl TitleBar {
             chinese_fonts,
             current_font,
             recent_files,
-            is_ai_panel_visible,
             plugins,
         } = state;
 
@@ -107,9 +103,6 @@ impl TitleBar {
                 .on_hover_text("Open");
                 if ui.button("💾").on_hover_text("Save").clicked() {
                     action = Some(TitleBarAction::Save);
-                }
-                if ui.button("⚙").on_hover_text("Settings").clicked() {
-                    action = Some(TitleBarAction::Settings);
                 }
                 if ui.button("新建").on_hover_text("New Window").clicked() {
                     action = Some(TitleBarAction::NewWindow);
@@ -205,13 +198,8 @@ impl TitleBar {
                         .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
                 }
 
-                // Stats and AI toggle
+                // Stats
                 ui.add_space(16.0);
-                let ai_icon = if is_ai_panel_visible { "[|]" } else { "[ ]" };
-                if ui.label(egui::RichText::new(ai_icon).small()).clicked() {
-                    action = Some(TitleBarAction::ToggleAiPanel);
-                }
-
                 let time_str = Self::format_writing_time(writing_time);
                 ui.label(
                     egui::RichText::new(format!(

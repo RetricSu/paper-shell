@@ -15,9 +15,8 @@ cargo build --release
 - [x] support copy-paste and right click context menu
 - [x] select a text and high-light all the matched ones
 - [ ] prevent leading punctuation for Chinese text, may require using [cosmic-text](https://github.com/pop-os/) to rewrite editor component for egui
-- [ ] add ai-ask/dictionary-lookup panel
+- [ ] dictionary-lookup panel
 - [ ] support narrative map with click-to-jump function
-- [ ] add a test panel that use AI as readers to give feedbacks
 - [ ] informative data records on paragraph or full text
 - [ ] add a add-ons/plugin system for export
 - [ ] support print document

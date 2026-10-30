@@ -101,10 +101,6 @@ pub struct Settings {
     #[serde(default)]
     pub recent_files: Vec<PathBuf>,
 
-    /// AI Panel configuration
-    #[serde(default)]
-    pub ai_panel: AiPanelConfig,
-
     /// GitHub publish plugin configuration
     #[serde(default)]
     pub github_publish: crate::plugin::builtin::github_publish::GithubPublishConfig,
@@ -117,43 +113,7 @@ impl Default for Settings {
             autosave_interval: 300, // 5 minutes
             font_size: 14.0,
             recent_files: Vec::new(),
-            ai_panel: AiPanelConfig::default(),
             github_publish: crate::plugin::builtin::github_publish::GithubPublishConfig::default(),
         }
     }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AiPanelConfig {
-    /// AI provider: "ollama" or "kimi"
-    #[serde(default = "default_ai_provider")]
-    pub provider: String,
-
-    /// API key for AI service
-    /// Optional; local Ollama does not require one.
-    #[serde(default)]
-    pub api_key: String,
-
-    /// API URL for AI service
-    #[serde(default)]
-    pub api_url: String,
-
-    /// Model name for AI service
-    #[serde(default)]
-    pub model_name: String,
-}
-
-impl Default for AiPanelConfig {
-    fn default() -> Self {
-        Self {
-            provider: default_ai_provider(),
-            api_key: String::new(),
-            api_url: "http://localhost:11434/api/chat".to_string(),
-            model_name: "qwen3:8b".to_string(),
-        }
-    }
-}
-
-fn default_ai_provider() -> String {
-    "ollama".to_string()
 }

@@ -1,0 +1,155 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Tag or version for release (e.g. v0.1.0, defaults to git tag or Cargo.toml version)'
+        required: false
+        default: ''
+      create_release:
+        description: 'Publish release to GitHub Releases'
+        type: boolean
+        default: true
+      draft:
+        description: 'Create draft release'
+        type: boolean
+        default: false
+      prerelease:
+        description: 'Create prerelease'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-macos:
+    name: Build & Package macOS Release
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+
+      - name: Cache cargo registry and build target
+        uses: Swatinem/rust-cache@v2
+
+      - name: Cache cargo-bundle binary
+        id: cache-cargo-bundle
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-bundle
+          key: ${{ runner.os }}-cargo-bundle-v1
+
+      - name: Install cargo-bundle
+        if: steps.cache-cargo-bundle.outputs.cache-hit != 'true'
+        run: cargo install cargo-bundle
+
+      - name: Build and bundle macOS aarch64 (Apple Silicon)
+        run: cargo bundle --release --target aarch64-apple-darwin
+
+      - name: Build and bundle macOS x86_64 (Intel)
+        run: cargo bundle --release --target x86_64-apple-darwin
+
+      - name: Package release artifacts (DMG & ZIP)
+        run: |
+          mkdir -p dist
+
+          create_dmg() {
+            local app_path="$1"
+            local dmg_path="$2"
+            local volname="Paper Shell"
+            local tmp_stage
+            tmp_stage=$(mktemp -d)
+            cp -R "$app_path" "$tmp_stage/"
+            ln -s /Applications "$tmp_stage/Applications"
+            hdiutil create -volname "$volname" -srcfolder "$tmp_stage" -ov -format UDZO "$dmg_path"
+            rm -rf "$tmp_stage"
+          }
+
+          create_zip() {
+            local app_path="$1"
+            local zip_path="$2"
+            ditto -c -k --sequesterRsrc --keepParent "$app_path" "$zip_path"
+          }
+
+          echo "==> Packaging Apple Silicon (aarch64)..."
+          codesign --force --deep --sign - "target/aarch64-apple-darwin/release/bundle/osx/Paper Shell.app"
+          create_dmg "target/aarch64-apple-darwin/release/bundle/osx/Paper Shell.app" "dist/Paper-Shell-macOS-aarch64.dmg"
+          create_zip "target/aarch64-apple-darwin/release/bundle/osx/Paper Shell.app" "dist/Paper-Shell-macOS-aarch64.zip"
+
+          echo "==> Packaging Intel (x86_64)..."
+          codesign --force --deep --sign - "target/x86_64-apple-darwin/release/bundle/osx/Paper Shell.app"
+          create_dmg "target/x86_64-apple-darwin/release/bundle/osx/Paper Shell.app" "dist/Paper-Shell-macOS-x86_64.dmg"
+          create_zip "target/x86_64-apple-darwin/release/bundle/osx/Paper Shell.app" "dist/Paper-Shell-macOS-x86_64.zip"
+
+          echo "==> Creating and packaging Universal App..."
+          mkdir -p /tmp/universal
+          cp -R "target/aarch64-apple-darwin/release/bundle/osx/Paper Shell.app" "/tmp/universal/Paper Shell.app"
+          lipo -create \
+            "target/aarch64-apple-darwin/release/bundle/osx/Paper Shell.app/Contents/MacOS/paper-shell" \
+            "target/x86_64-apple-darwin/release/bundle/osx/Paper Shell.app/Contents/MacOS/paper-shell" \
+            -output "/tmp/universal/Paper Shell.app/Contents/MacOS/paper-shell"
+          codesign --force --deep --sign - "/tmp/universal/Paper Shell.app"
+
+          create_dmg "/tmp/universal/Paper Shell.app" "dist/Paper-Shell-macOS-universal.dmg"
+          create_zip "/tmp/universal/Paper Shell.app" "dist/Paper-Shell-macOS-universal.zip"
+          rm -rf /tmp/universal
+
+          echo "==> Generating SHA256 checksums..."
+          cd dist
+          shasum -a 256 *.dmg *.zip > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          cd ..
+
+      - name: Upload artifacts to GitHub Actions run
+        uses: actions/upload-artifact@v4
+        with:
+          name: paper-shell-macos-release
+          path: |
+            dist/*.dmg
+            dist/*.zip
+            dist/SHA256SUMS.txt
+
+      - name: Determine tag name
+        id: tag
+        run: |
+          if [ -n "${{ github.event.inputs.tag_name }}" ]; then
+            echo "name=${{ github.event.inputs.tag_name }}" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            echo "name=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          else
+            VERSION=$(grep '^version = ' Cargo.toml | head -1 | cut -d '"' -f 2)
+            echo "name=v${VERSION}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.create_release == 'true'
+        with:
+          tag_name: ${{ steps.tag.outputs.name }}
+          name: Paper Shell ${{ steps.tag.outputs.name }}
+          draft: ${{ github.event.inputs.draft == 'true' }}
+          prerelease: ${{ github.event.inputs.prerelease == 'true' }}
+          generate_release_notes: true
+          files: |
+            dist/Paper-Shell-macOS-universal.dmg
+            dist/Paper-Shell-macOS-universal.zip
+            dist/Paper-Shell-macOS-aarch64.dmg
+            dist/Paper-Shell-macOS-aarch64.zip
+            dist/Paper-Shell-macOS-x86_64.dmg
+            dist/Paper-Shell-macOS-x86_64.zip
+            dist/SHA256SUMS.txt

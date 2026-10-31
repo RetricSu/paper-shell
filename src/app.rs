@@ -1,5 +1,4 @@
 use crate::backend::editor_backend::EditorBackend;
-use crate::backend::sidebar_backend::{Mark, SidebarBackend};
 use crate::backend::time_backend::TimeBackend;
 use crate::file::FileData;
 use crate::messages::ResponseMessage;
@@ -11,12 +10,9 @@ use crate::ui::plugins::{
     GithubPublishConfigWindow, PluginOutputWindow, PrintDialog, PublishDialog,
 };
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
-
-type LoadFileResult = (FileData, HashMap<usize, Mark>);
 
 pub struct PaperShellApp {
     editor: Editor,
@@ -32,7 +28,10 @@ pub struct PaperShellApp {
     config: crate::config::Config,
 
     editor_backend: Arc<EditorBackend>,
-    sidebar_backend: Arc<SidebarBackend>,
+    sidebar: crate::ui::sidebar::Sidebar,
+    draft_directory: Option<PathBuf>,
+    saved_content: String,
+    file_error: Option<String>,
     time_backend: TimeBackend,
 
     plugin_manager: PluginManager,
@@ -53,10 +52,6 @@ impl Default for PaperShellApp {
 
         let (sender, receiver) = channel();
         let editor = Editor::default();
-        let sidebar_backend = Arc::new(SidebarBackend::new().unwrap_or_else(|e| {
-            tracing::error!("Failed to initialize SidebarBackend: {}", e);
-            panic!("Cannot continue without SidebarBackend");
-        }));
         let available_fonts = crate::ui::font::enumerate_chinese_fonts();
         let config = crate::config::Config::default();
 
@@ -68,7 +63,10 @@ impl Default for PaperShellApp {
         Self {
             editor,
             editor_backend: Arc::new(EditorBackend::default()),
-            sidebar_backend,
+            sidebar: crate::ui::sidebar::Sidebar::default(),
+            draft_directory: None,
+            saved_content: String::new(),
+            file_error: None,
             time_backend: TimeBackend::default(),
             response_receiver: receiver,
             response_sender: sender,
@@ -109,7 +107,7 @@ impl PaperShellApp {
 
 // file related operations without UI
 impl PaperShellApp {
-    fn load_file_data(&self, path: &PathBuf) -> Result<LoadFileResult, String> {
+    fn load_file_data(&self, path: &PathBuf) -> Result<FileData, String> {
         let content = std::fs::read_to_string(path)
             .map_err(|e: std::io::Error| format!("Failed to read file {:?}: {}", path, e))?;
 
@@ -118,55 +116,12 @@ impl PaperShellApp {
             .get_file_metadata(path, &content)
             .map_err(|e| format!("Failed to get metadata: {}", e))?;
 
-        let marks = self
-            .sidebar_backend
-            .load_marks(&uuid)
-            .map_err(|e| format!("Failed to load marks: {}", e))?;
-
-        Ok((
-            FileData {
-                uuid,
-                path: path.to_path_buf(),
-                total_time,
-                content,
-            },
-            marks,
-        ))
-    }
-
-    // this is mostly the same process with load_file_data but in a thread with messaging
-    fn try_load_file_data(&mut self, path: PathBuf) {
-        let backend = Arc::clone(&self.editor_backend);
-        let sidebar_backend = Arc::clone(&self.sidebar_backend);
-        let sender = self.response_sender.clone();
-
-        std::thread::spawn(move || match std::fs::read_to_string(&path) {
-            Ok(content) => match backend.get_file_metadata(&path, &content) {
-                Ok((uuid, total_time)) => {
-                    let _ = sender.send(ResponseMessage::FileLoaded(Ok(FileData {
-                        path,
-                        content,
-                        uuid: uuid.clone(),
-                        total_time,
-                    })));
-
-                    let marks_result = sidebar_backend.load_marks(&uuid).map_err(|e| e.to_string());
-                    let _ = sender.send(ResponseMessage::MarksLoaded(marks_result));
-                }
-                Err(e) => {
-                    let _ = sender.send(ResponseMessage::FileLoaded(Err(format!(
-                        "Failed to get metadata: {}",
-                        e
-                    ))));
-                }
-            },
-            Err(e) => {
-                let _ = sender.send(ResponseMessage::FileLoaded(Err(format!(
-                    "Failed to read file {:?}: {}",
-                    path, e
-                ))));
-            }
-        });
+        Ok(FileData {
+            uuid,
+            path: path.to_path_buf(),
+            total_time,
+            content,
+        })
     }
 
     fn try_load_history(&mut self) {
@@ -185,26 +140,114 @@ impl PaperShellApp {
     }
 
     fn open_file(&mut self, path: PathBuf) {
+        if self.editor.get_current_file() == Some(&path) || !self.confirm_document_switch() {
+            return;
+        }
         match self.load_file_data(&path) {
-            Ok((file_data, marks)) => {
-                self.apply_load_file_data(file_data, Some(marks));
+            Ok(data) => self.apply_load_file_data(data),
+            Err(e) => self.file_error = Some(e),
+        }
+    }
+
+    fn confirm_document_switch(&mut self) -> bool {
+        if self.editor.get_content() == self.saved_content {
+            return true;
+        }
+        match rfd::MessageDialog::new()
+            .set_title("未保存的文章")
+            .set_description("是否先保存当前文章？选择“否”将放弃未保存的修改。")
+            .set_buttons(rfd::MessageButtons::YesNoCancel)
+            .show()
+        {
+            rfd::MessageDialogResult::Yes => self.save_file(),
+            rfd::MessageDialogResult::No => true,
+            _ => false,
+        }
+    }
+
+    fn document_directory(&self) -> PathBuf {
+        self.draft_directory
+            .clone()
+            .or_else(|| {
+                self.editor
+                    .get_current_file()
+                    .and_then(|path| path.parent())
+                    .map(|path| path.to_path_buf())
+            })
+            .unwrap_or_else(|| self.config.data_dir())
+    }
+
+    fn add_workspace_folder(&mut self, path: PathBuf) {
+        let path = match path.canonicalize() {
+            Ok(path) => path,
+            Err(error) => {
+                self.file_error = Some(format!("无法打开文件夹 {}: {}", path.display(), error));
+                return;
             }
-            Err(e) => {
-                tracing::error!("{}", e);
+        };
+        if let Err(error) = std::fs::read_dir(&path) {
+            self.file_error = Some(format!("无法打开文件夹 {}: {}", path.display(), error));
+            return;
+        }
+        let default_root = self.config.data_dir();
+        let default_root = default_root.canonicalize().unwrap_or(default_root);
+        if path != default_root && !self.config.settings.workspace_folders.contains(&path) {
+            self.config.settings.workspace_folders.push(path);
+            self.save_workspace_folders();
+        }
+        self.sidebar.refresh();
+        self.sidebar.expand();
+    }
+
+    fn save_workspace_folders(&mut self) {
+        if let Err(error) = self.config.save() {
+            self.file_error = Some(format!("无法记住文件夹列表: {}", error));
+        }
+    }
+
+    fn handle_sidebar_action(&mut self, action: crate::ui::sidebar::SidebarAction) {
+        use crate::ui::sidebar::SidebarAction;
+        match action {
+            SidebarAction::OpenFile(path) => self.open_file(path),
+            SidebarAction::OpenFolder => {
+                let root = self.document_directory();
+                let sender = self.response_sender.clone();
+                std::thread::spawn(move || {
+                    if let Some(path) = rfd::FileDialog::new().set_directory(root).pick_folder() {
+                        let _ = sender.send(ResponseMessage::OpenWorkspace(path));
+                    }
+                });
+            }
+            SidebarAction::RemoveFolder(path) => {
+                self.config
+                    .settings
+                    .workspace_folders
+                    .retain(|root| root != &path);
+                self.save_workspace_folders();
+                self.sidebar.refresh();
+            }
+            SidebarAction::NewDocument(directory) => {
+                if self.confirm_document_switch() {
+                    self.draft_directory =
+                        Some(directory.unwrap_or_else(|| self.document_directory()));
+                    self.editor = Editor::default();
+                    self.editor.set_content(String::new());
+                    self.saved_content.clear();
+                    self.time_backend.get_and_reset_writing_time();
+                }
             }
         }
     }
 
     fn try_open_file_from_selector(&self) {
-        let backend = Arc::clone(&self.editor_backend);
-        let data_dir = backend.data_dir().to_path_buf();
+        let data_dir = self.document_directory();
 
         // Keep a reference to the sender to use in the outer scope
         let sender = self.response_sender.clone();
         std::thread::spawn(move || {
             if let Some(path) = rfd::FileDialog::new()
                 .set_directory(&data_dir)
-                .add_filter("Text", &["txt"])
+                .add_filter("文章", &["txt", "md", "markdown", "text", "org", "rst"])
                 .pick_file()
             {
                 let _ = sender.send(ResponseMessage::OpenFile(path));
@@ -212,187 +255,56 @@ impl PaperShellApp {
         });
     }
 
-    fn try_save_marks_if_changed(&mut self) {
-        // Check if marks have changed and save in background if needed
-        if self.editor.marks_changed()
-            && let Some(uuid) = self.editor.get_sidebar_uuid()
-        {
-            let marks = self.editor.get_marks().clone();
-            let uuid = uuid.clone();
-            let sidebar_backend = Arc::clone(&self.sidebar_backend);
-
-            // Reset the changed flag immediately to avoid duplicate saves
-            self.editor.reset_marks_changed();
-
-            std::thread::spawn(move || {
-                if let Err(e) = sidebar_backend.save_marks(&uuid, &marks) {
-                    tracing::error!("Failed to save marks in background: {}", e);
-                }
-            });
-        }
-    }
-
-    fn save_file(&mut self) {
-        let current_file = self.editor.get_current_file().cloned();
+    // Finish saves before switching documents so results cannot land on a different file.
+    fn save_file(&mut self) -> bool {
         let content = self.editor.get_content();
-        if content.trim().is_empty() {
-            return;
-        }
-        let time_spent = self.time_backend.get_and_reset_writing_time();
-
-        if let Some(path) = current_file {
-            // First write the actual file content
-            if let Err(e) = std::fs::write(&path, &content) {
-                tracing::error!("Failed to write file: {}", e);
-                return;
-            }
-
-            // Then track with backend (CAS + history)
-            let result = self
-                .editor_backend
-                .save(&path, &content, time_spent)
-                .map_err(|e| e.to_string());
-            if let Ok((uuid, total_time)) = result.as_ref() {
-                self.apply_save_file(uuid.clone(), *total_time);
-            } else {
-                tracing::error!("Failed to save file: {}", result.err().unwrap());
-            }
-        } else {
-            // Show save dialog for new file
-            let data_dir = self.editor_backend.data_dir().to_path_buf();
-            if let Some(path) = rfd::FileDialog::new()
-                .set_directory(&data_dir)
-                .add_filter("Text", &["txt"])
-                .save_file()
-            {
-                // First write the actual file content
-                if let Err(e) = std::fs::write(&path, &content) {
-                    tracing::error!("Failed to write file: {}", e);
-                    return;
-                }
-
-                // Then track with backend (CAS + history)
-                let result = self
-                    .editor_backend
-                    .save(&path, &content, time_spent)
-                    .map_err(|e| e.to_string());
-
-                // Add to recent files on successful save
-                if let Ok((uuid, total_time)) = result.as_ref() {
-                    self.apply_save_file(uuid.clone(), *total_time);
-                    self.apply_load_file_data(
-                        FileData {
-                            uuid: uuid.clone(),
-                            path,
-                            total_time: *total_time,
-                            content,
-                        },
-                        None,
-                    );
-                } else {
-                    tracing::error!("Failed to save file: {}", result.err().unwrap());
-                }
-            }
-        }
-    }
-
-    fn try_save_file(&self) {
-        let current_file = self.editor.get_current_file().cloned();
-        let content = self.editor.get_content();
-        if content.trim().is_empty() {
-            return;
-        }
-
-        let backend = Arc::clone(&self.editor_backend);
-        let sender = self.response_sender.clone();
-        let time_spent = self.time_backend.get_and_reset_writing_time();
-
-        if let Some(path) = current_file {
-            // Save to existing file in background thread
-            std::thread::spawn(move || {
-                // First write the actual file content
-                if let Err(e) = std::fs::write(&path, &content) {
-                    let _ = sender.send(ResponseMessage::FileSaved(Err(format!(
-                        "Failed to write file: {}",
-                        e
-                    ))));
-                    return;
-                }
-
-                // Then track with backend (CAS + history)
-                let result = backend
-                    .save(&path, &content, time_spent)
-                    .map_err(|e| e.to_string());
-                let _ = sender.send(ResponseMessage::FileSaved(result));
-            });
-        } else {
-            // Show save dialog for new file
-            let data_dir = backend.data_dir().to_path_buf();
-            std::thread::spawn(move || {
-                if let Some(path) = rfd::FileDialog::new()
-                    .set_directory(&data_dir)
-                    .add_filter("Text", &["txt"])
+        let path = match self.editor.get_current_file().cloned() {
+            Some(path) => path,
+            None => {
+                let Some(path) = rfd::FileDialog::new()
+                    .set_directory(self.document_directory())
+                    .add_filter("文章", &["txt", "md", "markdown", "text", "org", "rst"])
+                    .set_file_name("未命名.txt")
                     .save_file()
-                {
-                    // First write the actual file content
-                    if let Err(e) = std::fs::write(&path, &content) {
-                        let _ = sender.send(ResponseMessage::FileSaved(Err(format!(
-                            "Failed to write file: {}",
-                            e
-                        ))));
-                        return;
-                    }
-
-                    // Then track with backend (CAS + history)
-                    let result = backend
-                        .save(&path, &content, time_spent)
-                        .map_err(|e| e.to_string());
-
-                    // Add to recent files on successful save
-                    if result.is_ok() {
-                        let _ = sender.send(ResponseMessage::FileSaved(result.inspect(|_res| {
-                            // Ensure the path is updated on Save As
-                            let _ = sender.send(ResponseMessage::FileLoaded(Ok({
-                                FileData {
-                                    uuid: "".to_string(),
-                                    path,
-                                    total_time: 0,
-                                    content: "".to_string(),
-                                }
-                            })));
-                        })));
-                    } else {
-                        let _ = sender.send(ResponseMessage::FileSaved(result));
-                    }
-                }
-            });
+                else {
+                    return false;
+                };
+                path
+            }
+        };
+        if let Err(error) = std::fs::write(&path, &content) {
+            self.file_error = Some(format!("无法保存 {}: {}", path.display(), error));
+            return false;
+        }
+        match self
+            .editor_backend
+            .save(&path, &content, self.time_backend.get_writing_time())
+        {
+            Ok((_uuid, total_time)) => {
+                self.time_backend.get_and_reset_writing_time();
+                self.draft_directory = None;
+                self.editor.set_current_file(Some(path.clone()));
+                self.editor.set_current_file_total_time(total_time);
+                self.saved_content = content;
+                self.config.add_recent_file(path);
+                self.sidebar.refresh();
+                true
+            }
+            Err(error) => {
+                self.file_error = Some(format!("正文已写入，但无法保存版本记录: {}", error));
+                false
+            }
         }
     }
 
-    fn apply_save_file(&mut self, uuid: String, total_time: u64) {
-        self.editor.set_uuid(uuid);
-        self.editor.set_current_file_total_time(total_time);
-        if let Some(path) = self.editor.get_current_file() {
-            tracing::info!("File saved path: {:?}", path);
-            self.config.add_recent_file(path.clone());
-        }
-    }
-
-    fn apply_load_file_data(&mut self, data: FileData, marks: Option<HashMap<usize, Mark>>) {
-        if !data.content.is_empty() {
-            self.editor.set_content(data.content);
-        }
+    fn apply_load_file_data(&mut self, data: FileData) {
+        self.draft_directory = None;
+        self.saved_content = data.content.clone();
+        self.editor.set_content(data.content);
         self.editor.set_current_file(Some(data.path.clone()));
-        if !data.uuid.is_empty() {
-            self.editor.set_uuid(data.uuid);
-        }
-        if data.total_time > 0 {
-            self.editor.set_current_file_total_time(data.total_time);
-        }
+        self.editor.set_current_file_total_time(data.total_time);
+        self.time_backend.get_and_reset_writing_time();
         self.config.add_recent_file(data.path.clone());
-        if let Some(data) = marks {
-            self.editor.apply_marks(data);
-        }
         tracing::info!("File opened: {:?}", data.path);
     }
 
@@ -407,18 +319,6 @@ impl PaperShellApp {
     fn check_response_messages(&mut self) {
         if let Ok(response) = self.response_receiver.try_recv() {
             match response {
-                ResponseMessage::FileSaved(result) => match result {
-                    Ok((uuid, total_time)) => {
-                        self.apply_save_file(uuid, total_time);
-                    }
-                    Err(e) => tracing::error!("Failed to save file: {}", e),
-                },
-                ResponseMessage::FileLoaded(result) => match result {
-                    Ok(data) => {
-                        self.apply_load_file_data(data, None);
-                    }
-                    Err(e) => tracing::error!("Failed to load file: {}", e),
-                },
                 ResponseMessage::HistoryLoaded(result) => match result {
                     Ok(entries) => {
                         if let Err(e) = self
@@ -430,15 +330,8 @@ impl PaperShellApp {
                     }
                     Err(e) => tracing::error!("Failed to load history: {}", e),
                 },
-                ResponseMessage::MarksLoaded(result) => match result {
-                    Ok(marks) => {
-                        self.editor.apply_marks(marks);
-                    }
-                    Err(e) => tracing::error!("Failed to load marks: {}", e),
-                },
-                ResponseMessage::OpenFile(path) => {
-                    self.try_load_file_data(path);
-                }
+                ResponseMessage::OpenFile(path) => self.open_file(path),
+                ResponseMessage::OpenWorkspace(path) => self.add_workspace_folder(path),
                 ResponseMessage::PluginFinished { name, result } => {
                     if let Err(e) = &result {
                         tracing::error!("Plugin '{}' failed: {}", name, e);
@@ -521,8 +414,11 @@ impl PaperShellApp {
 impl eframe::App for PaperShellApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.check_response_messages();
-        self.try_save_marks_if_changed();
         self.update_time_backend_if_focus_changed();
+        if ctx.input(|input| input.viewport().close_requested()) && !self.confirm_document_switch()
+        {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+        }
 
         let shortcut_action = crate::ui::title_bar::TitleBar::shortcut(ctx);
         let (total_words, cursor_words) = self.editor.get_stats();
@@ -547,13 +443,17 @@ impl eframe::App for PaperShellApp {
                     current_font: &self.current_font,
                     recent_files: &self.config.settings.recent_files,
                     plugins: &self.plugin_metadata,
+                    sidebar_expanded: self.sidebar.is_expanded(),
                 },
             )
             .or(shortcut_action)
             {
                 match action {
                     crate::ui::title_bar::TitleBarAction::NewWindow => self.spawn_new_window(),
-                    crate::ui::title_bar::TitleBarAction::Save => self.try_save_file(),
+                    crate::ui::title_bar::TitleBarAction::ToggleSidebar => self.sidebar.toggle(),
+                    crate::ui::title_bar::TitleBarAction::Save => {
+                        self.save_file();
+                    }
                     crate::ui::title_bar::TitleBarAction::Open => {
                         self.try_open_file_from_selector()
                     }
@@ -609,6 +509,25 @@ impl eframe::App for PaperShellApp {
             }
         });
 
+        if let Some(action) = self.sidebar.show(
+            ctx,
+            &self.config.data_dir(),
+            &self.config.settings.workspace_folders,
+            self.editor.get_current_file().map(|path| path.as_path()),
+        ) {
+            self.handle_sidebar_action(action);
+        }
+        if let Some(error) = self.file_error.clone() {
+            egui::TopBottomPanel::bottom("file_error").show(ctx, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.colored_label(ui.visuals().error_fg_color, error);
+                    if ui.button("关闭提示").clicked() {
+                        self.file_error = None;
+                    }
+                });
+            });
+        }
+
         // Main Content
         egui::CentralPanel::default()
             .frame(
@@ -622,7 +541,8 @@ impl eframe::App for PaperShellApp {
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     ui.vertical_centered(|ui| {
-                        self.editor.show(ui);
+                        self.editor
+                            .show_with_paragraph_dots(ui, !self.sidebar.is_expanded());
                     });
                 });
             });
@@ -638,12 +558,9 @@ impl eframe::App for PaperShellApp {
 
         if let Some(new_config) = self.plugin_config_window.show(ctx) {
             self.config.settings.github_publish = new_config.clone();
-            let settings = self.config.settings.clone();
-            std::thread::spawn(move || {
-                if let Err(e) = confy::store(crate::constant::APP_NAME, None, &settings) {
-                    tracing::error!("Failed to save plugin config: {}", e);
-                }
-            });
+            if let Err(error) = self.config.save() {
+                self.file_error = Some(format!("无法保存插件设置: {}", error));
+            }
             let plugins_dir = self.config.data_dir().join("plugins");
             self.plugin_manager = crate::plugin::PluginManager::new(plugins_dir, new_config);
             self.plugin_metadata = self.plugin_manager.metadata();
@@ -698,9 +615,5 @@ impl eframe::App for PaperShellApp {
                 tracing::warn!("Plugin not found: print");
             }
         }
-    }
-
-    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        self.save_file();
     }
 }

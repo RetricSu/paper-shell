@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 pub enum TitleBarAction {
     NewWindow,
+    ToggleSidebar,
     Save,
     Open,
     OpenFile(PathBuf),
@@ -23,6 +24,7 @@ pub struct TitleBar;
 
 pub struct TitleBarState<'a> {
     pub title: &'a str,
+    pub sidebar_expanded: bool,
     pub word_count: usize,
     pub cursor_word_count: usize,
     pub selection_word_count: Option<usize>,
@@ -39,6 +41,7 @@ impl TitleBar {
     pub fn show(ui: &mut Ui, state: TitleBarState<'_>) -> Option<TitleBarAction> {
         let TitleBarState {
             title,
+            sidebar_expanded,
             word_count,
             cursor_word_count,
             selection_word_count,
@@ -108,11 +111,37 @@ impl TitleBar {
                 }
                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                     if ui.available_width() >= 260.0 {
-                        ui.add_sized(
-                            [36.0, 20.0],
-                            egui::Label::new(egui::RichText::new(title).strong()).truncate(),
-                        )
-                        .on_hover_text(&detail);
+                        let title_color = ui
+                            .visuals()
+                            .text_color()
+                            .gamma_multiply(if sidebar_expanded { 1.0 } else { 0.82 });
+                        let response = ui
+                            .add_sized(
+                                [36.0, 20.0],
+                                egui::Label::new(
+                                    egui::RichText::new(title).strong().color(title_color),
+                                )
+                                .truncate()
+                                .sense(egui::Sense::click()),
+                            )
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .on_hover_text(format!(
+                                "点击{}文章列表\n{}",
+                                if sidebar_expanded { "隐藏" } else { "显示" },
+                                detail
+                            ));
+                        let dot = response.rect.left_top() + egui::vec2(1.0, 2.0);
+                        let dot_color = crate::style::STATUS_GREEN
+                            .gamma_multiply(if sidebar_expanded { 0.9 } else { 0.6 });
+                        if sidebar_expanded {
+                            ui.painter().circle_filled(dot, 1.4, dot_color);
+                        } else {
+                            ui.painter()
+                                .circle_stroke(dot, 1.4, egui::Stroke::new(0.7, dot_color));
+                        }
+                        if response.clicked() {
+                            action = Some(TitleBarAction::ToggleSidebar);
+                        }
                     }
                     ui.menu_button(
                         format!("{} 文件", egui_phosphor::regular::FOLDER_OPEN),
@@ -166,6 +195,26 @@ impl TitleBar {
                                 .clicked()
                             {
                                 action = Some(TitleBarAction::History);
+                                ui.close();
+                            }
+                            ui.separator();
+                            if ui
+                                .add(
+                                    egui::Button::new(if sidebar_expanded {
+                                        "隐藏文章列表"
+                                    } else {
+                                        "显示文章列表"
+                                    })
+                                    .shortcut_text(
+                                        ui.ctx().format_shortcut(&egui::KeyboardShortcut::new(
+                                            egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                                            egui::Key::E,
+                                        )),
+                                    ),
+                                )
+                                .clicked()
+                            {
+                                action = Some(TitleBarAction::ToggleSidebar);
                                 ui.close();
                             }
                         },
@@ -306,6 +355,12 @@ impl TitleBar {
     /// Consume shortcuts before the editor can handle the same key events.
     pub fn shortcut(ctx: &egui::Context) -> Option<TitleBarAction> {
         ctx.input_mut(|input| {
+            if input.consume_shortcut(&egui::KeyboardShortcut::new(
+                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                egui::Key::E,
+            )) {
+                return Some(TitleBarAction::ToggleSidebar);
+            }
             for (key, action) in [
                 (egui::Key::N, TitleBarAction::NewWindow),
                 (egui::Key::O, TitleBarAction::Open),
@@ -374,6 +429,7 @@ mod tests {
                         current_font: "Default",
                         recent_files: &[],
                         plugins: &[],
+                        sidebar_expanded: false,
                     });
                     assert!(ui.min_rect().width() <= available + 1.0, "title overflow at {width}");
                     assert!(ui.min_rect().height() <= 24.0, "title bar must remain a single compact row");

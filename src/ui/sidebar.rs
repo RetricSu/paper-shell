@@ -1,276 +1,426 @@
-use crate::backend::sidebar_backend::Mark;
-use egui::{Color32, Galley, Pos2, Rect, Sense, Ui};
+use crate::backend::workspace::{WorkspaceEntry, read_folder};
+use egui::Ui;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
 
+pub enum SidebarAction {
+    OpenFile(PathBuf),
+    OpenFolder,
+    RemoveFolder(PathBuf),
+    NewDocument(Option<PathBuf>),
+}
+
+/// Directory contents are read only on first expansion or explicit refresh.
 #[derive(Default)]
 pub struct Sidebar {
-    marks: HashMap<usize, Mark>,
-    popup_mark: Option<usize>,
-    current_uuid: Option<String>,
-    marks_changed: bool,
+    expanded: bool,
+    folders: HashMap<PathBuf, Result<Vec<WorkspaceEntry>, String>>,
+    open_folders: HashMap<PathBuf, bool>,
 }
 
 impl Sidebar {
-    pub fn set_uuid(&mut self, uuid: String) {
-        if self.current_uuid.as_ref() != Some(&uuid) {
-            self.current_uuid = Some(uuid);
-            // Clear marks when UUID changes - they will be loaded by App
-            self.marks.clear();
-            self.marks_changed = false;
-        }
+    pub fn refresh(&mut self) {
+        self.folders.clear();
     }
 
-    pub fn apply_marks(&mut self, marks: HashMap<usize, Mark>) {
-        self.marks = marks;
-        self.marks_changed = false;
+    pub fn is_expanded(&self) -> bool {
+        self.expanded
     }
 
-    pub fn marks_changed(&self) -> bool {
-        self.marks_changed
+    pub fn toggle(&mut self) {
+        self.expanded = !self.expanded;
     }
 
-    pub fn get_marks(&self) -> &HashMap<usize, Mark> {
-        &self.marks
-    }
-
-    pub fn get_uuid(&self) -> Option<&String> {
-        self.current_uuid.as_ref()
-    }
-
-    pub fn reset_marks_changed(&mut self) {
-        self.marks_changed = false;
+    pub fn expand(&mut self) {
+        self.expanded = true;
     }
 
     pub fn show(
         &mut self,
-        ui: &mut Ui,
-        content: &str, // 这个参数现在仅用于点击后的逻辑，不用于渲染循环
-        galley: &Arc<Galley>,
-        sidebar_rect: Rect,
-        clip_rect: Rect,
-        text_offset: Pos2,
-    ) {
-        let painter = ui.painter_at(sidebar_rect);
-
-        // 绘制分割线
-        painter.line_segment(
-            [
-                Pos2::new(sidebar_rect.right(), sidebar_rect.top()),
-                Pos2::new(sidebar_rect.right(), sidebar_rect.bottom()),
-            ],
-            egui::Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color),
-        );
-
-        // 交互处理
-        let response = ui.interact(sidebar_rect, ui.id().with("sidebar"), Sense::click());
-        let pointer_pos = response.interact_pointer_pos();
-        let mut clicked_logical_line: Option<usize> = None;
-
-        // --- 🚀 核心优化开始 ---
-
-        // 我们需要维护“逻辑行号”(logical_line_idx)，因为 Galley 的 Row 包含自动换行(wrap)产生的视觉行
-        let mut logical_line_idx = 0;
-
-        // 标记当前视觉行是否是一个逻辑行的开头
-        let mut is_start_of_logical_line = true;
-
-        // 记录最后一行底部位置，用于处理文末可能存在的空行
-        let mut last_row_bottom_y = text_offset.y;
-
-        // 直接遍历 Galley 的预计算行信息 (速度极快)
-        for row in &galley.rows {
-            // 计算当前行的屏幕绝对位置
-            // text_offset 是 TextEdit 的左上角，row.rect 是相对于 TextEdit 的
-            let row_screen_top = text_offset.y + row.rect().top();
-            let row_screen_bottom = text_offset.y + row.rect().bottom();
-            last_row_bottom_y = row_screen_bottom;
-
-            // 如果这是一个新逻辑行的开头，我们就需要绘制侧边栏标记
-            if is_start_of_logical_line {
-                // ✂️ 视锥剔除 (Culling)
-                // 如果这一行完全在屏幕上方，或者完全在屏幕下方，跳过绘制
-                // 加上 20.0 padding 防止边缘闪烁
-                let is_visible = row_screen_bottom >= clip_rect.top() - 20.0
-                    && row_screen_top <= clip_rect.bottom() + 20.0;
-
-                if is_visible {
-                    let center_y = (row_screen_top + row_screen_bottom) / 2.0;
-                    let center = Pos2::new(sidebar_rect.center().x, center_y);
-
-                    // 1. 绘制 UI (小圆点)
-                    painter.circle_stroke(
-                        center,
-                        2.5,
-                        egui::Stroke::new(1.0, ui.visuals().text_color().gamma_multiply(0.3)),
-                    );
-
-                    if self.marks.contains_key(&logical_line_idx) {
-                        painter.circle_filled(center, 4.0, Color32::from_rgb(200, 100, 100));
-                    }
-
-                    // 2. 点击检测 (顺便做，省去额外遍历)
-                    if response.clicked()
-                        && let Some(pos) = pointer_pos
-                    {
-                        // 如果点击位置在当前行的高度范围内
-                        if pos.y >= row_screen_top && pos.y <= row_screen_bottom {
-                            clicked_logical_line = Some(logical_line_idx);
-                        }
-                    }
-                }
-            }
-
-            // 更新状态
-            if row.ends_with_newline {
-                // 如果这一行以换行符结束，说明下一行是新的逻辑行
-                logical_line_idx += 1;
-                is_start_of_logical_line = true;
-            } else {
-                // 否则说明这行太长被自动折行了，下一行依然属于当前逻辑行
-                is_start_of_logical_line = false;
-            }
+        ctx: &egui::Context,
+        default_root: &Path,
+        custom_roots: &[PathBuf],
+        current_file: Option<&Path>,
+    ) -> Option<SidebarAction> {
+        if !self.expanded {
+            return None;
         }
-
-        // 处理特殊的边界情况：文件末尾有换行符，导致最后有一个空的逻辑行
-        // 这个空行在 galley.rows 里通常没有对应的 row
-        if is_start_of_logical_line && content.ends_with('\n') {
-            // 估算空行的位置（假设高度和最后一行一样，或者默认值）
-            let line_height = if !galley.rows.is_empty() {
-                galley.rows[0].rect().height()
-            } else {
-                14.0
-            };
-            let center_y = last_row_bottom_y + line_height / 2.0;
-
-            // 同样检查可见性
-            if center_y >= clip_rect.top() - 20.0 && center_y <= clip_rect.bottom() + 20.0 {
-                let center = Pos2::new(sidebar_rect.center().x, center_y);
-
-                painter.circle_stroke(
-                    center,
-                    2.5,
-                    egui::Stroke::new(1.0, ui.visuals().text_color().gamma_multiply(0.3)),
+        let mut action = None;
+        let max_width = (ctx.content_rect().width() * 0.45).clamp(140.0, 400.0);
+        egui::SidePanel::left("workspace_tree")
+            .default_width(230.0)
+            .width_range(140.0..=max_width)
+            .show(ctx, |ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(4.0, 3.0);
+                ui.spacing_mut().indent = 12.0;
+                ui.visuals_mut().indent_has_left_vline = false;
+                // Register behind the rows so their own interactions take precedence.
+                let blank_area = ui.interact(
+                    ui.max_rect(),
+                    ui.id().with("workspace_blank"),
+                    egui::Sense::click(),
                 );
-
-                if self.marks.contains_key(&logical_line_idx) {
-                    painter.circle_filled(center, 4.0, Color32::from_rgb(200, 100, 100));
-                }
-
-                if response.clicked()
-                    && let Some(pos) = pointer_pos
-                    && (pos.y - center_y).abs() < line_height / 2.0
-                {
-                    clicked_logical_line = Some(logical_line_idx);
-                }
-            }
-        }
-
-        // --- 🚀 核心优化结束 ---
-
-        // 处理点击事件结果
-        if let Some(line_idx) = clicked_logical_line {
-            if let std::collections::hash_map::Entry::Vacant(e) = self.marks.entry(line_idx) {
-                e.insert(Mark::default());
-                self.popup_mark = Some(line_idx);
-                self.marks_changed = true;
-            } else if self.popup_mark == Some(line_idx) {
-                self.popup_mark = None;
-            } else {
-                self.popup_mark = Some(line_idx);
-            }
-        }
-
-        // 渲染弹窗
-        self.show_popup(ui, content);
-    }
-
-    fn show_popup(&mut self, ui: &Ui, content: &str) {
-        if let Some(line_idx) = self.popup_mark {
-            let mut open = true;
-
-            // Calculate word count before this mark
-            let words_before = self.calculate_words_before(content, line_idx);
-
-            let mut changed = false;
-            {
-                let mark_note = self.marks.get_mut(&line_idx).map(|m| &mut m.note);
-
-                if let Some(note) = mark_note {
-                    egui::Window::new(
-                        egui::RichText::new(format!(
-                            "{} {} 词",
-                            egui_phosphor::regular::NOTE_PENCIL,
-                            words_before
-                        ))
-                        .size(11.0),
-                    )
-                    .open(&mut open)
-                    .resizable(true)
-                    .collapsible(false)
-                    .default_width(300.0)
-                    .title_bar(true)
-                    .show(ui.ctx(), |ui| {
-                        // Reduce spacing in the window
-                        ui.spacing_mut().item_spacing.y = 4.0;
-
-                        if ui
-                            .add(
-                                egui::TextEdit::multiline(note)
-                                    .desired_rows(8)
-                                    .desired_width(f32::INFINITY),
-                            )
-                            .changed()
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .id_salt("workspace_files")
+                    .show(ui, |ui| {
+                        for root in std::iter::once(default_root)
+                            .chain(custom_roots.iter().map(PathBuf::as_path))
                         {
-                            changed = true;
+                            let is_default = root == default_root;
+                            let name = if is_default {
+                                "默认工作区".to_string()
+                            } else {
+                                root.file_name()
+                                    .unwrap_or(root.as_os_str())
+                                    .to_string_lossy()
+                                    .into_owned()
+                            };
+                            let (response, open) = ui
+                                .horizontal(|ui| {
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            if ui
+                                                .add_sized(
+                                                    [22.0, 22.0],
+                                                    egui::Button::new(
+                                                        egui_phosphor::regular::FILE_PLUS,
+                                                    )
+                                                    .frame(false),
+                                                )
+                                                .on_hover_text(format!("在 {} 中新建文章", name))
+                                                .clicked()
+                                            {
+                                                action = Some(SidebarAction::NewDocument(Some(
+                                                    root.to_path_buf(),
+                                                )));
+                                            }
+                                            ui.with_layout(
+                                                egui::Layout::top_down(egui::Align::Min),
+                                                |ui| self.folder_row(ui, root, &name, true),
+                                            )
+                                            .inner
+                                        },
+                                    )
+                                    .inner
+                                })
+                                .inner;
+                            response
+                                .on_hover_text(root.display().to_string())
+                                .context_menu(|ui| {
+                                    if ui.button("在此新建文章").clicked() {
+                                        action = Some(SidebarAction::NewDocument(Some(
+                                            root.to_path_buf(),
+                                        )));
+                                        ui.close();
+                                    }
+                                    if !is_default
+                                        && ui
+                                            .button("从侧栏移除")
+                                            .on_hover_text("仅移除入口，保留磁盘文件")
+                                            .clicked()
+                                    {
+                                        action =
+                                            Some(SidebarAction::RemoveFolder(root.to_path_buf()));
+                                        ui.close();
+                                    }
+                                });
+                            if open {
+                                ui.indent(("workspace_children", root), |ui| {
+                                    self.show_folder(
+                                        ui,
+                                        root,
+                                        default_root,
+                                        current_file,
+                                        0,
+                                        &mut action,
+                                    );
+                                });
+                            }
                         }
                     });
-                }
-            }
-
-            if changed {
-                self.marks_changed = true;
-            }
-
-            if !open {
-                self.popup_mark = None;
-            }
-        }
+                blank_area.context_menu(|ui| {
+                    if ui.button("添加文件夹…").clicked() {
+                        action = Some(SidebarAction::OpenFolder);
+                        ui.close();
+                    }
+                    if ui.button("刷新").clicked() {
+                        self.refresh();
+                        ui.close();
+                    }
+                });
+            });
+        action
     }
 
-    fn calculate_words_before(&self, content: &str, line_idx: usize) -> usize {
-        let mut byte_count = 0;
-
-        for (current_line, line) in content.split_inclusive('\n').enumerate() {
-            if current_line >= line_idx {
-                break;
-            }
-            byte_count += line.len();
+    /// Folder rows toggle directly, without disclosure triangles or branch lines.
+    fn folder_row(
+        &mut self,
+        ui: &mut Ui,
+        path: &Path,
+        name: &str,
+        root: bool,
+    ) -> (egui::Response, bool) {
+        let open = self.open_folders.entry(path.to_path_buf()).or_insert(root);
+        let icon = if *open {
+            egui_phosphor::regular::FOLDER_OPEN
+        } else {
+            egui_phosphor::regular::FOLDER_SIMPLE
+        };
+        let label = egui::RichText::new(format!("{icon} {name}"));
+        let label = if root { label.strong() } else { label };
+        let response = ui
+            .push_id(path, |ui| {
+                ui.add(egui::Button::new(label).frame(false).truncate())
+                    .on_hover_text(if *open {
+                        "点击收起"
+                    } else {
+                        "点击展开"
+                    })
+            })
+            .inner;
+        if response.clicked() {
+            *open = !*open;
         }
+        (response, *open)
+    }
 
-        // Use the same word counting logic
-        let text_before = &content[..byte_count.min(content.len())];
-        let mut count = 0;
-        let mut in_word = false;
-        for c in text_before.chars() {
-            if c.is_whitespace() {
-                in_word = false;
-            } else if is_cjk(c) {
-                count += 1;
-                in_word = false;
-            } else if !in_word {
-                count += 1;
-                in_word = true;
+    fn show_folder(
+        &mut self,
+        ui: &mut Ui,
+        path: &Path,
+        default_root: &Path,
+        current_file: Option<&Path>,
+        depth: usize,
+        action: &mut Option<SidebarAction>,
+    ) {
+        if depth >= 32 {
+            ui.weak("目录层级过深");
+            return;
+        }
+        let entries = self
+            .folders
+            .entry(path.to_path_buf())
+            .or_insert_with(|| read_folder(path, default_root).map_err(|e| e.to_string()))
+            .clone();
+        match entries {
+            Err(error) => {
+                ui.colored_label(ui.visuals().error_fg_color, "无法读取文件夹")
+                    .on_hover_text(error);
+            }
+            Ok(entries) => {
+                if entries.is_empty() {
+                    ui.weak(if depth == 0 {
+                        "空文件夹，可右键新建文章"
+                    } else {
+                        "空文件夹"
+                    });
+                }
+                for entry in entries {
+                    let name = entry.path.file_name().unwrap_or_default().to_string_lossy();
+                    if entry.is_dir {
+                        let (response, open) = self.folder_row(ui, &entry.path, &name, false);
+                        response.on_hover_text(entry.path.display().to_string());
+                        if open {
+                            ui.indent(&entry.path, |ui| {
+                                self.show_folder(
+                                    ui,
+                                    &entry.path,
+                                    default_root,
+                                    current_file,
+                                    depth + 1,
+                                    action,
+                                );
+                            });
+                        }
+                    } else {
+                        let response = ui
+                            .add_enabled(
+                                entry.editable,
+                                egui::Button::selectable(
+                                    current_file == Some(entry.path.as_path()),
+                                    name.as_ref(),
+                                )
+                                .truncate(),
+                            )
+                            .on_hover_text(entry.path.display().to_string())
+                            .on_disabled_hover_text(
+                                "支持 txt、md、markdown、text、org、rst 文本文件；不跟随符号链接",
+                            );
+                        if response.clicked() {
+                            *action = Some(SidebarAction::OpenFile(entry.path));
+                        }
+                    }
+                }
             }
         }
-        count
     }
 }
 
-fn is_cjk(c: char) -> bool {
-    ('\u{4E00}'..='\u{9FFF}').contains(&c)
-        || ('\u{3400}'..='\u{4DBF}').contains(&c)
-        || ('\u{20000}'..='\u{2A6DF}').contains(&c)
-        || ('\u{F900}'..='\u{FAFF}').contains(&c)
-        || ('\u{2F800}'..='\u{2FA1F}').contains(&c)
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn text_position(output: &egui::FullOutput, needle: &str) -> egui::Pos2 {
+        output
+            .shapes
+            .iter()
+            .find_map(|shape| {
+                if let egui::Shape::Text(text) = &shape.shape
+                    && text.galley.text().contains(needle)
+                {
+                    return Some(text.pos + text.galley.size() * 0.5);
+                }
+                None
+            })
+            .unwrap_or_else(|| panic!("Missing text: {needle}"))
+    }
+
+    fn click(position: egui::Pos2) -> Vec<egui::Event> {
+        pointer_click(position, egui::PointerButton::Primary)
+    }
+
+    fn pointer_click(position: egui::Pos2, button: egui::PointerButton) -> Vec<egui::Event> {
+        vec![
+            egui::Event::PointerMoved(position),
+            egui::Event::PointerButton {
+                pos: position,
+                button,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+            egui::Event::PointerButton {
+                pos: position,
+                button,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ]
+    }
+
+    #[test]
+    fn collapsed_sidebar_reserves_no_space_and_reads_no_folders() {
+        let ctx = egui::Context::default();
+        let mut sidebar = Sidebar::default();
+        let _ = ctx.run(Default::default(), |ctx| {
+            let before = ctx.available_rect();
+            assert!(sidebar.show(ctx, Path::new("missing"), &[], None).is_none());
+            assert_eq!(ctx.available_rect(), before);
+        });
+        assert!(sidebar.folders.is_empty());
+    }
+
+    #[test]
+    fn expand_navigate_open_refresh_and_collapse() {
+        let root = std::env::temp_dir().join(format!("sidebar-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("chapters")).unwrap();
+        let custom = root.with_extension("custom");
+        std::fs::create_dir_all(&custom).unwrap();
+        let custom_article = custom.join("custom-article.txt");
+        std::fs::write(&custom_article, "custom").unwrap();
+        let article = root.join("chapters/draft.md");
+        std::fs::write(&article, "hello").unwrap();
+        let ctx = egui::Context::default();
+        crate::style::configure_style(&ctx);
+        ctx.style_mut(|style| style.animation_time = 0.0);
+        let mut sidebar = Sidebar::default();
+        let mut render = |events| {
+            let mut action = None;
+            let output = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(720.0, 468.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
+                        ui.menu_button("文件", |ui| {
+                            if ui
+                                .button(if sidebar.is_expanded() {
+                                    "隐藏文章列表"
+                                } else {
+                                    "显示文章列表"
+                                })
+                                .clicked()
+                            {
+                                sidebar.toggle();
+                                ui.close();
+                            }
+                        });
+                    });
+                    action =
+                        sidebar.show(ctx, &root, std::slice::from_ref(&custom), Some(&article));
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        ui.label("Editor");
+                    });
+                },
+            );
+            (output, action)
+        };
+        let (output, _) = render(vec![]);
+        render(click(text_position(&output, "文件")));
+        let (output, _) = render(vec![]);
+        render(click(text_position(&output, "显示文章列表")));
+        let (output, _) = render(vec![]);
+        // Both roots and their contents coexist, without changing a selection.
+        text_position(&output, "默认工作区");
+        text_position(&output, &custom.file_name().unwrap().to_string_lossy());
+        let new_buttons: Vec<_> = output
+            .shapes
+            .iter()
+            .filter_map(|shape| {
+                if let egui::Shape::Text(text) = &shape.shape
+                    && text.galley.text() == egui_phosphor::regular::FILE_PLUS
+                {
+                    Some(text.pos + text.galley.size() * 0.5)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert_eq!(new_buttons.len(), 2);
+        assert!((new_buttons[0].x - new_buttons[1].x).abs() < 1.0);
+        assert!(
+            new_buttons[0].x > 200.0,
+            "new article buttons must stay at the panel's right edge"
+        );
+        let (_, action) = render(click(new_buttons[0]));
+        assert!(matches!(action, Some(SidebarAction::NewDocument(Some(path))) if path == root));
+        let (_, action) = render(click(new_buttons[1]));
+        assert!(matches!(action, Some(SidebarAction::NewDocument(Some(path))) if path == custom));
+        let (output, _) = render(vec![]);
+        let custom_position = text_position(&output, "custom-article.txt");
+        let (_, custom_action) = render(click(custom_position));
+        assert!(
+            matches!(custom_action, Some(SidebarAction::OpenFile(path)) if path == custom_article)
+        );
+        let (output, _) = render(vec![]);
+        let position = text_position(&output, "chapters");
+        render(click(position));
+        let (output, _) = render(vec![]);
+        let position = text_position(&output, "draft.md");
+        let (_, action) = render(click(position));
+        assert!(matches!(action, Some(SidebarAction::OpenFile(path)) if path == article));
+        std::fs::write(root.join("new.txt"), "new").unwrap();
+        render(pointer_click(
+            egui::pos2(100.0, 420.0),
+            egui::PointerButton::Secondary,
+        ));
+        let (output, _) = render(vec![]);
+        text_position(&output, "添加文件夹…");
+        render(click(text_position(&output, "刷新")));
+        let (output, _) = render(vec![]);
+        text_position(&output, "new.txt");
+        render(click(text_position(&output, "文件")));
+        let (output, _) = render(vec![]);
+        render(click(text_position(&output, "隐藏文章列表")));
+        render(vec![]);
+        assert!(!sidebar.expanded);
+        std::fs::remove_dir_all(root).unwrap();
+        std::fs::remove_dir_all(custom).unwrap();
+    }
 }

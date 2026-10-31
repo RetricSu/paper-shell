@@ -1,9 +1,6 @@
-use egui::{Galley, Pos2, Rect, Sense, Ui, Vec2};
+use egui::{Galley, Ui};
 use std::sync::Arc;
 
-use super::sidebar::Sidebar;
-use crate::backend::sidebar_backend::Mark;
-use std::collections::HashMap;
 use std::path::PathBuf;
 
 #[derive(Default)]
@@ -21,10 +18,10 @@ struct SearchReplaceState {
 #[derive(Default)]
 pub struct Editor {
     content: String,
+    reset_edit_state: bool,
     cursor_index: Option<usize>,
     selection: Option<egui::text::CCursorRange>,
     last_galley: Option<Arc<Galley>>,
-    sidebar: Sidebar,
     is_focused: bool,
     current_file: Option<PathBuf>,
     current_file_total_time: u64,
@@ -35,23 +32,23 @@ pub struct Editor {
 
 impl Editor {
     pub fn show(&mut self, ui: &mut Ui) {
+        self.show_with_paragraph_dots(ui, true);
+    }
+
+    pub fn show_with_paragraph_dots(&mut self, ui: &mut Ui, show_dots: bool) {
         let mut content = std::mem::take(&mut self.content);
         let id = ui.make_persistent_id("main_editor");
+        if self.reset_edit_state {
+            egui::text_edit::TextEditState::default().store(ui.ctx(), id);
+            self.reset_edit_state = false;
+        }
 
-        // Sidebar width
-        let sidebar_width = 14.0;
-
-        // Use horizontal layout with top-to-bottom alignment
         ui.horizontal_top(|ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
-            // 1. Reserve space for sidebar (so editor is pushed right)
-            let sidebar_origin = ui.cursor().min;
-            ui.allocate_rect(
-                Rect::from_min_size(sidebar_origin, Vec2::new(sidebar_width, 0.0)),
-                Sense::hover(),
-            );
-
-            // 2. Editor Area
+            let gutter_origin = ui.cursor().min;
+            if show_dots {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                ui.allocate_space(egui::vec2(14.0, 0.0));
+            }
             let output = egui::TextEdit::multiline(&mut content)
                 .id(id)
                 .frame(false)
@@ -75,6 +72,9 @@ impl Editor {
             self.highlight_search_matches(&output, ui, &content);
             self.add_context_menu(&output, &mut content);
 
+            if show_dots {
+                Self::draw_paragraph_dots(ui, &output, &content, gutter_origin);
+            }
             self.last_galley = Some(output.galley.clone());
             self.content = content;
 
@@ -88,19 +88,94 @@ impl Editor {
             if editor_response.clicked() {
                 editor_response.request_focus();
             }
-
-            let content_height = editor_response.rect.height();
-            self.render_sidebar(
-                sidebar_origin,
-                sidebar_width,
-                content_height,
-                output.galley_pos,
-                ui,
-            );
         });
 
         // Show search and replace dialog
         self.show_search_replace_dialog(ui);
+    }
+
+    /// Paint-only gutter: no interaction regions, marks, or note windows.
+    fn draw_paragraph_dots(
+        ui: &Ui,
+        output: &egui::text_edit::TextEditOutput,
+        content: &str,
+        gutter_origin: egui::Pos2,
+    ) {
+        // Match the original 14-point gutter and its full-height hairline.
+        let gutter_rect = egui::Rect::from_min_size(
+            gutter_origin,
+            egui::vec2(
+                14.0,
+                output
+                    .response
+                    .rect
+                    .height()
+                    .max(ui.clip_rect().height())
+                    .max(600.0),
+            ),
+        );
+        let painter = ui.painter_at(gutter_rect);
+        painter.line_segment(
+            [gutter_rect.right_top(), gutter_rect.right_bottom()],
+            egui::Stroke::new(1.0, ui.visuals().text_color().gamma_multiply(0.18)),
+        );
+        let active_line = output
+            .cursor_range
+            .filter(|_| output.response.has_focus() && ui.input(|input| input.focused))
+            .map(|range| {
+                content
+                    .chars()
+                    .take(range.primary.index)
+                    .filter(|c| *c == '\n')
+                    .count()
+            });
+        let animate = ui.style().animation_time > 0.0;
+        let pulse = if animate {
+            ui.input(|input| ((input.time * std::f64::consts::TAU / 3.2).sin() as f32 + 1.0) * 0.5)
+        } else {
+            0.5
+        };
+        let color = ui.visuals().text_color();
+        let active_color = crate::style::STATUS_GREEN;
+        let mut logical_line = 0;
+        let mut paragraph_start = true;
+        for row in &output.galley.rows {
+            let center = egui::pos2(
+                gutter_rect.center().x,
+                output.galley_pos.y + row.rect().center().y,
+            );
+            if paragraph_start && ui.clip_rect().contains(center) {
+                if active_line == Some(logical_line) {
+                    painter.circle_filled(
+                        center,
+                        3.5 + pulse * 2.8,
+                        active_color.gamma_multiply(0.015 + pulse * 0.14),
+                    );
+                    painter.circle_stroke(
+                        center,
+                        2.5 + pulse * 0.45,
+                        egui::Stroke::new(
+                            1.0 + pulse * 0.3,
+                            active_color.gamma_multiply(0.25 + pulse * 0.75),
+                        ),
+                    );
+                    if animate {
+                        ui.ctx()
+                            .request_repaint_after(std::time::Duration::from_millis(40));
+                    }
+                } else {
+                    painter.circle_stroke(
+                        center,
+                        2.5,
+                        egui::Stroke::new(1.0, color.gamma_multiply(0.3)),
+                    );
+                }
+            }
+            paragraph_start = row.ends_with_newline;
+            if row.ends_with_newline {
+                logical_line += 1;
+            }
+        }
     }
 
     pub fn get_content(&self) -> String {
@@ -110,6 +185,12 @@ impl Editor {
     pub fn set_content(&mut self, content: String) {
         self.content = content;
         self.selection = None;
+        self.cursor_index = None;
+        self.last_galley = None;
+        self.search_replace.matches.clear();
+        self.search_replace.current_match = None;
+        self.search_replace.match_index = 0;
+        self.reset_edit_state = true;
         self.cached_word_count = None; // 清除缓存
     }
 
@@ -164,30 +245,6 @@ impl Editor {
             self.get_word_count(),
             self.get_cursor_word_count().unwrap_or(0),
         )
-    }
-
-    pub fn set_uuid(&mut self, uuid: String) {
-        self.sidebar.set_uuid(uuid);
-    }
-
-    pub fn marks_changed(&self) -> bool {
-        self.sidebar.marks_changed()
-    }
-
-    pub fn get_marks(&self) -> &HashMap<usize, Mark> {
-        self.sidebar.get_marks()
-    }
-
-    pub fn get_sidebar_uuid(&self) -> Option<&String> {
-        self.sidebar.get_uuid()
-    }
-
-    pub fn apply_marks(&mut self, marks: HashMap<usize, Mark>) {
-        self.sidebar.apply_marks(marks);
-    }
-
-    pub fn reset_marks_changed(&mut self) {
-        self.sidebar.reset_marks_changed();
     }
 
     /// Get the current file path
@@ -633,36 +690,6 @@ impl Editor {
         });
     }
 
-    fn render_sidebar(
-        &mut self,
-        sidebar_origin: Pos2,
-        sidebar_width: f32,
-        content_height: f32,
-        galley_pos: Pos2,
-        ui: &mut Ui,
-    ) {
-        // Delegate sidebar rendering to Sidebar component
-        // Calculate height based on content height and visible area
-        let min_height = ui.clip_rect().height().max(600.0);
-        let sidebar_height = content_height.max(min_height);
-
-        let sidebar_rect =
-            Rect::from_min_size(sidebar_origin, Vec2::new(sidebar_width, sidebar_height));
-
-        if let Some(galley) = &self.last_galley {
-            let clip_rect = ui.clip_rect();
-            let text_offset = galley_pos;
-            self.sidebar.show(
-                ui,
-                &self.content,
-                galley,
-                sidebar_rect,
-                clip_rect,
-                text_offset,
-            );
-        }
-    }
-
     // Search and replace functionality
     pub fn open_search_replace(&mut self) {
         self.search_replace.show_dialog = true;
@@ -925,6 +952,110 @@ fn is_cjk(c: char) -> bool {
 mod tests {
     use super::*;
 
+    fn gutter_circles(output: &egui::FullOutput) -> Vec<egui::epaint::CircleShape> {
+        output
+            .shapes
+            .iter()
+            .filter_map(|shape| {
+                if let egui::Shape::Circle(circle) = &shape.shape {
+                    Some(*circle)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn paragraph_dots_follow_logical_lines_and_hide_with_article_list() {
+        for (content, count) in [
+            ("", 1),
+            ("first\n", 2),
+            (
+                "你好，this paragraph wraps across several visual lines in a narrow editor.\nsecond\n",
+                3,
+            ),
+        ] {
+            let ctx = egui::Context::default();
+            let mut editor = Editor::default();
+            editor.set_content(content.to_string());
+            for show_dots in [true, false] {
+                let output = ctx.run(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(200.0, 600.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |ctx| {
+                        egui::CentralPanel::default()
+                            .show(ctx, |ui| editor.show_with_paragraph_dots(ui, show_dots));
+                    },
+                );
+                assert_eq!(
+                    gutter_circles(&output).len(),
+                    if show_dots { count } else { 0 },
+                    "{content:?}"
+                );
+                let divider_count = output.shapes.iter().filter(|shape| {
+                    matches!(&shape.shape, egui::Shape::LineSegment { points, stroke }
+                        if points[0].x == points[1].x && (points[1].y - points[0].y) >= 600.0 && stroke.width == 1.0)
+                }).count();
+                assert_eq!(divider_count, usize::from(show_dots));
+            }
+        }
+    }
+
+    #[test]
+    fn active_paragraph_dot_breathes_only_while_editor_has_focus() {
+        use egui::text::{CCursor, CCursorRange};
+        let ctx = egui::Context::default();
+        let mut editor = Editor::default();
+        editor.set_content("你好\nsecond paragraph".to_string());
+        let _ = ctx.run(Default::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| editor.show(ui));
+        });
+        let mut render = |time, focused| {
+            ctx.run(
+                egui::RawInput {
+                    time: Some(time),
+                    focused,
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        let id = ui.make_persistent_id("main_editor");
+                        let mut state = egui::text_edit::TextEditState::load(ctx, id).unwrap();
+                        state
+                            .cursor
+                            .set_char_range(Some(CCursorRange::one(CCursor::new(5))));
+                        state.store(ctx, id);
+                        ui.memory_mut(|memory| memory.request_focus(id));
+                        editor.show(ui);
+                    });
+                },
+            )
+        };
+        let bright = gutter_circles(&render(0.8, true));
+        let dim = gutter_circles(&render(2.4, true));
+        // Two logical lines: the first has a static outline, the second a halo and core.
+        assert_eq!(bright.len(), 3);
+        assert_eq!(bright[0].fill, egui::Color32::TRANSPARENT);
+        assert!(bright[1].center.y > bright[0].center.y);
+        assert_eq!(bright[2].fill, egui::Color32::TRANSPARENT);
+        assert!(bright[2].stroke.color.a() > dim[2].stroke.color.a());
+        assert!(bright[2].stroke.color.g() > bright[2].stroke.color.r());
+        assert!(bright[1].radius - dim[1].radius > 2.0);
+        let unfocused = gutter_circles(&render(3.0, false));
+        assert_eq!(unfocused.len(), 2);
+        assert!(
+            unfocused
+                .iter()
+                .all(|circle| circle.fill == egui::Color32::TRANSPARENT)
+        );
+    }
+
     #[test]
     fn test_word_count() {
         let mut editor = Editor::default();
@@ -955,6 +1086,10 @@ mod tests {
             let ctx = egui::Context::default();
             let mut editor = Editor::default();
             editor.set_content(text.to_string());
+            // Initialize the newly loaded document before simulating selection.
+            let _ = ctx.run(Default::default(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| editor.show(ui));
+            });
             let _ = ctx.run(Default::default(), |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
                     let id = ui.make_persistent_id("main_editor");
@@ -1000,6 +1135,32 @@ mod tests {
         assert_eq!(editor.get_selection_word_count(), Some(4));
         editor.set_content("New document".to_string());
         assert_eq!(editor.get_selection_word_count(), None);
+    }
+
+    #[test]
+    fn switching_to_empty_document_clears_search_and_previous_undo() {
+        use egui::text::{CCursor, CCursorRange};
+        let ctx = egui::Context::default();
+        let mut editor = Editor::default();
+        editor.set_content("previous article".into());
+        let _ = ctx.run(Default::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| editor.show(ui));
+        });
+        editor.search_replace.matches = vec![(0, 8)];
+        editor.search_replace.current_match = Some((0, 8));
+        editor.set_content(String::new());
+        assert!(editor.search_replace.matches.is_empty());
+        assert!(editor.search_replace.current_match.is_none());
+        let _ = ctx.run(Default::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let id = ui.make_persistent_id("main_editor");
+                editor.show(ui);
+                let state = egui::text_edit::TextEditState::load(ctx, id).unwrap();
+                let cursor = CCursorRange::one(CCursor::new(0));
+                assert!(!state.undoer().has_undo(&(cursor, String::new())));
+            });
+        });
+        assert!(editor.get_content().is_empty());
     }
 
     #[test]

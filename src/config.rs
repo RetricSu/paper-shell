@@ -27,7 +27,8 @@ pub struct Config {
 impl Config {
     /// Load configuration from disk, creating default if it doesn't exist
     pub fn load() -> Result<Self, ConfigError> {
-        let settings: Settings = confy::load(APP_NAME, None)?;
+        let mut settings: Settings = confy::load(APP_NAME, None)?;
+        settings.migrate_workspace_folders();
         info!("Load config from {:?}", Self::config_path()?);
         Ok(Self { settings })
     }
@@ -63,13 +64,11 @@ impl Config {
         self.settings.recent_files.insert(0, path);
         self.settings.recent_files.truncate(MAX_RECENT_FILES);
 
-        // Save changes in background since it's synchronous IO
-        let settings = self.settings.clone();
-        std::thread::spawn(move || {
-            if let Err(e) = confy::store(APP_NAME, None, &settings) {
-                tracing::error!("Failed to save recent files: {}", e);
-            }
-        });
+        // Keep settings writes ordered: an older recent-file snapshot must not
+        // overwrite a workspace selection saved immediately afterwards.
+        if let Err(error) = self.save() {
+            tracing::error!("Failed to save recent files: {}", error);
+        }
     }
 }
 
@@ -101,6 +100,13 @@ pub struct Settings {
     #[serde(default)]
     pub recent_files: Vec<PathBuf>,
 
+    /// Folders displayed alongside the default workspace.
+    #[serde(default)]
+    pub workspace_folders: Vec<PathBuf>,
+    /// Read the former single-folder setting without writing it back.
+    #[serde(default, skip_serializing)]
+    custom_workspace: Option<PathBuf>,
+
     /// GitHub publish plugin configuration
     #[serde(default)]
     pub github_publish: crate::plugin::builtin::github_publish::GithubPublishConfig,
@@ -113,7 +119,42 @@ impl Default for Settings {
             autosave_interval: 300, // 5 minutes
             font_size: 14.0,
             recent_files: Vec::new(),
+            custom_workspace: None,
+            workspace_folders: Vec::new(),
             github_publish: crate::plugin::builtin::github_publish::GithubPublishConfig::default(),
         }
+    }
+}
+
+impl Settings {
+    fn migrate_workspace_folders(&mut self) {
+        if let Some(path) = self.custom_workspace.take()
+            && !self.workspace_folders.contains(&path)
+        {
+            self.workspace_folders.push(path);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn older_settings_keep_default_workspace_and_migrate_custom_folder() {
+        let mut settings: Settings = toml::from_str("theme = 'light'\nrecent_files = ['draft.txt']\ncustom_workspace = '/tmp/articles'\nuse_custom_workspace = false").unwrap();
+        settings.migrate_workspace_folders();
+        assert_eq!(
+            settings.workspace_folders,
+            vec![PathBuf::from("/tmp/articles")]
+        );
+        assert_eq!(settings.recent_files, vec![PathBuf::from("draft.txt")]);
+        settings.workspace_folders.push(PathBuf::from("/tmp/notes"));
+        let serialized = toml::to_string(&settings).unwrap();
+        assert!(!serialized.contains("custom_workspace"));
+        let reloaded: Settings = toml::from_str(&serialized).unwrap();
+        assert_eq!(reloaded.workspace_folders, settings.workspace_folders);
+        let empty: Settings = toml::from_str("").unwrap();
+        assert!(empty.workspace_folders.is_empty());
     }
 }

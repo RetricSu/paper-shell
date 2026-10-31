@@ -14,6 +14,27 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
+const SAVE_CHANGES: &str = "保存";
+const DISCARD_CHANGES: &str = "放弃修改";
+const CANCEL_SWITCH: &str = "取消";
+
+// Only an explicit discard or a completed save may replace unsaved content.
+fn confirm_document_change(
+    content: &str,
+    saved_content: &str,
+    ask: impl FnOnce() -> rfd::MessageDialogResult,
+    save: impl FnOnce() -> bool,
+) -> bool {
+    if content == saved_content {
+        return true;
+    }
+    match ask() {
+        rfd::MessageDialogResult::Custom(choice) if choice == SAVE_CHANGES => save(),
+        rfd::MessageDialogResult::Custom(choice) if choice == DISCARD_CHANGES => true,
+        _ => false,
+    }
+}
+
 pub struct PaperShellApp {
     editor: Editor,
     pub response_sender: Sender<ResponseMessage>,
@@ -150,19 +171,26 @@ impl PaperShellApp {
     }
 
     fn confirm_document_switch(&mut self) -> bool {
-        if self.editor.get_content() == self.saved_content {
-            return true;
-        }
-        match rfd::MessageDialog::new()
-            .set_title("未保存的文章")
-            .set_description("是否先保存当前文章？选择“否”将放弃未保存的修改。")
-            .set_buttons(rfd::MessageButtons::YesNoCancel)
-            .show()
-        {
-            rfd::MessageDialogResult::Yes => self.save_file(),
-            rfd::MessageDialogResult::No => true,
-            _ => false,
-        }
+        let content = self.editor.get_content();
+        let saved_content = self.saved_content.clone();
+        confirm_document_change(
+            &content,
+            &saved_content,
+            || {
+                rfd::MessageDialog::new()
+                    .set_title("未保存的文章")
+                    .set_description(
+                        "当前文章有未保存的内容，是否先保存？选择“放弃修改”将丢失这些内容。",
+                    )
+                    .set_buttons(rfd::MessageButtons::YesNoCancelCustom(
+                        SAVE_CHANGES.into(),
+                        DISCARD_CHANGES.into(),
+                        CANCEL_SWITCH.into(),
+                    ))
+                    .show()
+            },
+            || self.save_file(),
+        )
     }
 
     fn document_directory(&self) -> PathBuf {
@@ -614,6 +642,84 @@ impl eframe::App for PaperShellApp {
             } else {
                 tracing::warn!("Plugin not found: print");
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod document_change_tests {
+    use super::*;
+
+    #[test]
+    fn unsaved_new_article_requires_a_decision_and_cancel_preserves_content() {
+        let mut editor = Editor::default();
+        editor.set_content("尚未保存的新文章".into());
+        assert!(editor.get_current_file().is_none());
+        let mut prompted = false;
+        let may_switch = confirm_document_change(
+            &editor.get_content(),
+            "",
+            || {
+                prompted = true;
+                rfd::MessageDialogResult::Custom(CANCEL_SWITCH.into())
+            },
+            || panic!("Cancel must not save"),
+        );
+        if may_switch {
+            editor.set_content("以前的文章".into());
+        }
+        assert!(prompted);
+        assert!(!may_switch);
+        assert_eq!(editor.get_content(), "尚未保存的新文章");
+    }
+
+    #[test]
+    fn save_must_complete_before_switching() {
+        // false covers both cancelling the save dialog and a failed save.
+        for saved in [false, true] {
+            assert_eq!(
+                confirm_document_change(
+                    "new draft",
+                    "",
+                    || rfd::MessageDialogResult::Custom(SAVE_CHANGES.into()),
+                    || saved,
+                ),
+                saved
+            );
+        }
+    }
+
+    #[test]
+    fn only_explicit_discard_allows_switching_without_saving() {
+        for (choice, expected) in [
+            (
+                rfd::MessageDialogResult::Custom(DISCARD_CHANGES.into()),
+                true,
+            ),
+            (rfd::MessageDialogResult::Cancel, false),
+            (rfd::MessageDialogResult::Custom("unexpected".into()), false),
+        ] {
+            assert_eq!(
+                confirm_document_change(
+                    "edited article",
+                    "saved article",
+                    || choice,
+                    || { panic!("Only the save button may save") }
+                ),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn unchanged_article_needs_no_prompt() {
+        for content in ["", "saved article"] {
+            assert!(confirm_document_change(
+                content,
+                content,
+                || panic!("Unchanged content must not prompt"),
+                || panic!("Unchanged content must not save"),
+            ));
         }
     }
 }

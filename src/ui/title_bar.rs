@@ -160,28 +160,35 @@ impl TitleBar {
                                 ui.set_width(240.0);
                                 if recent_files.is_empty() {
                                     ui.add_enabled(false, egui::Button::new("暂无最近文件"));
-                                }
-                                for path in recent_files {
-                                    let name = path
-                                        .file_name()
-                                        .unwrap_or(path.as_os_str())
-                                        .to_string_lossy();
-                                    let available = path.is_file();
-                                    if ui
-                                        .add_enabled(
-                                            available,
-                                            egui::Button::new(name.as_ref()).truncate(),
-                                        )
-                                        .on_hover_text(path.to_string_lossy())
-                                        .on_disabled_hover_text(format!(
-                                            "文件已移动或不存在\n{}",
-                                            path.display()
-                                        ))
-                                        .clicked()
-                                    {
-                                        action = Some(TitleBarAction::OpenFile(path.clone()));
-                                        ui.close();
-                                    }
+                                } else {
+                                    egui::ScrollArea::vertical()
+                                        .max_height(320.0)
+                                        .show(ui, |ui| {
+                                            for path in recent_files {
+                                                let name = path
+                                                    .file_name()
+                                                    .unwrap_or(path.as_os_str())
+                                                    .to_string_lossy();
+                                                let available = path.is_file();
+                                                if ui
+                                                    .add_enabled(
+                                                        available,
+                                                        egui::Button::new(name.as_ref()).truncate(),
+                                                    )
+                                                    .on_hover_text(path.to_string_lossy())
+                                                    .on_disabled_hover_text(format!(
+                                                        "文件已移动或不存在\n{}",
+                                                        path.display()
+                                                    ))
+                                                    .clicked()
+                                                {
+                                                    action = Some(TitleBarAction::OpenFile(
+                                                        path.clone(),
+                                                    ));
+                                                    ui.close();
+                                                }
+                                            }
+                                        });
                                 }
                             });
                             ui.separator();

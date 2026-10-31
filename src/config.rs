@@ -59,10 +59,7 @@ impl Config {
 
     /// Add a file to the recent files list
     pub fn add_recent_file(&mut self, path: PathBuf) {
-        // Move the path to the front
-        self.settings.recent_files.retain(|p| p != &path);
-        self.settings.recent_files.insert(0, path);
-        self.settings.recent_files.truncate(MAX_RECENT_FILES);
+        self.settings.add_recent_file(path);
 
         // Keep settings writes ordered: an older recent-file snapshot must not
         // overwrite a workspace selection saved immediately afterwards.
@@ -127,6 +124,13 @@ impl Default for Settings {
 }
 
 impl Settings {
+    /// Add a path to the front of recent files, deduplicate, and truncate to MAX_RECENT_FILES.
+    pub fn add_recent_file(&mut self, path: PathBuf) {
+        self.recent_files.retain(|p| p != &path);
+        self.recent_files.insert(0, path);
+        self.recent_files.truncate(MAX_RECENT_FILES);
+    }
+
     fn migrate_workspace_folders(&mut self) {
         if let Some(path) = self.custom_workspace.take()
             && !self.workspace_folders.contains(&path)
@@ -156,5 +160,26 @@ mod tests {
         assert_eq!(reloaded.workspace_folders, settings.workspace_folders);
         let empty: Settings = toml::from_str("").unwrap();
         assert!(empty.workspace_folders.is_empty());
+    }
+
+    #[test]
+    fn recent_files_caps_at_25_and_moves_duplicates_to_front() {
+        assert_eq!(MAX_RECENT_FILES, 25);
+        let mut settings = Settings::default();
+
+        for i in 0..30 {
+            settings.add_recent_file(PathBuf::from(format!("/tmp/doc_{}.txt", i)));
+        }
+
+        assert_eq!(settings.recent_files.len(), 25);
+        // Most recent should be at index 0 (doc_29.txt)
+        assert_eq!(settings.recent_files[0], PathBuf::from("/tmp/doc_29.txt"));
+        // Oldest kept should be doc_5.txt
+        assert_eq!(settings.recent_files[24], PathBuf::from("/tmp/doc_5.txt"));
+
+        // Re-adding doc_10.txt should move it to the front without changing length
+        settings.add_recent_file(PathBuf::from("/tmp/doc_10.txt"));
+        assert_eq!(settings.recent_files.len(), 25);
+        assert_eq!(settings.recent_files[0], PathBuf::from("/tmp/doc_10.txt"));
     }
 }

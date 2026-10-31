@@ -9,4 +9,4 @@ pub const APP_ORGANIZATION: &str = "RetricSu";
 pub const APP_NAME: &str = "Paper Shell";
 
 /// App related Magic Numbers
-pub const MAX_RECENT_FILES: usize = 10;
+pub const MAX_RECENT_FILES: usize = 25;

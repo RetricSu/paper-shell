@@ -1,5 +1,8 @@
 use egui::{Color32, Context, Stroke, Style, Visuals};
 
+/// Shared accent for the sidebar state and the active paragraph indicator.
+pub const STATUS_GREEN: Color32 = Color32::from_rgb(46, 151, 83);
+
 pub fn configure_style(ctx: &Context) {
     let mut style = Style::default();
 

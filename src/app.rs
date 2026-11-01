@@ -100,9 +100,13 @@ impl Default for PaperShellApp {
             .init();
 
         let (sender, receiver) = channel();
-        let editor = Editor::default();
+        let mut config = crate::config::Config::default();
+        config.settings.sanitize_typography();
+        let current_font = config.settings.font_family.clone();
+        let mut editor = Editor::default();
+        editor.font_size = config.settings.font_size;
+        editor.line_spacing = config.settings.line_spacing;
         let available_fonts = crate::ui::font::enumerate_chinese_fonts();
-        let config = crate::config::Config::default();
 
         let plugins_dir = config.data_dir().join("plugins");
         let plugin_manager = PluginManager::new(
@@ -128,7 +132,7 @@ impl Default for PaperShellApp {
             response_sender: sender,
             history_window: HistoryWindow::new(),
             available_fonts,
-            current_font: "Default".to_string(),
+            current_font,
             last_focus_state: false,
             config,
             plugin_manager,
@@ -152,6 +156,10 @@ impl PaperShellApp {
         configure_style(&cc.egui_ctx);
 
         let mut app = Self::default();
+        if app.current_font != "Default" {
+            let fonts = crate::ui::font::apply_font(&app.current_font);
+            cc.egui_ctx.set_fonts(fonts);
+        }
         if let Some(path) = initial_file {
             app.open_file(path);
         }
@@ -314,7 +322,11 @@ impl PaperShellApp {
                 if self.confirm_document_switch() {
                     self.draft_directory =
                         Some(directory.unwrap_or_else(|| self.document_directory()));
+                    let font_size = self.config.settings.font_size;
+                    let line_spacing = self.config.settings.line_spacing;
                     self.editor = Editor::default();
+                    self.editor.font_size = font_size;
+                    self.editor.line_spacing = line_spacing;
                     self.editor.set_content(String::new());
                     self.draft_doc_id = uuid::Uuid::new_v4().to_string();
                     self.saved_content.clear();
@@ -649,6 +661,8 @@ impl eframe::App for PaperShellApp {
                     has_current_file: self.editor.get_current_file().is_some(),
                     chinese_fonts: &self.available_fonts,
                     current_font: &self.current_font,
+                    font_size: self.editor.font_size,
+                    line_spacing: self.editor.line_spacing,
                     recent_files: &self.config.settings.recent_files,
                     plugins: &self.plugin_metadata,
                     sidebar_expanded: self.sidebar.is_expanded(),
@@ -671,6 +685,37 @@ impl eframe::App for PaperShellApp {
                     crate::ui::title_bar::TitleBarAction::SearchReplace => {
                         self.editor.open_search_replace();
                     }
+                    crate::ui::title_bar::TitleBarAction::FontSizeChange(size) => {
+                        let size = size.clamp(10.0, 36.0);
+                        self.editor.font_size = size;
+                        self.config.settings.font_size = size;
+                        if let Err(e) = self.config.save() {
+                            tracing::warn!("Failed to save config: {}", e);
+                        }
+                        ctx.request_repaint();
+                    }
+                    crate::ui::title_bar::TitleBarAction::LineSpacingChange(spacing) => {
+                        let spacing = spacing.clamp(1.0, 3.0);
+                        self.editor.line_spacing = spacing;
+                        self.config.settings.line_spacing = spacing;
+                        if let Err(e) = self.config.save() {
+                            tracing::warn!("Failed to save config: {}", e);
+                        }
+                        ctx.request_repaint();
+                    }
+                    crate::ui::title_bar::TitleBarAction::ResetTypography => {
+                        self.editor.font_size = 14.0;
+                        self.editor.line_spacing = 1.5;
+                        self.config.settings.font_size = 14.0;
+                        self.config.settings.line_spacing = 1.5;
+                        self.config.settings.font_family = "Default".to_string();
+                        ctx.set_fonts(crate::ui::font::setup_fonts());
+                        self.current_font = "Default".to_string();
+                        if let Err(e) = self.config.save() {
+                            tracing::warn!("Failed to save config: {}", e);
+                        }
+                        ctx.request_repaint();
+                    }
                     crate::ui::title_bar::TitleBarAction::FontChange(font_name) => {
                         let new_fonts = if font_name == "Default" {
                             crate::ui::font::setup_fonts()
@@ -679,6 +724,10 @@ impl eframe::App for PaperShellApp {
                         };
                         ctx.set_fonts(new_fonts);
                         self.current_font = font_name.clone();
+                        self.config.settings.font_family = font_name.clone();
+                        if let Err(e) = self.config.save() {
+                            tracing::warn!("Failed to save config: {}", e);
+                        }
                         tracing::info!("Font changed to: {}", font_name);
                     }
                     crate::ui::title_bar::TitleBarAction::RunPlugin(id) => {
@@ -877,7 +926,11 @@ impl eframe::App for PaperShellApp {
                     let directory = self.document_directory();
                     match self.create_cloud_recovery_snapshot() {
                         Ok(snapshot) => {
+                            let font_size = self.config.settings.font_size;
+                            let line_spacing = self.config.settings.line_spacing;
                             self.editor = Editor::default();
+                            self.editor.font_size = font_size;
+                            self.editor.line_spacing = line_spacing;
                             self.editor.set_content(content);
                             self.draft_directory = Some(directory);
                             self.draft_doc_id = uuid::Uuid::new_v4().to_string();

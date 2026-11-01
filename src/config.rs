@@ -29,6 +29,7 @@ impl Config {
     pub fn load() -> Result<Self, ConfigError> {
         let mut settings: Settings = confy::load(APP_NAME, None)?;
         settings.migrate_workspace_folders();
+        settings.sanitize_typography();
         info!("Load config from {:?}", Self::config_path()?);
         Ok(Self { settings })
     }
@@ -77,6 +78,18 @@ impl Default for Config {
     }
 }
 
+fn default_font_size() -> f32 {
+    14.0
+}
+
+fn default_line_spacing() -> f32 {
+    1.5
+}
+
+fn default_font_family() -> String {
+    "Default".to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
     /// Application theme (for future use)
@@ -87,9 +100,17 @@ pub struct Settings {
     #[serde(default)]
     pub autosave_interval: u64,
 
-    /// Font size (for future use)
-    #[serde(default)]
+    /// Font size in points (e.g. 14.0, 16.0)
+    #[serde(default = "default_font_size")]
     pub font_size: f32,
+
+    /// Line spacing multiplier (e.g. 1.2, 1.5, 1.8, 2.0)
+    #[serde(default = "default_line_spacing")]
+    pub line_spacing: f32,
+
+    /// Font family name (e.g. "Default", "PingFang SC", "Songti SC")
+    #[serde(default = "default_font_family")]
+    pub font_family: String,
 
     /// Recently opened file paths
     /// since the path is a string(heap data),
@@ -127,7 +148,9 @@ impl Default for Settings {
         Self {
             theme: "light".to_string(),
             autosave_interval: 300, // 5 minutes
-            font_size: 14.0,
+            font_size: default_font_size(),
+            line_spacing: default_line_spacing(),
+            font_family: default_font_family(),
             recent_files: Vec::new(),
             custom_workspace: None,
             workspace_folders: Vec::new(),
@@ -140,6 +163,19 @@ impl Default for Settings {
 }
 
 impl Settings {
+    /// Sanitize typography settings so they remain within sensible ranges.
+    pub fn sanitize_typography(&mut self) {
+        if self.font_size < 8.0 || self.font_size > 72.0 {
+            self.font_size = default_font_size();
+        }
+        if self.line_spacing < 0.5 || self.line_spacing > 5.0 {
+            self.line_spacing = default_line_spacing();
+        }
+        if self.font_family.trim().is_empty() {
+            self.font_family = default_font_family();
+        }
+    }
+
     /// Add a path to the front of recent files, deduplicate, and truncate to MAX_RECENT_FILES.
     pub fn add_recent_file(&mut self, path: PathBuf) {
         self.recent_files.retain(|p| p != &path);
@@ -293,5 +329,41 @@ mod tests {
         let mut modified = reloaded;
         modified.remove_external_plugin_data("custom_ext");
         assert!(modified.get_external_settings("custom_ext").is_empty());
+    }
+
+    #[test]
+    fn typography_settings_roundtrip_and_defaults() {
+        let mut settings = Settings::default();
+        assert_eq!(settings.font_size, 14.0);
+        assert_eq!(settings.line_spacing, 1.5);
+        assert_eq!(settings.font_family, "Default");
+
+        settings.font_size = 18.0;
+        settings.line_spacing = 1.8;
+        settings.font_family = "PingFang SC".to_string();
+
+        let serialized = toml::to_string(&settings).unwrap();
+        let reloaded: Settings = toml::from_str(&serialized).unwrap();
+        assert_eq!(reloaded.font_size, 18.0);
+        assert_eq!(reloaded.line_spacing, 1.8);
+        assert_eq!(reloaded.font_family, "PingFang SC");
+
+        // Deserializing empty string should use defaults
+        let empty_reloaded: Settings = toml::from_str("").unwrap();
+        assert_eq!(empty_reloaded.font_size, 14.0);
+        assert_eq!(empty_reloaded.line_spacing, 1.5);
+        assert_eq!(empty_reloaded.font_family, "Default");
+
+        // Sanitizing out-of-range values restores defaults
+        let mut corrupted = Settings {
+            font_size: -5.0,
+            line_spacing: 0.0,
+            font_family: "   ".to_string(),
+            ..Settings::default()
+        };
+        corrupted.sanitize_typography();
+        assert_eq!(corrupted.font_size, 14.0);
+        assert_eq!(corrupted.line_spacing, 1.5);
+        assert_eq!(corrupted.font_family, "Default");
     }
 }

@@ -111,8 +111,10 @@ impl PluginManager {
     pub fn new(
         plugins_dir: PathBuf,
         github_publish: builtin::github_publish::GithubPublishConfig,
+        cloud_backup: builtin::cloud_backup::CloudBackupConfig,
     ) -> Self {
-        let mut plugins: Vec<Arc<dyn Plugin>> = builtin::builtin_plugins(github_publish);
+        let mut plugins: Vec<Arc<dyn Plugin>> =
+            builtin::builtin_plugins(github_publish, cloud_backup);
 
         match external::discover(&plugins_dir) {
             Ok(mut external) => plugins.append(&mut external),

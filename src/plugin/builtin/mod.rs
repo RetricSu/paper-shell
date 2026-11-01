@@ -5,6 +5,7 @@
 //! [`crate::plugin::Plugin`] in a submodule and push an instance in
 //! [`builtin_plugins`].
 
+pub mod cloud_backup;
 pub mod github_publish;
 pub mod print;
 
@@ -15,9 +16,11 @@ use std::sync::Arc;
 /// the menu.
 pub fn builtin_plugins(
     github_publish: github_publish::GithubPublishConfig,
+    cloud_backup: cloud_backup::CloudBackupConfig,
 ) -> Vec<Arc<dyn Plugin>> {
     vec![
         Arc::new(print::PrintPlugin::new()),
+        Arc::new(cloud_backup::CloudBackupPlugin::new(cloud_backup)),
         Arc::new(github_publish::GithubPublishPlugin::new(github_publish)),
     ]
 }

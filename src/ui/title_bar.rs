@@ -289,6 +289,14 @@ impl TitleBar {
                                 }
                             }
                             ui.separator();
+                            if plugins.iter().any(|p| p.id == "cloud_backup")
+                                && ui.button("配置云端备份…").clicked()
+                            {
+                                action = Some(TitleBarAction::ConfigurePlugin(
+                                    "cloud_backup".to_string(),
+                                ));
+                                ui.close();
+                            }
                             if plugins.iter().any(|p| p.id == "github_publish")
                                 && ui.button("配置 GitHub 发布…").clicked()
                             {

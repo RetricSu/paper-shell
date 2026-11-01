@@ -107,6 +107,10 @@ pub struct Settings {
     /// GitHub publish plugin configuration
     #[serde(default)]
     pub github_publish: crate::plugin::builtin::github_publish::GithubPublishConfig,
+
+    /// Cloud backup plugin configuration
+    #[serde(default)]
+    pub cloud_backup: crate::plugin::builtin::cloud_backup::CloudBackupConfig,
 }
 
 impl Default for Settings {
@@ -119,6 +123,7 @@ impl Default for Settings {
             custom_workspace: None,
             workspace_folders: Vec::new(),
             github_publish: crate::plugin::builtin::github_publish::GithubPublishConfig::default(),
+            cloud_backup: crate::plugin::builtin::cloud_backup::CloudBackupConfig::default(),
         }
     }
 }
@@ -181,5 +186,26 @@ mod tests {
         settings.add_recent_file(PathBuf::from("/tmp/doc_10.txt"));
         assert_eq!(settings.recent_files.len(), 25);
         assert_eq!(settings.recent_files[0], PathBuf::from("/tmp/doc_10.txt"));
+    }
+
+    #[test]
+    fn cloud_backup_settings_roundtrip() {
+        let mut settings = Settings::default();
+        assert!(!settings.cloud_backup.enable_encryption);
+        assert_eq!(settings.cloud_backup.server_url, "");
+
+        settings.cloud_backup.server_url = "https://dav.example.com/papershell/".to_string();
+        settings.cloud_backup.enable_encryption = true;
+        settings.cloud_backup.encryption_password = "test_pass".to_string();
+
+        let serialized = toml::to_string(&settings).unwrap();
+        assert!(!serialized.contains("test_pass"));
+        let reloaded: Settings = toml::from_str(&serialized).unwrap();
+        assert_eq!(
+            reloaded.cloud_backup.server_url,
+            "https://dav.example.com/papershell/"
+        );
+        assert!(reloaded.cloud_backup.enable_encryption);
+        assert_eq!(reloaded.cloud_backup.encryption_password, "");
     }
 }

@@ -65,8 +65,8 @@ are preserved, but the paragraph note feature has been removed.
 
 Click a root's new-article icon (or right-click it and choose **在此新建文章**)
 to start a blank article with the save dialog pointing to that folder. The tree supports `txt`, `md`,
-`markdown`, `text`, `org`, and `rst`; other files are shown disabled, and symbolic
-links are not followed. Use the blank-space context menu to refresh after external folder changes. Switching
+`markdown`, `text`, `org`, and `rst`; hidden files (such as `.DS_Store`), hidden directories,
+unsupported files, and symbolic links are ignored. Use the blank-space context menu to refresh after external folder changes. Switching
 articles or closing the window offers save, discard, or cancel for unsaved changes.
 Saving an empty article is supported.
 

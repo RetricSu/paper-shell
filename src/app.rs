@@ -2,15 +2,17 @@ use crate::backend::editor_backend::EditorBackend;
 use crate::backend::time_backend::TimeBackend;
 use crate::file::FileData;
 use crate::messages::ResponseMessage;
+use crate::plugin::builtin::cloud_backup::DocumentIdentity;
 use crate::plugin::{PluginContext, PluginManager};
 use crate::style::configure_style;
 use crate::ui::editor::Editor;
 use crate::ui::history::{HistoryAction, HistoryWindow};
+use crate::ui::plugins::cloud_backup::{CloudBackupAction, CloudBackupDialog};
 use crate::ui::plugins::{
     GithubPublishConfigWindow, PluginOutputWindow, PrintDialog, PublishDialog,
 };
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
@@ -36,6 +38,19 @@ fn confirm_document_change(
     }
 }
 
+fn write_cloud_recovery_snapshot(data_dir: &Path, content: &str) -> std::io::Result<PathBuf> {
+    let directory = data_dir.join("history").join("cloud_backup_recovery");
+    std::fs::create_dir_all(&directory)?;
+    let filename = format!(
+        "recovery_{}_{}.md",
+        chrono::Local::now().format("%Y%m%d_%H%M%S"),
+        uuid::Uuid::new_v4()
+    );
+    let path = directory.join(filename);
+    std::fs::write(&path, content)?;
+    Ok(path)
+}
+
 pub struct PaperShellApp {
     editor: Editor,
     pub response_sender: Sender<ResponseMessage>,
@@ -52,6 +67,7 @@ pub struct PaperShellApp {
     editor_backend: Arc<EditorBackend>,
     sidebar: crate::ui::sidebar::Sidebar,
     draft_directory: Option<PathBuf>,
+    draft_doc_id: String,
     saved_content: String,
     saved_comments: Vec<crate::comments::TextComment>,
     file_error: Option<String>,
@@ -61,6 +77,7 @@ pub struct PaperShellApp {
     plugin_metadata: Vec<crate::plugin::PluginMetadata>,
     plugin_output: PluginOutputWindow,
     plugin_config_window: GithubPublishConfigWindow,
+    cloud_backup_dialog: CloudBackupDialog,
     publish_dialog: PublishDialog,
     print_dialog: PrintDialog,
 }
@@ -79,8 +96,11 @@ impl Default for PaperShellApp {
         let config = crate::config::Config::default();
 
         let plugins_dir = config.data_dir().join("plugins");
-        let plugin_manager =
-            PluginManager::new(plugins_dir, config.settings.github_publish.clone());
+        let plugin_manager = PluginManager::new(
+            plugins_dir,
+            config.settings.github_publish.clone(),
+            config.settings.cloud_backup.clone(),
+        );
         let plugin_metadata = plugin_manager.metadata();
 
         Self {
@@ -88,6 +108,7 @@ impl Default for PaperShellApp {
             editor_backend: Arc::new(EditorBackend::default()),
             sidebar: crate::ui::sidebar::Sidebar::default(),
             draft_directory: None,
+            draft_doc_id: uuid::Uuid::new_v4().to_string(),
             saved_content: String::new(),
             saved_comments: Vec::new(),
             file_error: None,
@@ -103,6 +124,7 @@ impl Default for PaperShellApp {
             plugin_metadata,
             plugin_output: PluginOutputWindow::new(),
             plugin_config_window: GithubPublishConfigWindow::new(),
+            cloud_backup_dialog: CloudBackupDialog::new(),
             publish_dialog: PublishDialog::new(),
             print_dialog: PrintDialog::new(),
         }
@@ -278,6 +300,7 @@ impl PaperShellApp {
                         Some(directory.unwrap_or_else(|| self.document_directory()));
                     self.editor = Editor::default();
                     self.editor.set_content(String::new());
+                    self.draft_doc_id = uuid::Uuid::new_v4().to_string();
                     self.saved_content.clear();
                     self.saved_comments.clear();
                     self.time_backend.get_and_reset_writing_time();
@@ -422,6 +445,18 @@ impl PaperShellApp {
         }
     }
 
+    fn cloud_document_identity(&self) -> DocumentIdentity {
+        DocumentIdentity::new(
+            self.editor.get_current_file().map(|path| path.as_path()),
+            &self.draft_doc_id,
+        )
+    }
+
+    fn create_cloud_recovery_snapshot(&self) -> Result<PathBuf, String> {
+        write_cloud_recovery_snapshot(&self.config.data_dir(), &self.editor.get_content())
+            .map_err(|error| format!("无法写入本地恢复快照: {}", error))
+    }
+
     /// Runs an installed plugin by id on a background thread, snapshotting the
     /// current editing context so the plugin stays decoupled from live state.
     fn run_plugin(&mut self, id: String) {
@@ -536,7 +571,10 @@ impl eframe::App for PaperShellApp {
                         tracing::info!("Font changed to: {}", font_name);
                     }
                     crate::ui::title_bar::TitleBarAction::RunPlugin(id) => {
-                        if id == "github_publish" {
+                        if id == "cloud_backup" {
+                            self.cloud_backup_dialog
+                                .open(&self.config.settings.cloud_backup);
+                        } else if id == "github_publish" {
                             if self.config.settings.github_publish.repo.trim().is_empty() {
                                 self.plugin_config_window
                                     .open(&self.config.settings.github_publish, true);
@@ -562,7 +600,10 @@ impl eframe::App for PaperShellApp {
                         self.open_plugins_folder();
                     }
                     crate::ui::title_bar::TitleBarAction::ConfigurePlugin(id) => {
-                        if id == "github_publish" {
+                        if id == "cloud_backup" {
+                            self.cloud_backup_dialog
+                                .open(&self.config.settings.cloud_backup);
+                        } else if id == "github_publish" {
                             self.plugin_config_window
                                 .open(&self.config.settings.github_publish, false);
                         }
@@ -618,13 +659,90 @@ impl eframe::App for PaperShellApp {
         // Plugin output window
         self.plugin_output.show(ctx);
 
+        let identity = self.cloud_document_identity();
+        if let Some(action) =
+            self.cloud_backup_dialog
+                .show(ctx, &identity, &self.editor.get_content())
+        {
+            match action {
+                CloudBackupAction::SaveConfig(new_config) => {
+                    self.config.settings.cloud_backup = new_config.clone();
+                    if let Err(error) = self.config.save() {
+                        self.file_error = Some(format!("无法保存云端备份设置: {}", error));
+                    }
+                    let plugins_dir = self.config.data_dir().join("plugins");
+                    self.plugin_manager = crate::plugin::PluginManager::new(
+                        plugins_dir,
+                        self.config.settings.github_publish.clone(),
+                        new_config,
+                    );
+                    self.plugin_metadata = self.plugin_manager.metadata();
+                }
+                CloudBackupAction::ReplaceContent {
+                    content,
+                    expected_doc_id,
+                    source_name,
+                } => {
+                    if self.cloud_document_identity().doc_id != expected_doc_id {
+                        self.cloud_backup_dialog
+                            .set_status(true, "当前文档已变化，已取消应用云端备份".to_string());
+                    } else {
+                        match self.create_cloud_recovery_snapshot() {
+                            Ok(snapshot) => {
+                                self.editor.set_content(content);
+                                self.cloud_backup_dialog.set_status(
+                                    false,
+                                    format!(
+                                        "已恢复「{}」。恢复前正文快照：{}",
+                                        source_name,
+                                        snapshot.display()
+                                    ),
+                                );
+                            }
+                            Err(error) => {
+                                self.cloud_backup_dialog.set_status(true, error);
+                            }
+                        }
+                    }
+                }
+                CloudBackupAction::OpenNewDocument { filename, content } => {
+                    let directory = self.document_directory();
+                    match self.create_cloud_recovery_snapshot() {
+                        Ok(snapshot) => {
+                            self.editor = Editor::default();
+                            self.editor.set_content(content);
+                            self.draft_directory = Some(directory);
+                            self.draft_doc_id = uuid::Uuid::new_v4().to_string();
+                            self.saved_content.clear();
+                            self.time_backend.get_and_reset_writing_time();
+                            self.cloud_backup_dialog.set_status(
+                                false,
+                                format!(
+                                    "已将「{}」作为新文档打开。原文快照：{}",
+                                    filename,
+                                    snapshot.display()
+                                ),
+                            );
+                        }
+                        Err(error) => {
+                            self.cloud_backup_dialog.set_status(true, error);
+                        }
+                    }
+                }
+            }
+        }
+
         if let Some(new_config) = self.plugin_config_window.show(ctx) {
             self.config.settings.github_publish = new_config.clone();
             if let Err(error) = self.config.save() {
                 self.file_error = Some(format!("无法保存插件设置: {}", error));
             }
             let plugins_dir = self.config.data_dir().join("plugins");
-            self.plugin_manager = crate::plugin::PluginManager::new(plugins_dir, new_config);
+            self.plugin_manager = crate::plugin::PluginManager::new(
+                plugins_dir,
+                new_config,
+                self.config.settings.cloud_backup.clone(),
+            );
             self.plugin_metadata = self.plugin_manager.metadata();
         }
 
@@ -683,6 +801,21 @@ impl eframe::App for PaperShellApp {
 #[cfg(test)]
 mod document_change_tests {
     use super::*;
+
+    #[test]
+    fn cloud_restore_snapshot_preserves_previous_content() {
+        let root = std::env::temp_dir().join(format!(
+            "paper-shell-cloud-recovery-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let snapshot = write_cloud_recovery_snapshot(&root, "恢复前的本地正文").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&snapshot).unwrap(),
+            "恢复前的本地正文"
+        );
+        assert!(snapshot.starts_with(root.join("history").join("cloud_backup_recovery")));
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn unsaved_new_article_requires_a_decision_and_cancel_preserves_content() {

@@ -165,7 +165,7 @@ impl Editor {
         let painter = ui.painter_at(gutter_rect);
         painter.line_segment(
             [gutter_rect.right_top(), gutter_rect.right_bottom()],
-            egui::Stroke::new(1.0, ui.visuals().text_color().gamma_multiply(0.18)),
+            egui::Stroke::new(1.0_f32, ui.visuals().text_color().gamma_multiply(0.18)),
         );
         let active_line = output
             .cursor_range
@@ -215,7 +215,7 @@ impl Editor {
                     painter.circle_stroke(
                         center,
                         2.5,
-                        egui::Stroke::new(1.0, color.gamma_multiply(0.3)),
+                        egui::Stroke::new(1.0_f32, color.gamma_multiply(0.3)),
                     );
                 }
             }
@@ -657,7 +657,7 @@ impl Editor {
                         egui::pos2(min_x, underline_y),
                         egui::pos2(max_x, underline_y),
                     ],
-                    egui::Stroke::new(1.0, ui.visuals().weak_text_color()),
+                    egui::Stroke::new(1.0_f32, ui.visuals().weak_text_color()),
                     4.0, // dash_length
                     2.0, // gap_length
                 ));
@@ -758,8 +758,10 @@ impl Editor {
 
                     // Draw
                     let fill_color = ui.visuals().selection.bg_fill.linear_multiply(0.3);
-                    let stroke =
-                        egui::Stroke::new(1.0, ui.visuals().selection.bg_fill.linear_multiply(0.6));
+                    let stroke = egui::Stroke::new(
+                        1.0_f32,
+                        ui.visuals().selection.bg_fill.linear_multiply(0.6),
+                    );
                     ui.painter().rect(
                         highlight_rect,
                         2.0,
@@ -853,7 +855,7 @@ impl Editor {
                         highlight_rect,
                         1.0,
                         fill_color,
-                        egui::Stroke::new(1.0, stroke_color),
+                        egui::Stroke::new(1.0_f32, stroke_color),
                         egui::StrokeKind::Middle,
                     );
                 }
@@ -968,7 +970,7 @@ impl Editor {
                     ui.painter().rect_filled(rect, 1.0, fill);
                     ui.painter().line_segment(
                         [rect.left_bottom(), rect.right_bottom()],
-                        egui::Stroke::new(1.0, underline),
+                        egui::Stroke::new(1.0_f32, underline),
                     );
                 }
             }

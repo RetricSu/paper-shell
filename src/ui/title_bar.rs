@@ -136,8 +136,11 @@ impl TitleBar {
                         if sidebar_expanded {
                             ui.painter().circle_filled(dot, 1.4, dot_color);
                         } else {
-                            ui.painter()
-                                .circle_stroke(dot, 1.4, egui::Stroke::new(0.7, dot_color));
+                            ui.painter().circle_stroke(
+                                dot,
+                                1.4,
+                                egui::Stroke::new(0.7_f32, dot_color),
+                            );
                         }
                         if response.clicked() {
                             action = Some(TitleBarAction::ToggleSidebar);

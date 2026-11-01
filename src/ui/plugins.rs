@@ -110,6 +110,7 @@ pub struct GithubPublishConfigWindow {
     base_dir: String,
     collections: Vec<crate::plugin::builtin::github_publish::CollectionConfig>,
     show_hint: bool,
+    save_error: Option<String>,
 }
 
 impl Default for GithubPublishConfigWindow {
@@ -129,7 +130,18 @@ impl GithubPublishConfigWindow {
             base_dir: String::new(),
             collections: Vec::new(),
             show_hint: false,
+            save_error: None,
         }
+    }
+
+    pub fn close(&mut self) {
+        self.open = false;
+        self.save_error = None;
+    }
+
+    pub fn notify_save_error(&mut self, err: String) {
+        self.save_error = Some(err);
+        self.open = true;
     }
 
     pub fn open(
@@ -145,6 +157,7 @@ impl GithubPublishConfigWindow {
         self.collections = config.collections.clone();
         self.open = true;
         self.show_hint = show_hint;
+        self.save_error = None;
     }
 
     pub fn show(
@@ -167,6 +180,14 @@ impl GithubPublishConfigWindow {
         .resizable(false)
         .default_width(420.0)
         .show(ctx, |ui| {
+            if let Some(err) = &self.save_error {
+                ui.label(
+                    RichText::new(format!("保存失败: {}", err))
+                        .color(Color32::from_rgb(220, 70, 70)),
+                );
+                ui.add_space(8.0);
+            }
+
             if self.show_hint {
                 ui.label(
                     RichText::new("请先配置博客仓库地址（格式：owner/repo，例如 RetricSu/blog）")
@@ -246,11 +267,11 @@ impl GithubPublishConfigWindow {
                             collections: self.collections.clone(),
                         },
                     );
-                    self.open = false;
                 }
 
                 if ui.button("取消").clicked() {
                     self.open = false;
+                    self.save_error = None;
                 }
             });
         });
@@ -541,3 +562,4 @@ impl PublishDialog {
 }
 
 pub mod cloud_backup;
+pub mod manager;

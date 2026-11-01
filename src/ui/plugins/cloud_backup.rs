@@ -274,6 +274,14 @@ impl CloudBackupDialog {
         });
     }
 
+    pub fn notify_save_success(&mut self) {
+        self.set_status(false, "云端备份配置已保存".to_string());
+    }
+
+    pub fn notify_save_error(&mut self, error: String) {
+        self.set_status(true, error);
+    }
+
     pub fn show(
         &mut self,
         ctx: &Context,
@@ -453,7 +461,6 @@ impl CloudBackupDialog {
                     .clicked()
                 {
                     action = Some(CloudBackupAction::SaveConfig(self.config.clone()));
-                    self.set_status(false, "云端备份配置已保存".to_string());
                 }
             });
 

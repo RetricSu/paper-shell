@@ -40,6 +40,10 @@ impl Plugin for PrintPlugin {
             description: "使用系统打印服务打印当前编辑器内容".to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
             author: "Paper Shell".to_string(),
+            source: crate::plugin::PluginSource::Builtin,
+            enabled: true,
+            has_settings: false,
+            dir: None,
         }
     }
 

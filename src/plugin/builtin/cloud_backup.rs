@@ -137,6 +137,10 @@ impl Plugin for CloudBackupPlugin {
                 .to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
             author: "Paper Shell".to_string(),
+            source: crate::plugin::PluginSource::Builtin,
+            enabled: true,
+            has_settings: true,
+            dir: None,
         }
     }
 

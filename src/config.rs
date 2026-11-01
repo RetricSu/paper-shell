@@ -111,6 +111,15 @@ pub struct Settings {
     /// Cloud backup plugin configuration
     #[serde(default)]
     pub cloud_backup: crate::plugin::builtin::cloud_backup::CloudBackupConfig,
+
+    /// Explicitly disabled plugin IDs
+    #[serde(default)]
+    pub disabled_plugins: Vec<String>,
+
+    /// External plugin settings keyed by plugin ID and setting key
+    #[serde(default)]
+    pub external_plugin_settings:
+        std::collections::BTreeMap<String, std::collections::BTreeMap<String, String>>,
 }
 
 impl Default for Settings {
@@ -124,6 +133,8 @@ impl Default for Settings {
             workspace_folders: Vec::new(),
             github_publish: crate::plugin::builtin::github_publish::GithubPublishConfig::default(),
             cloud_backup: crate::plugin::builtin::cloud_backup::CloudBackupConfig::default(),
+            disabled_plugins: Vec::new(),
+            external_plugin_settings: std::collections::BTreeMap::new(),
         }
     }
 }
@@ -134,6 +145,52 @@ impl Settings {
         self.recent_files.retain(|p| p != &path);
         self.recent_files.insert(0, path);
         self.recent_files.truncate(MAX_RECENT_FILES);
+    }
+
+    /// Whether the plugin is currently enabled
+    pub fn is_plugin_enabled(&self, id: &str) -> bool {
+        !self.disabled_plugins.iter().any(|d| d == id)
+    }
+
+    /// Set enabled status for a plugin ID
+    pub fn set_plugin_enabled(&mut self, id: &str, enabled: bool) {
+        if enabled {
+            self.disabled_plugins.retain(|d| d != id);
+        } else if !self.disabled_plugins.iter().any(|d| d == id) {
+            self.disabled_plugins.push(id.to_string());
+            self.disabled_plugins.sort();
+        }
+    }
+
+    /// Get saved external settings for a plugin
+    pub fn get_external_settings(
+        &self,
+        plugin_id: &str,
+    ) -> std::collections::BTreeMap<String, String> {
+        self.external_plugin_settings
+            .get(plugin_id)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Update saved external settings for a plugin
+    pub fn set_external_settings(
+        &mut self,
+        plugin_id: &str,
+        settings: std::collections::BTreeMap<String, String>,
+    ) {
+        if settings.is_empty() {
+            self.external_plugin_settings.remove(plugin_id);
+        } else {
+            self.external_plugin_settings
+                .insert(plugin_id.to_string(), settings);
+        }
+    }
+
+    /// Clean up state when an external plugin is uninstalled
+    pub fn remove_external_plugin_data(&mut self, plugin_id: &str) {
+        self.disabled_plugins.retain(|d| d != plugin_id);
+        self.external_plugin_settings.remove(plugin_id);
     }
 
     fn migrate_workspace_folders(&mut self) {
@@ -207,5 +264,34 @@ mod tests {
         );
         assert!(reloaded.cloud_backup.enable_encryption);
         assert_eq!(reloaded.cloud_backup.encryption_password, "");
+    }
+
+    #[test]
+    fn plugin_enable_disable_and_external_settings_roundtrip() {
+        let mut settings = Settings::default();
+        assert!(settings.is_plugin_enabled("print"));
+        assert!(settings.is_plugin_enabled("custom_ext"));
+
+        settings.set_plugin_enabled("print", false);
+        assert!(!settings.is_plugin_enabled("print"));
+        assert_eq!(settings.disabled_plugins, vec!["print"]);
+
+        let mut ext_map = std::collections::BTreeMap::new();
+        ext_map.insert("api_key".to_string(), "secret_123".to_string());
+        settings.set_external_settings("custom_ext", ext_map);
+
+        let serialized = toml::to_string(&settings).unwrap();
+        let reloaded: Settings = toml::from_str(&serialized).unwrap();
+
+        assert!(!reloaded.is_plugin_enabled("print"));
+        assert!(reloaded.is_plugin_enabled("custom_ext"));
+        assert_eq!(
+            reloaded.get_external_settings("custom_ext").get("api_key"),
+            Some(&"secret_123".to_string())
+        );
+
+        let mut modified = reloaded;
+        modified.remove_external_plugin_data("custom_ext");
+        assert!(modified.get_external_settings("custom_ext").is_empty());
     }
 }

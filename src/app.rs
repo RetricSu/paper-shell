@@ -8,9 +8,10 @@ use crate::style::configure_style;
 use crate::ui::editor::Editor;
 use crate::ui::history::{HistoryAction, HistoryWindow};
 use crate::ui::plugins::cloud_backup::{CloudBackupAction, CloudBackupDialog};
-use crate::ui::plugins::{
-    GithubPublishConfigWindow, PluginOutputWindow, PrintDialog, PublishDialog,
-};
+use crate::ui::plugins::{GithubPublishConfigWindow, PluginOutputWindow, PublishDialog};
+
+#[cfg(not(target_os = "macos"))]
+use crate::ui::plugins::PrintDialog;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -79,7 +80,10 @@ pub struct PaperShellApp {
     plugin_config_window: GithubPublishConfigWindow,
     cloud_backup_dialog: CloudBackupDialog,
     publish_dialog: PublishDialog,
+    #[cfg(not(target_os = "macos"))]
     print_dialog: PrintDialog,
+    #[cfg(target_os = "macos")]
+    print_requested: bool,
 }
 
 impl Default for PaperShellApp {
@@ -126,7 +130,10 @@ impl Default for PaperShellApp {
             plugin_config_window: GithubPublishConfigWindow::new(),
             cloud_backup_dialog: CloudBackupDialog::new(),
             publish_dialog: PublishDialog::new(),
+            #[cfg(not(target_os = "macos"))]
             print_dialog: PrintDialog::new(),
+            #[cfg(target_os = "macos")]
+            print_requested: false,
         }
     }
 }
@@ -583,15 +590,22 @@ impl eframe::App for PaperShellApp {
                                     .open(&self.config.settings.github_publish);
                             }
                         } else if id == "print" {
-                            let document_name = self
-                                .editor
-                                .get_current_file()
-                                .and_then(|path| path.file_name())
-                                .and_then(|name| name.to_str())
-                                .unwrap_or("未命名文档")
-                                .to_string();
-                            self.print_dialog
-                                .open(document_name, self.editor.get_content());
+                            #[cfg(target_os = "macos")]
+                            {
+                                self.print_requested = true;
+                            }
+                            #[cfg(not(target_os = "macos"))]
+                            {
+                                let document_name = self
+                                    .editor
+                                    .get_current_file()
+                                    .and_then(|path| path.file_name())
+                                    .and_then(|name| name.to_str())
+                                    .unwrap_or("未命名文档")
+                                    .to_string();
+                                self.print_dialog
+                                    .open(document_name, self.editor.get_content());
+                            }
                         } else {
                             self.run_plugin(id);
                         }
@@ -771,6 +785,27 @@ impl eframe::App for PaperShellApp {
             }
         }
 
+        // AppKit's modal print panel must run on the UI thread, after egui's UI closures.
+        #[cfg(target_os = "macos")]
+        if std::mem::take(&mut self.print_requested)
+            && let Some(plugin) = self.plugin_manager.get("print")
+        {
+            let name = plugin.metadata().name;
+            let plugin_ctx = PluginContext {
+                file_path: self.editor.get_current_file().cloned(),
+                content: self.editor.get_content(),
+                data_dir: self.config.data_dir(),
+                title: None,
+                description: None,
+                collection: None,
+                printer: None,
+                print_margin_points: None,
+            };
+            let result = plugin.run(&plugin_ctx).map_err(|e| e.to_string());
+            self.plugin_output.finish(name, result);
+        }
+
+        #[cfg(not(target_os = "macos"))]
         if let Some(params) = self.print_dialog.show(ctx) {
             if let Some(plugin) = self.plugin_manager.get("print") {
                 let name = plugin.metadata().name;

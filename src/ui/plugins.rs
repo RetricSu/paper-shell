@@ -5,7 +5,9 @@
 //! by calling [`PluginOutputWindow::start`] when launching a plugin and
 //! [`PluginOutputWindow::finish`] when the result arrives.
 
-use egui::{Color32, Context, RichText, Vec2};
+#[cfg(not(target_os = "macos"))]
+use egui::Vec2;
+use egui::{Color32, Context, RichText};
 
 #[derive(Default)]
 pub struct PluginOutputWindow {
@@ -264,11 +266,13 @@ pub struct PublishParams {
     pub collection_dir: String,
 }
 
+#[cfg(not(target_os = "macos"))]
 pub struct PrintParams {
     pub printer: Option<String>,
     pub margin_points: u16,
 }
 
+#[cfg(not(target_os = "macos"))]
 pub struct PrintDialog {
     open: bool,
     document_name: String,
@@ -279,12 +283,14 @@ pub struct PrintDialog {
     viewport_id: egui::ViewportId,
 }
 
+#[cfg(not(target_os = "macos"))]
 impl Default for PrintDialog {
     fn default() -> Self {
         Self::new()
     }
 }
 
+#[cfg(not(target_os = "macos"))]
 impl PrintDialog {
     pub fn new() -> Self {
         Self {

@@ -70,6 +70,23 @@ links are not followed. Use the blank-space context menu to refresh after extern
 articles or closing the window offers save, discard, or cancel for unsaved changes.
 Saving an empty article is supported.
 
+## Printing (macOS)
+
+Choose **打印当前文档** from the plugins menu to open the native macOS print panel.
+The current editor text (including unsaved changes) is laid out with system fonts,
+12 pt type, automatic wrapping and pagination, and equal 72 pt margins. The system
+panel controls the printer, paper size, orientation, scale, copies, and page range.
+Use its actual page preview to check the layout, or **PDF → Save as PDF** to inspect
+or share the same print output before sending it to a printer. Text remains plain
+text; Markdown and other source formats are not interpreted as markup.
+
+macOS printing uses AppKit rather than submitting raw text to `lp`. Other platforms
+retain their existing print command behavior. Automated macOS layout checks generate
+PDFs for long Chinese/English paragraphs and unbroken URLs on A4, Letter, and
+landscape paper without sending anything to a printer. Run them with
+`cargo test --locked --test print_layout`; set `PAPER_SHELL_KEEP_PRINT_PDFS=1` to keep
+the generated temporary PDFs for visual review (the test prints their paths).
+
 ## Bundle (macOS)
 
 ```bash
@@ -100,4 +117,4 @@ You can also trigger releases manually from the GitHub Actions tab via `workflow
 - [ ] support narrative map with click-to-jump function
 - [ ] informative data records on paragraph or full text
 - [ ] add a add-ons/plugin system for export
-- [ ] support print document
+- [x] support print document (native macOS print preview and PDF export)

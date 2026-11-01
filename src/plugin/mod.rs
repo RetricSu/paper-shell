@@ -45,7 +45,8 @@ pub struct PluginMetadata {
 /// Everything a plugin needs to know about the current editing session.
 ///
 /// The context is a plain data snapshot taken on the UI thread and handed to
-/// the plugin, which always runs on a background thread. This keeps plugins
+/// the plugin. Most plugins run on a background thread; native macOS printing
+/// runs on the UI thread to present the system panel. This keeps plugins
 /// decoupled from the live application state and safe to run concurrently.
 #[derive(Debug, Clone)]
 pub struct PluginContext {

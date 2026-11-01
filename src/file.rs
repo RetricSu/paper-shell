@@ -7,4 +7,6 @@ pub struct FileData {
     pub path: PathBuf,
     pub total_time: u64,
     pub content: String,
+    pub comments: Vec<crate::comments::TextComment>,
+    pub comments_error: Option<String>,
 }

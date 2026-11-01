@@ -26,6 +26,20 @@ other platforms may need native GUI build dependencies. The first run downloads
 dependencies and compiles the app, so allow extra time and network access.
 These automated checks do not cover interactive desktop UI acceptance.
 
+## Inline comments
+
+Select any non-empty text range and use the floating **评论** button (or right-click
+and choose **添加评论 / 备注**). Commented text has a pale amber highlight and an
+underline. Click it to edit or delete the comment. Anchors follow later insertions,
+deletions, formatting, search/replace, and history restores; partial deletion keeps
+the comment on the remaining text, while deleting or replacing the entire range
+removes it.
+
+Comments are saved with the article (Cmd/Ctrl+S) as character-indexed metadata in
+the app data directory's `marks` folder, leaving the original plain-text file
+unchanged. Comment-only changes also trigger the unsaved-changes prompt when
+switching articles or closing the window.
+
 ## Workspace files
 
 Click the **纸壳** title or use **文件 → 显示文章列表 / 隐藏文章列表**

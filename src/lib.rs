@@ -4,6 +4,7 @@
 
 pub mod app;
 pub mod backend;
+pub mod comments;
 pub mod config;
 pub mod constant;
 pub mod file;

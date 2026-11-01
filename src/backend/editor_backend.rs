@@ -12,6 +12,7 @@ const METADATA_KEY: &str = "user.myeditor.id";
 const TOTAL_TIME_KEY: &str = "user.myeditor.total_time";
 const BLOB_DIR: &str = "blobs";
 const HISTORY_DIR: &str = "history";
+const MARKS_DIR: &str = "marks";
 
 /// Custom error types for the backend
 #[derive(Error, Debug)]
@@ -54,6 +55,7 @@ pub struct EditorBackend {
     data_dir: PathBuf,
     blobs_dir: PathBuf,
     history_dir: PathBuf,
+    marks_dir: PathBuf,
 }
 
 impl EditorBackend {
@@ -64,15 +66,18 @@ impl EditorBackend {
 
         let blobs_dir = data_dir.join(BLOB_DIR);
         let history_dir = data_dir.join(HISTORY_DIR);
+        let marks_dir = data_dir.join(MARKS_DIR);
 
         // Create directories if they don't exist
         fs::create_dir_all(&blobs_dir)?;
         fs::create_dir_all(&history_dir)?;
+        fs::create_dir_all(&marks_dir)?;
 
         Ok(Self {
             data_dir,
             blobs_dir,
             history_dir,
+            marks_dir,
         })
     }
 
@@ -235,6 +240,41 @@ impl EditorBackend {
         Ok(content)
     }
 
+    /// Load selection comments stored separately from the article's plain text.
+    pub fn load_comments(
+        &self,
+        uuid: &str,
+    ) -> Result<Vec<crate::comments::TextComment>, BackendError> {
+        let path = self.marks_dir.join(format!("{}.comments.json", uuid));
+        if !path.exists() {
+            return Ok(Vec::new());
+        }
+        Ok(serde_json::from_str(&fs::read_to_string(path)?)?)
+    }
+
+    /// Save selection comments without modifying the article or its version history.
+    pub fn save_comments(
+        &self,
+        uuid: &str,
+        comments: &[crate::comments::TextComment],
+    ) -> Result<(), BackendError> {
+        let path = self.marks_dir.join(format!("{}.comments.json", uuid));
+        let temp_path = self
+            .marks_dir
+            .join(format!(".{}.comments.{}.tmp", uuid, Uuid::new_v4()));
+        let result = (|| -> Result<(), BackendError> {
+            let mut file = fs::File::create(&temp_path)?;
+            serde_json::to_writer_pretty(&mut file, comments)?;
+            file.sync_all()?;
+            fs::rename(&temp_path, &path)?;
+            Ok(())
+        })();
+        if result.is_err() {
+            let _ = fs::remove_file(&temp_path);
+        }
+        result
+    }
+
     /// Get the data directory path
     pub fn data_dir(&self) -> &Path {
         &self.data_dir
@@ -391,10 +431,12 @@ mod tests {
             data_dir: test_dir.clone(),
             blobs_dir: test_dir.join(BLOB_DIR),
             history_dir: test_dir.join(HISTORY_DIR),
+            marks_dir: test_dir.join(MARKS_DIR),
         };
 
         fs::create_dir_all(&backend.blobs_dir).unwrap();
         fs::create_dir_all(&backend.history_dir).unwrap();
+        fs::create_dir_all(&backend.marks_dir).unwrap();
 
         (backend, test_dir)
     }
@@ -540,6 +582,43 @@ mod tests {
         let restored = backend.restore_version(&hash2).unwrap();
         assert_eq!(restored, content2, "Restored content should match");
 
+        cleanup_test_dir(&test_dir);
+    }
+
+    #[test]
+    fn test_comments_round_trip() {
+        let (backend, test_dir) = setup_test_backend();
+        let uuid = Uuid::new_v4().to_string();
+        assert!(backend.load_comments(&uuid).unwrap().is_empty());
+        let comments = vec![crate::comments::TextComment {
+            id: "comment-1".into(),
+            text: "记住这里".into(),
+            start: 1,
+            end: 4,
+            quote: " selected ".into(),
+        }];
+        backend.save_comments(&uuid, &comments).unwrap();
+        assert_eq!(backend.load_comments(&uuid).unwrap(), comments);
+        backend.save_comments(&uuid, &[]).unwrap();
+        assert!(backend.load_comments(&uuid).unwrap().is_empty());
+        assert!(fs::read_dir(&backend.marks_dir).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .ends_with(".tmp")
+        }));
+        cleanup_test_dir(&test_dir);
+    }
+
+    #[test]
+    fn corrupt_comments_are_not_overwritten_by_loading() {
+        let (backend, test_dir) = setup_test_backend();
+        let uuid = Uuid::new_v4().to_string();
+        let path = backend.marks_dir.join(format!("{}.comments.json", uuid));
+        fs::write(&path, "not json").unwrap();
+        assert!(backend.load_comments(&uuid).is_err());
+        assert_eq!(fs::read_to_string(path).unwrap(), "not json");
         cleanup_test_dir(&test_dir);
     }
 

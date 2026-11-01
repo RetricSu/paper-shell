@@ -22,10 +22,11 @@ const CANCEL_SWITCH: &str = "取消";
 fn confirm_document_change(
     content: &str,
     saved_content: &str,
+    comments_dirty: bool,
     ask: impl FnOnce() -> rfd::MessageDialogResult,
     save: impl FnOnce() -> bool,
 ) -> bool {
-    if content == saved_content {
+    if content == saved_content && !comments_dirty {
         return true;
     }
     match ask() {
@@ -52,6 +53,7 @@ pub struct PaperShellApp {
     sidebar: crate::ui::sidebar::Sidebar,
     draft_directory: Option<PathBuf>,
     saved_content: String,
+    saved_comments: Vec<crate::comments::TextComment>,
     file_error: Option<String>,
     time_backend: TimeBackend,
 
@@ -87,6 +89,7 @@ impl Default for PaperShellApp {
             sidebar: crate::ui::sidebar::Sidebar::default(),
             draft_directory: None,
             saved_content: String::new(),
+            saved_comments: Vec::new(),
             file_error: None,
             time_backend: TimeBackend::default(),
             response_receiver: receiver,
@@ -137,11 +140,24 @@ impl PaperShellApp {
             .get_file_metadata(path, &content)
             .map_err(|e| format!("Failed to get metadata: {}", e))?;
 
+        let (comments, comments_error) = match self.editor_backend.load_comments(&uuid) {
+            Ok(comments) => (comments, None),
+            Err(error) => (
+                Vec::new(),
+                Some(format!(
+                    "评论文件无法读取，正文仍可编辑；原评论文件未修改: {}",
+                    error
+                )),
+            ),
+        };
+
         Ok(FileData {
             uuid,
             path: path.to_path_buf(),
             total_time,
             content,
+            comments,
+            comments_error,
         })
     }
 
@@ -173,9 +189,11 @@ impl PaperShellApp {
     fn confirm_document_switch(&mut self) -> bool {
         let content = self.editor.get_content();
         let saved_content = self.saved_content.clone();
+        let comments_dirty = self.editor.comments() != self.saved_comments.as_slice();
         confirm_document_change(
             &content,
             &saved_content,
+            comments_dirty,
             || {
                 rfd::MessageDialog::new()
                     .set_title("未保存的文章")
@@ -261,6 +279,7 @@ impl PaperShellApp {
                     self.editor = Editor::default();
                     self.editor.set_content(String::new());
                     self.saved_content.clear();
+                    self.saved_comments.clear();
                     self.time_backend.get_and_reset_writing_time();
                 }
             }
@@ -308,12 +327,22 @@ impl PaperShellApp {
             .editor_backend
             .save(&path, &content, self.time_backend.get_writing_time())
         {
-            Ok((_uuid, total_time)) => {
+            Ok((uuid, total_time)) => {
+                // The body/history save has consumed this interval even if comment
+                // persistence fails and needs to be retried.
                 self.time_backend.get_and_reset_writing_time();
+                if let Err(error) = self
+                    .editor_backend
+                    .save_comments(&uuid, self.editor.comments())
+                {
+                    self.file_error = Some(format!("正文已写入，但无法保存评论: {}", error));
+                    return false;
+                }
                 self.draft_directory = None;
                 self.editor.set_current_file(Some(path.clone()));
                 self.editor.set_current_file_total_time(total_time);
                 self.saved_content = content;
+                self.saved_comments = self.editor.comments().to_vec();
                 self.config.add_recent_file(path);
                 self.sidebar.refresh();
                 true
@@ -331,8 +360,13 @@ impl PaperShellApp {
         self.editor.set_content(data.content);
         self.editor.set_current_file(Some(data.path.clone()));
         self.editor.set_current_file_total_time(data.total_time);
+        self.editor.set_comments(data.comments);
+        self.saved_comments = self.editor.comments().to_vec();
         self.time_backend.get_and_reset_writing_time();
         self.config.add_recent_file(data.path.clone());
+        if let Some(error) = data.comments_error {
+            self.file_error = Some(error);
+        }
         tracing::info!("File opened: {:?}", data.path);
     }
 
@@ -377,7 +411,7 @@ impl PaperShellApp {
             HistoryAction::RollbackToVersion(hash) => {
                 match self.editor_backend.restore_version(&hash) {
                     Ok(content) => {
-                        self.editor.set_content(content);
+                        self.editor.restore_content(content);
                         tracing::info!("Rolled back to version: {}", hash);
                     }
                     Err(e) => {
@@ -659,6 +693,7 @@ mod document_change_tests {
         let may_switch = confirm_document_change(
             &editor.get_content(),
             "",
+            false,
             || {
                 prompted = true;
                 rfd::MessageDialogResult::Custom(CANCEL_SWITCH.into())
@@ -681,6 +716,7 @@ mod document_change_tests {
                 confirm_document_change(
                     "new draft",
                     "",
+                    false,
                     || rfd::MessageDialogResult::Custom(SAVE_CHANGES.into()),
                     || saved,
                 ),
@@ -703,6 +739,7 @@ mod document_change_tests {
                 confirm_document_change(
                     "edited article",
                     "saved article",
+                    false,
                     || choice,
                     || { panic!("Only the save button may save") }
                 ),
@@ -712,11 +749,23 @@ mod document_change_tests {
     }
 
     #[test]
+    fn comment_only_changes_require_a_save_decision() {
+        assert!(!confirm_document_change(
+            "saved article",
+            "saved article",
+            true,
+            || rfd::MessageDialogResult::Custom(CANCEL_SWITCH.into()),
+            || panic!("Cancel must not save"),
+        ));
+    }
+
+    #[test]
     fn unchanged_article_needs_no_prompt() {
         for content in ["", "saved article"] {
             assert!(confirm_document_change(
                 content,
                 content,
+                false,
                 || panic!("Unchanged content must not prompt"),
                 || panic!("Unchanged content must not save"),
             ));

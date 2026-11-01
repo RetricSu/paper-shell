@@ -8,6 +8,9 @@ use crate::style::configure_style;
 use crate::ui::editor::Editor;
 use crate::ui::history::{HistoryAction, HistoryWindow};
 use crate::ui::plugins::cloud_backup::{CloudBackupAction, CloudBackupDialog};
+use crate::ui::plugins::manager::{
+    ExternalPluginConfigWindow, PluginManagerAction, PluginManagerWindow,
+};
 use crate::ui::plugins::{
     GithubPublishConfigWindow, PluginOutputWindow, PrintDialog, PublishDialog,
 };
@@ -77,6 +80,8 @@ pub struct PaperShellApp {
     plugin_metadata: Vec<crate::plugin::PluginMetadata>,
     plugin_output: PluginOutputWindow,
     plugin_config_window: GithubPublishConfigWindow,
+    plugin_manager_window: PluginManagerWindow,
+    external_plugin_config_window: ExternalPluginConfigWindow,
     cloud_backup_dialog: CloudBackupDialog,
     publish_dialog: PublishDialog,
     print_dialog: PrintDialog,
@@ -100,6 +105,8 @@ impl Default for PaperShellApp {
             plugins_dir,
             config.settings.github_publish.clone(),
             config.settings.cloud_backup.clone(),
+            config.settings.disabled_plugins.clone(),
+            config.settings.external_plugin_settings.clone(),
         );
         let plugin_metadata = plugin_manager.metadata();
 
@@ -124,6 +131,8 @@ impl Default for PaperShellApp {
             plugin_metadata,
             plugin_output: PluginOutputWindow::new(),
             plugin_config_window: GithubPublishConfigWindow::new(),
+            plugin_manager_window: PluginManagerWindow::new(),
+            external_plugin_config_window: ExternalPluginConfigWindow::new(),
             cloud_backup_dialog: CloudBackupDialog::new(),
             publish_dialog: PublishDialog::new(),
             print_dialog: PrintDialog::new(),
@@ -466,6 +475,7 @@ impl PaperShellApp {
         };
 
         let name = plugin.metadata().name;
+        let settings = self.plugin_manager.external_settings_for(&id);
         self.plugin_output.start(&name);
 
         let ctx = PluginContext {
@@ -477,6 +487,7 @@ impl PaperShellApp {
             collection: None,
             printer: None,
             print_margin_points: None,
+            settings,
         };
         let sender = self.response_sender.clone();
 
@@ -488,12 +499,10 @@ impl PaperShellApp {
 
     /// Ensures the plugins directory exists and opens it in the system file
     /// manager so users can install plugins by dropping folders into it.
-    fn open_plugins_folder(&self) {
+    fn open_plugins_folder(&self) -> Result<PathBuf, String> {
         let dir = self.config.data_dir().join("plugins");
-        if let Err(e) = std::fs::create_dir_all(&dir) {
-            tracing::error!("Failed to create plugins dir {:?}: {}", dir, e);
-            return;
-        }
+        std::fs::create_dir_all(&dir)
+            .map_err(|error| format!("无法创建插件目录 {}：{}", dir.display(), error))?;
 
         #[cfg(target_os = "macos")]
         let opener = "open";
@@ -502,8 +511,103 @@ impl PaperShellApp {
         #[cfg(all(unix, not(target_os = "macos")))]
         let opener = "xdg-open";
 
-        if let Err(e) = std::process::Command::new(opener).arg(&dir).spawn() {
-            tracing::error!("Failed to open plugins dir: {}", e);
+        std::process::Command::new(opener)
+            .arg(&dir)
+            .spawn()
+            .map_err(|error| format!("无法打开插件目录 {}：{}", dir.display(), error))?;
+        Ok(dir)
+    }
+
+    fn refresh_plugin_metadata(&mut self) {
+        self.plugin_metadata = self.plugin_manager.metadata();
+    }
+
+    fn open_plugins_folder_with_feedback(&mut self) {
+        match self.open_plugins_folder() {
+            Ok(dir) => self.plugin_manager_window.set_status(
+                false,
+                format!(
+                    "已打开插件目录。放入插件后请点击“重新扫描”：{}",
+                    dir.display()
+                ),
+            ),
+            Err(error) => {
+                self.file_error = Some(error.clone());
+                self.plugin_manager_window.set_status(true, error);
+            }
+        }
+    }
+
+    fn handle_plugin_manager_action(&mut self, action: PluginManagerAction) {
+        match action {
+            PluginManagerAction::SetEnabled { id, enabled } => {
+                let previous = self.config.settings.is_plugin_enabled(&id);
+                self.config.settings.set_plugin_enabled(&id, enabled);
+                match self.config.save() {
+                    Ok(()) => {
+                        self.plugin_manager.set_enabled(&id, enabled);
+                        self.refresh_plugin_metadata();
+                        self.plugin_manager_window.set_status(
+                            false,
+                            format!("插件已{}", if enabled { "启用" } else { "禁用" }),
+                        );
+                    }
+                    Err(error) => {
+                        self.config.settings.set_plugin_enabled(&id, previous);
+                        self.plugin_manager_window
+                            .set_status(true, format!("无法保存插件状态：{error}"));
+                    }
+                }
+            }
+            PluginManagerAction::Rescan => {
+                self.plugin_manager.rescan();
+                self.refresh_plugin_metadata();
+                let plugin_count = self.plugin_manager.all_metadata().len();
+                let error_count = self.plugin_manager.load_errors().len();
+                self.plugin_manager_window.set_status(
+                    error_count > 0,
+                    format!("扫描完成：{plugin_count} 个插件，{error_count} 个加载问题"),
+                );
+            }
+            PluginManagerAction::OpenPluginsFolder => self.open_plugins_folder_with_feedback(),
+            PluginManagerAction::Configure(id) => match id.as_str() {
+                "cloud_backup" => self
+                    .cloud_backup_dialog
+                    .open(&self.config.settings.cloud_backup),
+                "github_publish" => self
+                    .plugin_config_window
+                    .open(&self.config.settings.github_publish, false),
+                _ => {
+                    let Some(plugin) = self.plugin_manager.find_any(&id) else {
+                        self.plugin_manager_window
+                            .set_status(true, format!("未找到插件“{id}”，请重新扫描"));
+                        return;
+                    };
+                    let metadata = plugin.metadata();
+                    let definitions = plugin.settings_definitions();
+                    let saved = self.plugin_manager.external_settings_for(&id);
+                    self.external_plugin_config_window
+                        .open(&metadata, definitions, &saved);
+                }
+            },
+            PluginManagerAction::Uninstall(id) => {
+                match self.plugin_manager.safe_uninstall_external_plugin(&id) {
+                    Ok(removed) => {
+                        self.config.settings.remove_external_plugin_data(&id);
+                        self.refresh_plugin_metadata();
+                        match self.config.save() {
+                            Ok(()) => self
+                                .plugin_manager_window
+                                .set_status(false, format!("插件已卸载：{}", removed.display())),
+                            Err(error) => self.plugin_manager_window.set_status(
+                                true,
+                                format!("插件文件已删除，但清理设置保存失败：{error}"),
+                            ),
+                        }
+                    }
+                    Err(error) => self.plugin_manager_window.set_status(true, error),
+                }
+            }
         }
     }
 }
@@ -571,7 +675,9 @@ impl eframe::App for PaperShellApp {
                         tracing::info!("Font changed to: {}", font_name);
                     }
                     crate::ui::title_bar::TitleBarAction::RunPlugin(id) => {
-                        if id == "cloud_backup" {
+                        if self.plugin_manager.get(&id).is_none() {
+                            self.file_error = Some(format!("插件“{id}”不存在或已禁用"));
+                        } else if id == "cloud_backup" {
                             self.cloud_backup_dialog
                                 .open(&self.config.settings.cloud_backup);
                         } else if id == "github_publish" {
@@ -597,7 +703,10 @@ impl eframe::App for PaperShellApp {
                         }
                     }
                     crate::ui::title_bar::TitleBarAction::OpenPluginsFolder => {
-                        self.open_plugins_folder();
+                        self.open_plugins_folder_with_feedback();
+                    }
+                    crate::ui::title_bar::TitleBarAction::ManagePlugins => {
+                        self.plugin_manager_window.open();
                     }
                     crate::ui::title_bar::TitleBarAction::ConfigurePlugin(id) => {
                         if id == "cloud_backup" {
@@ -656,8 +765,48 @@ impl eframe::App for PaperShellApp {
             self.handle_history_action(action);
         }
 
-        // Plugin output window
+        // Plugin output and management windows
         self.plugin_output.show(ctx);
+        let all_plugins = self.plugin_manager.all_metadata();
+        if let Some(action) =
+            self.plugin_manager_window
+                .show(ctx, &all_plugins, self.plugin_manager.load_errors())
+        {
+            self.handle_plugin_manager_action(action);
+        }
+        if let Some(new_settings) = self.external_plugin_config_window.show(ctx) {
+            let plugin_exists =
+                self.plugin_manager
+                    .find_any(&new_settings.id)
+                    .is_some_and(|plugin| {
+                        plugin.metadata().source == crate::plugin::PluginSource::External
+                    });
+            if !plugin_exists {
+                self.external_plugin_config_window
+                    .notify_save_error("插件已移除，请重新扫描后再设置".to_string());
+            } else {
+                let previous = self.config.settings.get_external_settings(&new_settings.id);
+                self.config
+                    .settings
+                    .set_external_settings(&new_settings.id, new_settings.values.clone());
+                match self.config.save() {
+                    Ok(()) => {
+                        self.plugin_manager
+                            .set_external_settings(&new_settings.id, new_settings.values);
+                        self.external_plugin_config_window.notify_saved();
+                        self.plugin_manager_window
+                            .set_status(false, "外部插件设置已保存".to_string());
+                    }
+                    Err(error) => {
+                        self.config
+                            .settings
+                            .set_external_settings(&new_settings.id, previous);
+                        self.external_plugin_config_window
+                            .notify_save_error(format!("无法保存插件设置：{error}"));
+                    }
+                }
+            }
+        }
 
         let identity = self.cloud_document_identity();
         if let Some(action) =
@@ -666,17 +815,22 @@ impl eframe::App for PaperShellApp {
         {
             match action {
                 CloudBackupAction::SaveConfig(new_config) => {
-                    self.config.settings.cloud_backup = new_config.clone();
-                    if let Err(error) = self.config.save() {
-                        self.file_error = Some(format!("无法保存云端备份设置: {}", error));
-                    }
-                    let plugins_dir = self.config.data_dir().join("plugins");
-                    self.plugin_manager = crate::plugin::PluginManager::new(
-                        plugins_dir,
-                        self.config.settings.github_publish.clone(),
-                        new_config,
+                    let previous = std::mem::replace(
+                        &mut self.config.settings.cloud_backup,
+                        new_config.clone(),
                     );
-                    self.plugin_metadata = self.plugin_manager.metadata();
+                    match self.config.save() {
+                        Ok(()) => {
+                            self.plugin_manager
+                                .update_builtin_configs(None, Some(new_config));
+                            self.cloud_backup_dialog.notify_save_success();
+                        }
+                        Err(error) => {
+                            self.config.settings.cloud_backup = previous;
+                            self.cloud_backup_dialog
+                                .notify_save_error(format!("无法保存云端备份设置：{error}"));
+                        }
+                    }
                 }
                 CloudBackupAction::ReplaceContent {
                     content,
@@ -733,17 +887,20 @@ impl eframe::App for PaperShellApp {
         }
 
         if let Some(new_config) = self.plugin_config_window.show(ctx) {
-            self.config.settings.github_publish = new_config.clone();
-            if let Err(error) = self.config.save() {
-                self.file_error = Some(format!("无法保存插件设置: {}", error));
+            let previous =
+                std::mem::replace(&mut self.config.settings.github_publish, new_config.clone());
+            match self.config.save() {
+                Ok(()) => {
+                    self.plugin_manager
+                        .update_builtin_configs(Some(new_config), None);
+                    self.plugin_config_window.close();
+                }
+                Err(error) => {
+                    self.config.settings.github_publish = previous;
+                    self.plugin_config_window
+                        .notify_save_error(format!("无法保存插件设置：{error}"));
+                }
             }
-            let plugins_dir = self.config.data_dir().join("plugins");
-            self.plugin_manager = crate::plugin::PluginManager::new(
-                plugins_dir,
-                new_config,
-                self.config.settings.cloud_backup.clone(),
-            );
-            self.plugin_metadata = self.plugin_manager.metadata();
         }
 
         if let Some(params) = self.publish_dialog.show(ctx) {
@@ -759,6 +916,7 @@ impl eframe::App for PaperShellApp {
                     collection: Some(params.collection_dir),
                     printer: None,
                     print_margin_points: None,
+                    settings: Default::default(),
                 };
                 let sender = self.response_sender.clone();
 
@@ -784,6 +942,7 @@ impl eframe::App for PaperShellApp {
                     collection: None,
                     printer: params.printer,
                     print_margin_points: Some(params.margin_points),
+                    settings: Default::default(),
                 };
                 let sender = self.response_sender.clone();
 

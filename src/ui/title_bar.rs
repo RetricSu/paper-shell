@@ -18,6 +18,8 @@ pub enum TitleBarAction {
     ConfigurePlugin(String),
     /// Open the plugins directory in the system file manager.
     OpenPluginsFolder,
+    /// Open the unified plugin management window.
+    ManagePlugins,
 }
 
 pub struct TitleBar;
@@ -276,7 +278,7 @@ impl TitleBar {
                         |ui| {
                             ui.set_min_width(220.0);
                             if plugins.is_empty() {
-                                ui.add_enabled(false, egui::Button::new("暂无已安装插件"));
+                                ui.add_enabled(false, egui::Button::new("暂无已启用插件"));
                             }
                             for plugin in plugins {
                                 if ui
@@ -303,6 +305,14 @@ impl TitleBar {
                                 action = Some(TitleBarAction::ConfigurePlugin(
                                     "github_publish".to_string(),
                                 ));
+                                ui.close();
+                            }
+                            if ui
+                                .button("管理插件…")
+                                .on_hover_text("启用、禁用、刷新、设置或卸载插件")
+                                .clicked()
+                            {
+                                action = Some(TitleBarAction::ManagePlugins);
                                 ui.close();
                             }
                             if ui

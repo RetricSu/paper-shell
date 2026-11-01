@@ -28,9 +28,13 @@ impl Plugin for PrintPlugin {
         PluginMetadata {
             id: "print".to_string(),
             name: "打印当前文档".to_string(),
-            description: "调用系统默认打印机打印当前编辑器内容".to_string(),
+            description: "选择打印机并按预览边距打印当前文档".to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
             author: "Paper Shell".to_string(),
+            source: crate::plugin::PluginSource::Builtin,
+            enabled: true,
+            has_settings: false,
+            dir: None,
         }
     }
 

@@ -70,6 +70,70 @@ links are not followed. Use the blank-space context menu to refresh after extern
 articles or closing the window offers save, discard, or cancel for unsaved changes.
 Saving an empty article is supported.
 
+## Plugins
+
+Open **插件 → 管理插件…** to see every built-in and external plugin, its source,
+version, author, enabled state, and any discovery errors. Print, Cloud Backup, and
+GitHub Publish are built in. Cloud Backup and GitHub Publish have dedicated settings;
+printer and margins are chosen each time Print runs.
+
+To install an external plugin:
+
+1. Choose **打开插件目录** in the manager.
+2. Put the plugin in an immediate subdirectory of that folder. The subdirectory must
+   contain a `plugin.toml` manifest and its command/script.
+3. Return to Paper Shell and choose **重新扫描**. Restarting is not required.
+
+The enable checkbox is saved immediately and applies to both built-in and external
+plugins. Disabled plugins do not appear in the run menu and cannot be executed, but
+their settings remain editable. **卸载** is available for external plugins only: after
+confirmation it permanently deletes that plugin's direct child folder and its saved
+settings. Invalid manifests, unreadable directories, reserved IDs, and duplicate IDs
+are shown in the manager. All plugins sharing a duplicate ID are rejected rather than
+running an arbitrary one. Built-in IDs (`print`, `cloud_backup`, `github_publish`) are
+reserved.
+
+Example `plugin.toml`:
+
+```toml
+id          = "word-count"
+name        = "字数统计"
+description = "Count words in the current document"
+version     = "0.1.0"
+author      = "you"
+command     = "python3"
+args        = ["main.py"]
+
+[[settings]]
+key         = "api_key"
+label       = "API 密钥"
+description = "Optional service credential"
+type        = "password"
+required    = true
+
+[[settings]]
+key         = "report_format"
+label       = "报告格式"
+type        = "text"
+default     = "summary"
+```
+
+External settings are edited in the same manager. Text and password fields support
+defaults and required validation. At runtime the resolved values are available as a
+JSON object in `PAPER_SHELL_PLUGIN_SETTINGS`; for example, Python can read it with
+`json.loads(os.environ["PAPER_SHELL_PLUGIN_SETTINGS"])`. Password values are masked in
+the UI and are not logged by Paper Shell, but **they are stored unencrypted in the
+application configuration file**.
+
+The host also provides the document on stdin and sets `PAPER_SHELL_FILE`,
+`PAPER_SHELL_DATA_DIR`, and `PAPER_SHELL_PLUGIN_DIR`. Standard output is shown as the
+success message; a non-zero exit code and standard error are shown as an execution
+failure. The command and its interpreter/runtime must already be installed.
+
+**Trust boundary:** external plugins run local commands with the same permissions as
+Paper Shell and are not sandboxed. Install only plugins you trust, and review the
+manifest's `command` and `args` before enabling one.
+
 ## Bundle (macOS)
 
 ```bash
@@ -99,5 +163,5 @@ You can also trigger releases manually from the GitHub Actions tab via `workflow
 - [ ] dictionary-lookup panel
 - [ ] support narrative map with click-to-jump function
 - [ ] informative data records on paragraph or full text
-- [ ] add a add-ons/plugin system for export
-- [ ] support print document
+- [x] add a add-ons/plugin system for export
+- [x] support print document

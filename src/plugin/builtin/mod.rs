@@ -12,6 +12,9 @@ pub mod print;
 use super::Plugin;
 use std::sync::Arc;
 
+/// IDs reserved by built-in plugins. External plugins must not use these IDs.
+pub const RESERVED_PLUGIN_IDS: &[&str] = &["print", "cloud_backup", "github_publish"];
+
 /// Constructs the list of built-in plugins in the order they should appear in
 /// the menu.
 pub fn builtin_plugins(

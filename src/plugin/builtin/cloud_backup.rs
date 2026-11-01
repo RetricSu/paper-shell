@@ -770,7 +770,7 @@ mod tests {
 
     #[test]
     fn upload_rejects_overwriting_a_different_document() {
-        use std::io::Write;
+        use std::io::{Read, Write};
 
         let existing = BackupEnvelope {
             version: 1,
@@ -784,14 +784,23 @@ mod tests {
         let body = serde_json::to_string(&existing).unwrap();
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
-        std::thread::spawn(move || {
+        let server = std::thread::spawn(move || {
             if let Ok((mut stream, _)) = listener.accept() {
+                // Consume the GET headers before closing to avoid a TCP reset
+                // caused by dropping a socket with unread request data.
+                let mut headers = Vec::new();
+                let mut byte = [0u8; 1];
+                while !headers.ends_with(b"\r\n\r\n") {
+                    stream.read_exact(&mut byte).unwrap();
+                    headers.push(byte[0]);
+                }
+                assert!(headers.starts_with(b"GET "));
                 let response = format!(
                     "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
                     body.len(),
                     body
                 );
-                let _ = stream.write_all(response.as_bytes());
+                stream.write_all(response.as_bytes()).unwrap();
             }
         });
 
@@ -803,8 +812,12 @@ mod tests {
             &identity,
             "new content",
         );
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("覆盖冲突"));
+        server.join().unwrap();
+        let error = result.unwrap_err().to_string();
+        assert!(
+            error.contains("覆盖冲突"),
+            "unexpected upload error: {error}"
+        );
     }
 
     #[test]

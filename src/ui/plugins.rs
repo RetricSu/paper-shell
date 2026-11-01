@@ -5,7 +5,9 @@
 //! by calling [`PluginOutputWindow::start`] when launching a plugin and
 //! [`PluginOutputWindow::finish`] when the result arrives.
 
-use egui::{Color32, Context, RichText, Vec2};
+#[cfg(not(target_os = "macos"))]
+use egui::Vec2;
+use egui::{Color32, Context, RichText};
 
 #[derive(Default)]
 pub struct PluginOutputWindow {
@@ -91,7 +93,7 @@ impl PluginOutputWindow {
             egui::ScrollArea::vertical()
                 .max_height(320.0)
                 .show(ui, |ui| {
-                    ui.label(RichText::new(format!("{} {}", icon, &self.body)).color(color));
+                    ui.label(RichText::new(format!("{} {}", icon, self.body)).color(color));
                 });
         });
 
@@ -285,11 +287,13 @@ pub struct PublishParams {
     pub collection_dir: String,
 }
 
+#[cfg(not(target_os = "macos"))]
 pub struct PrintParams {
     pub printer: Option<String>,
     pub margin_points: u16,
 }
 
+#[cfg(not(target_os = "macos"))]
 pub struct PrintDialog {
     open: bool,
     document_name: String,
@@ -300,12 +304,14 @@ pub struct PrintDialog {
     viewport_id: egui::ViewportId,
 }
 
+#[cfg(not(target_os = "macos"))]
 impl Default for PrintDialog {
     fn default() -> Self {
         Self::new()
     }
 }
 
+#[cfg(not(target_os = "macos"))]
 impl PrintDialog {
     pub fn new() -> Self {
         Self {
@@ -382,7 +388,7 @@ impl PrintDialog {
                     let margin = self.margin_points as f32 / 3.0;
                     egui::Frame::new()
                         .fill(Color32::from_rgb(248, 247, 244))
-                        .stroke(egui::Stroke::new(1.0, Color32::from_rgb(205, 202, 194)))
+                        .stroke(egui::Stroke::new(1.0_f32, Color32::from_rgb(205, 202, 194)))
                         .inner_margin(egui::Margin::same(margin as i8))
                         .show(ui, |ui| {
                             ui.set_min_height(420.0);

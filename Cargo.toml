@@ -1,6 +1,6 @@
 [package]
 name = "paper-shell"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2024"
 description = "A simple, compact and informative text editor for everyday writing."
 
@@ -55,3 +55,9 @@ xattr = "1.0"
 objc2 = "0.6.3"
 objc2-app-kit = "0.3.2"
 objc2-foundation = "0.3.2"
+
+# AppKit layout/printing must be exercised on the process main thread.
+[[test]]
+name = "print_layout"
+path = "tests/print_layout.rs"
+harness = false

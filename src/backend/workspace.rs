@@ -1,4 +1,4 @@
-//! Read workspace folders without exposing application storage or following symlinks.
+//! Read workspace folders, ignoring hidden system files (like `.DS_Store`), unopenable files, and symlinks.
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -14,24 +14,37 @@ pub fn read_folder(path: &Path, default_root: &Path) -> io::Result<Vec<Workspace
     let mut entries = Vec::new();
     for entry in fs::read_dir(path)? {
         let entry = entry?;
-        let kind = entry.file_type()?;
         let name = entry.file_name();
-        if path == default_root
-            && kind.is_dir()
-            && matches!(
-                name.to_str(),
-                Some("blobs" | "history" | "marks" | "plugins")
-            )
-        {
+        let name_str = name.to_string_lossy();
+
+        // Ignore hidden files and directories (e.g. .DS_Store, .git)
+        if name_str.starts_with('.') {
             continue;
         }
-        let path = entry.path();
-        let editable = kind.is_file() && is_text_file(&path);
-        entries.push(WorkspaceEntry {
-            path,
-            is_dir: kind.is_dir(),
-            editable,
-        });
+
+        let kind = entry.file_type()?;
+        if kind.is_dir() {
+            if path == default_root
+                && matches!(name_str.as_ref(), "blobs" | "history" | "marks" | "plugins")
+            {
+                continue;
+            }
+            entries.push(WorkspaceEntry {
+                path: entry.path(),
+                is_dir: true,
+                editable: false,
+            });
+        } else if kind.is_file() {
+            let path = entry.path();
+            if is_text_file(&path) {
+                entries.push(WorkspaceEntry {
+                    path,
+                    is_dir: false,
+                    editable: true,
+                });
+            }
+        }
+        // Non-regular files, unsupported file formats, and symbolic links are ignored.
     }
     entries.sort_by(|a, b| {
         b.is_dir
@@ -57,32 +70,50 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_storage_is_hidden_but_custom_folders_are_preserved() {
+    fn default_storage_hidden_and_unsupported_files_ignored() {
         let root = std::env::temp_dir().join(format!("workspace-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(root.join("blobs")).unwrap();
+        fs::create_dir_all(root.join(".git")).unwrap();
         fs::create_dir_all(root.join("chapters")).unwrap();
         fs::write(root.join("draft.MD"), "hello").unwrap();
+        fs::write(root.join(".DS_Store"), [0, 0, 0, 1]).unwrap();
+        fs::write(root.join(".gitignore"), "target/").unwrap();
         fs::write(root.join("image.png"), [0, 255]).unwrap();
+        fs::write(root.join("document.pdf"), [37, 80, 68, 70]).unwrap();
+
         let entries = read_folder(&root, &root).unwrap();
-        assert_eq!(entries.len(), 3);
+        assert_eq!(entries.len(), 2);
         assert!(entries[0].is_dir);
         assert_eq!(entries[0].path, root.join("chapters"));
+        assert!(!entries[0].editable);
+        assert!(!entries[1].is_dir);
+        assert_eq!(entries[1].path, root.join("draft.MD"));
         assert!(entries[1].editable);
-        assert!(!entries[2].editable);
-        assert_eq!(read_folder(&root, &root.join("other")).unwrap().len(), 4);
+
+        // When reading as a custom root (not default_root), blobs is kept, but .git and unopenable files are still ignored.
+        let custom_entries = read_folder(&root, &root.join("other")).unwrap();
+        assert_eq!(custom_entries.len(), 3);
+        assert_eq!(custom_entries[0].path, root.join("blobs"));
+        assert_eq!(custom_entries[1].path, root.join("chapters"));
+        assert_eq!(custom_entries[2].path, root.join("draft.MD"));
+
         assert!(read_folder(&root.join("missing"), &root).is_err());
         fs::remove_dir_all(root).unwrap();
     }
 
     #[cfg(unix)]
     #[test]
-    fn symlinks_are_not_traversed_or_edited() {
+    fn symlinks_are_ignored() {
         let root = std::env::temp_dir().join(format!("workspace-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();
         std::os::unix::fs::symlink(&root, root.join("loop")).unwrap();
+        let text_file = root.join("real.txt");
+        fs::write(&text_file, "real").unwrap();
+        std::os::unix::fs::symlink(&text_file, root.join("link.txt")).unwrap();
+
         let entries = read_folder(&root, &root).unwrap();
-        assert!(!entries[0].is_dir);
-        assert!(!entries[0].editable);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].path, text_file);
         fs::remove_dir_all(root).unwrap();
     }
 }

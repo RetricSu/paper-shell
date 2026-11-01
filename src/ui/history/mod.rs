@@ -302,7 +302,7 @@ impl HistoryWindow {
                                         RichText::new(format!(
                                             "{} {}",
                                             egui_phosphor::regular::HASH,
-                                            &version_data.entry.hash
+                                            version_data.entry.hash
                                         ))
                                         .monospace()
                                         .small(),

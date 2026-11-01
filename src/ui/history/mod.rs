@@ -4,6 +4,7 @@ mod types;
 mod ui;
 
 use crate::backend::editor_backend::{EditorBackend, HistoryEntry};
+use chrono::Local;
 use egui::{Color32, Context, RichText, ScrollArea, Ui};
 
 // Re-export public types
@@ -221,6 +222,7 @@ impl HistoryWindow {
                             let timestamp = version_data
                                 .entry
                                 .timestamp
+                                .with_timezone(&Local)
                                 .format("%Y-%m-%d %H:%M:%S")
                                 .to_string();
 

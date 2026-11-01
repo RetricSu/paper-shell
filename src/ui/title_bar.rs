@@ -11,6 +11,9 @@ pub enum TitleBarAction {
     History,
     Format,
     FontChange(String),
+    FontSizeChange(f32),
+    LineSpacingChange(f32),
+    ResetTypography,
     SearchReplace,
     /// Run an installed plugin by its id.
     RunPlugin(String),
@@ -35,6 +38,8 @@ pub struct TitleBarState<'a> {
     pub has_current_file: bool,
     pub chinese_fonts: &'a [String],
     pub current_font: &'a str,
+    pub font_size: f32,
+    pub line_spacing: f32,
     pub recent_files: &'a [PathBuf],
     pub plugins: &'a [PluginMetadata],
 }
@@ -52,6 +57,8 @@ impl TitleBar {
             has_current_file,
             chinese_fonts,
             current_font,
+            font_size,
+            line_spacing,
             recent_files,
             plugins,
         } = state;
@@ -251,30 +258,127 @@ impl TitleBar {
                             }
                         },
                     );
-                    ui.menu_button(format!("{} 字体", egui_phosphor::regular::TEXT_T), |ui| {
-                        ui.set_min_width(200.0);
-                        if ui
-                            .selectable_label(current_font == "Default", "系统默认")
-                            .clicked()
-                        {
-                            action = Some(TitleBarAction::FontChange("Default".to_string()));
-                            ui.close();
-                        }
-                        ui.separator();
-                        egui::ScrollArea::vertical()
-                            .max_height(280.0)
-                            .show(ui, |ui| {
-                                for font_name in chinese_fonts {
-                                    if ui
-                                        .selectable_label(font_name == current_font, font_name)
-                                        .clicked()
-                                    {
-                                        action =
-                                            Some(TitleBarAction::FontChange(font_name.clone()));
-                                        ui.close();
-                                    }
+                    egui::containers::menu::MenuButton::new(format!(
+                        "{} 排版",
+                        egui_phosphor::regular::TEXT_ALIGN_LEFT
+                    ))
+                    .config(
+                        egui::containers::menu::MenuConfig::default()
+                            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside),
+                    )
+                    .ui(ui, |ui| {
+                        ui.set_min_width(180.0);
+
+                        // 1. 字号调整
+                        ui.horizontal(|ui| {
+                            ui.label(egui::RichText::new("字号").strong());
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                if ui.button("＋").on_hover_text("增大字号").clicked() {
+                                    action = Some(TitleBarAction::FontSizeChange(
+                                        (font_size + 1.0).min(36.0),
+                                    ));
+                                }
+                                ui.label(format!("{font_size:.0}"));
+                                if ui.button("－").on_hover_text("减小字号").clicked() {
+                                    action = Some(TitleBarAction::FontSizeChange(
+                                        (font_size - 1.0).max(10.0),
+                                    ));
                                 }
                             });
+                        });
+                        ui.add_space(1.0);
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 3.0;
+                            for size in [12.0, 14.0, 16.0, 18.0, 20.0, 24.0] {
+                                let is_selected = (font_size - size).abs() < 0.5;
+                                if ui
+                                    .selectable_label(is_selected, format!("{size:.0}"))
+                                    .clicked()
+                                {
+                                    action = Some(TitleBarAction::FontSizeChange(size));
+                                }
+                            }
+                        });
+
+                        ui.separator();
+
+                        // 2. 行间距调整
+                        ui.horizontal(|ui| {
+                            ui.label(egui::RichText::new("行间距").strong());
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                if ui.button("＋").on_hover_text("增加行间距").clicked() {
+                                    let next = ((line_spacing + 0.1) * 10.0).round() / 10.0;
+                                    action = Some(TitleBarAction::LineSpacingChange(next.min(3.0)));
+                                }
+                                ui.label(format!("{line_spacing:.1}x"));
+                                if ui.button("－").on_hover_text("减小行间距").clicked() {
+                                    let next = ((line_spacing - 0.1) * 10.0).round() / 10.0;
+                                    action = Some(TitleBarAction::LineSpacingChange(next.max(1.0)));
+                                }
+                            });
+                        });
+                        ui.add_space(1.0);
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 3.0;
+                            for (spacing, label, tip) in [
+                                (1.2, "1.2", "紧凑 1.2x"),
+                                (1.5, "1.5", "标准 1.5x"),
+                                (1.8, "1.8", "宽松 1.8x"),
+                                (2.0, "2.0", "双倍 2.0x"),
+                            ] {
+                                let is_selected = (line_spacing - spacing).abs() < 0.05;
+                                if ui
+                                    .selectable_label(is_selected, label)
+                                    .on_hover_text(tip)
+                                    .clicked()
+                                {
+                                    action = Some(TitleBarAction::LineSpacingChange(spacing));
+                                }
+                            }
+                        });
+
+                        ui.separator();
+
+                        // 3. 字体选择 (子菜单)
+                        let current_font_label = if current_font == "Default" {
+                            "系统默认"
+                        } else {
+                            current_font
+                        };
+                        ui.menu_button("字体", |ui| {
+                            ui.set_min_width(180.0);
+                            if ui
+                                .selectable_label(current_font == "Default", "系统默认")
+                                .clicked()
+                            {
+                                action = Some(TitleBarAction::FontChange("Default".to_string()));
+                                ui.close();
+                            }
+                            ui.separator();
+                            egui::ScrollArea::vertical()
+                                .max_height(280.0)
+                                .show(ui, |ui| {
+                                    for font_name in chinese_fonts {
+                                        if ui
+                                            .selectable_label(font_name == current_font, font_name)
+                                            .clicked()
+                                        {
+                                            action =
+                                                Some(TitleBarAction::FontChange(font_name.clone()));
+                                            ui.close();
+                                        }
+                                    }
+                                });
+                        })
+                        .response
+                        .on_hover_text(format!("当前字体：{current_font_label}"));
+
+                        ui.separator();
+
+                        if ui.button("重置默认排版").clicked() {
+                            action = Some(TitleBarAction::ResetTypography);
+                            ui.close();
+                        }
                     });
                     ui.menu_button(
                         format!("{} 插件", egui_phosphor::regular::PUZZLE_PIECE),
@@ -455,6 +559,8 @@ mod tests {
                         has_current_file: true,
                         chinese_fonts: &[],
                         current_font: "Default",
+                        font_size: 14.0,
+                        line_spacing: 1.5,
                         recent_files: &[],
                         plugins: &[],
                         sidebar_expanded: false,
@@ -502,5 +608,35 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn title_bar_renders_typography_state() {
+        let ctx = egui::Context::default();
+        let fonts = vec!["PingFang SC".to_string(), "STSong".to_string()];
+        let _ = ctx.run(Default::default(), |ctx| {
+            egui::TopBottomPanel::top("title").show(ctx, |ui| {
+                let action = TitleBar::show(
+                    ui,
+                    TitleBarState {
+                        title: "Test Document",
+                        document_path: Some("/tmp/test.txt"),
+                        word_count: 100,
+                        cursor_word_count: 50,
+                        selection_word_count: None,
+                        writing_time: 120,
+                        has_current_file: true,
+                        chinese_fonts: &fonts,
+                        current_font: "PingFang SC",
+                        font_size: 16.0,
+                        line_spacing: 1.8,
+                        recent_files: &[],
+                        plugins: &[],
+                        sidebar_expanded: true,
+                    },
+                );
+                assert!(action.is_none());
+            });
+        });
     }
 }

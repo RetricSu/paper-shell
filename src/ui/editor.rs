@@ -36,7 +36,6 @@ struct OpenComment {
     position: egui::Pos2,
 }
 
-#[derive(Default)]
 pub struct Editor {
     content: String,
     reset_edit_state: bool,
@@ -52,6 +51,30 @@ pub struct Editor {
     open_comment: Option<OpenComment>,
     // Search and replace state
     search_replace: SearchReplaceState,
+    pub font_size: f32,
+    pub line_spacing: f32,
+}
+
+impl Default for Editor {
+    fn default() -> Self {
+        Self {
+            content: String::new(),
+            reset_edit_state: false,
+            cursor_index: None,
+            selection: None,
+            last_galley: None,
+            is_focused: false,
+            current_file: None,
+            current_file_total_time: 0,
+            cached_word_count: None,
+            comments: Vec::new(),
+            comment_composer: None,
+            open_comment: None,
+            search_replace: SearchReplaceState::default(),
+            font_size: 14.0,
+            line_spacing: 1.5,
+        }
+    }
 }
 
 impl Editor {
@@ -81,13 +104,42 @@ impl Editor {
                 ui.spacing_mut().item_spacing.x = 4.0;
                 ui.allocate_space(egui::vec2(14.0, 0.0));
             }
+            let font_size = if self.font_size > 0.0 {
+                self.font_size
+            } else {
+                14.0
+            };
+            let line_spacing = if self.line_spacing > 0.0 {
+                self.line_spacing
+            } else {
+                1.5
+            };
+            let font_id = egui::FontId::new(font_size, egui::FontFamily::Proportional);
+            let text_color = ui.visuals().text_color();
+
+            let mut layouter = |ui: &Ui, text: &dyn egui::TextBuffer, wrap_width: f32| {
+                let text_str = text.as_str();
+                let line_height = font_size * line_spacing;
+                let mut layout_job = egui::text::LayoutJob::simple(
+                    text_str.to_string(),
+                    font_id.clone(),
+                    text_color,
+                    wrap_width,
+                );
+                for section in &mut layout_job.sections {
+                    section.format.line_height = Some(line_height);
+                }
+                ui.fonts_mut(|f| f.layout_job(layout_job))
+            };
+
             let output = egui::TextEdit::multiline(&mut content)
                 .id(id)
                 .frame(false)
                 .margin(egui::Margin::symmetric(2, 2))
                 .desired_width(ui.available_width())
                 .desired_rows(30)
-                .font(egui::FontId::monospace(14.0))
+                .font(font_id.clone())
+                .layouter(&mut layouter)
                 .show(ui);
 
             let selection = output.cursor_range.filter(|range| !range.is_empty());
@@ -1968,5 +2020,47 @@ mod tests {
             Editor::add_paragraph_indentation("    Extra spaces."),
             "  Extra spaces."
         );
+    }
+
+    #[test]
+    fn typography_layout_changes_row_height() {
+        let ctx = egui::Context::default();
+        let mut editor1 = Editor {
+            font_size: 14.0,
+            line_spacing: 1.0,
+            ..Default::default()
+        };
+        editor1.set_content("First line\nSecond line\nThird line".to_string());
+
+        let mut editor2 = Editor {
+            font_size: 14.0,
+            line_spacing: 2.0,
+            ..Default::default()
+        };
+        editor2.set_content("First line\nSecond line\nThird line".to_string());
+
+        let mut editor3 = Editor {
+            font_size: 20.0,
+            line_spacing: 1.5,
+            ..Default::default()
+        };
+        editor3.set_content("First line\nSecond line\nThird line".to_string());
+
+        let _ = ctx.run(Default::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                editor1.show(ui);
+                editor2.show(ui);
+                editor3.show(ui);
+            });
+        });
+
+        let galley1 = editor1.last_galley.as_ref().unwrap();
+        let galley2 = editor2.last_galley.as_ref().unwrap();
+        let galley3 = editor3.last_galley.as_ref().unwrap();
+
+        // 14pt * 2.0 line spacing should be taller than 14pt * 1.0 line spacing
+        assert!(galley2.size().y > galley1.size().y);
+        // 20pt * 1.5 should be taller than 14pt * 1.0
+        assert!(galley3.size().y > galley1.size().y);
     }
 }

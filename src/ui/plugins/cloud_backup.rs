@@ -484,7 +484,7 @@ impl CloudBackupDialog {
                     } else {
                         Color32::from_rgba_premultiplied(50, 180, 80, 18)
                     })
-                    .stroke(egui::Stroke::new(1.0, color))
+                    .stroke(egui::Stroke::new(1.0_f32, color))
                     .inner_margin(egui::Margin::same(8))
                     .show(ui, |ui| {
                         ui.horizontal_wrapped(|ui| {

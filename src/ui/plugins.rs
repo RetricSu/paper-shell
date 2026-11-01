@@ -91,7 +91,7 @@ impl PluginOutputWindow {
             egui::ScrollArea::vertical()
                 .max_height(320.0)
                 .show(ui, |ui| {
-                    ui.label(RichText::new(format!("{} {}", icon, &self.body)).color(color));
+                    ui.label(RichText::new(format!("{} {}", icon, self.body)).color(color));
                 });
         });
 
@@ -361,7 +361,7 @@ impl PrintDialog {
                     let margin = self.margin_points as f32 / 3.0;
                     egui::Frame::new()
                         .fill(Color32::from_rgb(248, 247, 244))
-                        .stroke(egui::Stroke::new(1.0, Color32::from_rgb(205, 202, 194)))
+                        .stroke(egui::Stroke::new(1.0_f32, Color32::from_rgb(205, 202, 194)))
                         .inner_margin(egui::Margin::same(margin as i8))
                         .show(ui, |ui| {
                             ui.set_min_height(420.0);

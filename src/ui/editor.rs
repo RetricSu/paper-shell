@@ -2025,19 +2025,25 @@ mod tests {
     #[test]
     fn typography_layout_changes_row_height() {
         let ctx = egui::Context::default();
-        let mut editor1 = Editor::default();
-        editor1.font_size = 14.0;
-        editor1.line_spacing = 1.0;
+        let mut editor1 = Editor {
+            font_size: 14.0,
+            line_spacing: 1.0,
+            ..Default::default()
+        };
         editor1.set_content("First line\nSecond line\nThird line".to_string());
 
-        let mut editor2 = Editor::default();
-        editor2.font_size = 14.0;
-        editor2.line_spacing = 2.0;
+        let mut editor2 = Editor {
+            font_size: 14.0,
+            line_spacing: 2.0,
+            ..Default::default()
+        };
         editor2.set_content("First line\nSecond line\nThird line".to_string());
 
-        let mut editor3 = Editor::default();
-        editor3.font_size = 20.0;
-        editor3.line_spacing = 1.5;
+        let mut editor3 = Editor {
+            font_size: 20.0,
+            line_spacing: 1.5,
+            ..Default::default()
+        };
         editor3.set_content("First line\nSecond line\nThird line".to_string());
 
         let _ = ctx.run(Default::default(), |ctx| {

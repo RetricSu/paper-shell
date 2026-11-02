@@ -1,3 +1,5 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use paper_shell::app::PaperShellApp;
 use paper_shell::constant;
 use paper_shell::ui;

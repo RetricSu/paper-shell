@@ -167,6 +167,8 @@ Pushing a version tag (e.g. `v0.1.0`) triggers GitHub Actions to build, package,
 - `Paper-Shell-macOS-universal.dmg` / `.zip` (Universal for Apple Silicon & Intel)
 - `Paper-Shell-macOS-aarch64.dmg` / `.zip` (Apple Silicon)
 - `Paper-Shell-macOS-x86_64.dmg` / `.zip` (Intel)
+- `Paper-Shell-Linux-x86_64.tar.gz` (Linux x86_64)
+- `Paper-Shell-Windows-x86_64.zip` (Windows x86_64)
 - `SHA256SUMS.txt` (Checksums)
 
 You can also trigger releases manually from the GitHub Actions tab via `workflow_dispatch`.

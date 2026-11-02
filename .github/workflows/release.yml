@@ -109,20 +109,106 @@ jobs:
           create_zip "/tmp/universal/Paper Shell.app" "dist/Paper-Shell-macOS-universal.zip"
           rm -rf /tmp/universal
 
-          echo "==> Generating SHA256 checksums..."
-          cd dist
-          shasum -a 256 *.dmg *.zip > SHA256SUMS.txt
-          cat SHA256SUMS.txt
-          cd ..
-
       - name: Upload artifacts to GitHub Actions run
         uses: actions/upload-artifact@v4
         with:
           name: paper-shell-macos-release
-          path: |
-            dist/*.dmg
-            dist/*.zip
-            dist/SHA256SUMS.txt
+          path: dist/*
+
+  release-linux:
+    name: Build & Package Linux Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libx11-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev libfontconfig1-dev libfreetype6-dev
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Cache cargo registry and build target
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release binary
+        run: cargo build --release --locked --target x86_64-unknown-linux-gnu
+
+      - name: Package release artifact (tar.gz)
+        run: |
+          mkdir -p dist
+          tar -czf dist/Paper-Shell-Linux-x86_64.tar.gz -C target/x86_64-unknown-linux-gnu/release paper-shell
+
+      - name: Upload artifacts to GitHub Actions run
+        uses: actions/upload-artifact@v4
+        with:
+          name: paper-shell-linux-release
+          path: dist/*
+
+  release-windows:
+    name: Build & Package Windows Release
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache cargo registry and build target
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release binary
+        run: cargo build --release --locked --target x86_64-pc-windows-msvc
+
+      - name: Package release artifact (ZIP)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist
+          Compress-Archive -Path target/x86_64-pc-windows-msvc/release/paper-shell.exe -DestinationPath dist/Paper-Shell-Windows-x86_64.zip
+
+      - name: Upload artifacts to GitHub Actions run
+        uses: actions/upload-artifact@v4
+        with:
+          name: paper-shell-windows-release
+          path: dist/*
+
+  publish-release:
+    name: Publish GitHub Release
+    needs: [release-macos, release-linux, release-windows]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.create_release == 'true'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate SHA256 checksums
+        run: |
+          cd dist
+          rm -f SHA256SUMS.txt
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Upload checksums artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: paper-shell-checksums
+          path: dist/SHA256SUMS.txt
 
       - name: Determine tag name
         id: tag
@@ -138,7 +224,6 @@ jobs:
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.create_release == 'true'
         with:
           tag_name: ${{ steps.tag.outputs.name }}
           name: Paper Shell ${{ steps.tag.outputs.name }}
@@ -146,10 +231,4 @@ jobs:
           prerelease: ${{ github.event.inputs.prerelease == 'true' }}
           generate_release_notes: true
           files: |
-            dist/Paper-Shell-macOS-universal.dmg
-            dist/Paper-Shell-macOS-universal.zip
-            dist/Paper-Shell-macOS-aarch64.dmg
-            dist/Paper-Shell-macOS-aarch64.zip
-            dist/Paper-Shell-macOS-x86_64.dmg
-            dist/Paper-Shell-macOS-x86_64.zip
-            dist/SHA256SUMS.txt
+            dist/*

@@ -5,9 +5,7 @@ use crate::messages::ResponseMessage;
 use crate::plugin::builtin::cloud_backup::DocumentIdentity;
 use crate::plugin::{PluginContext, PluginManager};
 use crate::style::configure_style;
-use crate::ui::dialog::{
-    DocumentChangeDecision, PendingDocumentAction, UnsavedChangesDialog,
-};
+use crate::ui::dialog::{DocumentChangeDecision, PendingDocumentAction, UnsavedChangesDialog};
 use crate::ui::editor::Editor;
 use crate::ui::history::{HistoryAction, HistoryWindow};
 use crate::ui::plugins::cloud_backup::{CloudBackupAction, CloudBackupDialog};
@@ -232,8 +230,7 @@ impl PaperShellApp {
     }
 
     fn apply_new_document(&mut self, directory: Option<PathBuf>) {
-        self.draft_directory =
-            Some(directory.unwrap_or_else(|| self.document_directory()));
+        self.draft_directory = Some(directory.unwrap_or_else(|| self.document_directory()));
         let font_size = self.config.settings.font_size;
         let line_spacing = self.config.settings.line_spacing;
         self.editor = Editor::default();
@@ -850,8 +847,7 @@ impl eframe::App for PaperShellApp {
             &self.config.data_dir(),
             &self.config.settings.workspace_folders,
             self.editor.get_current_file().map(|path| path.as_path()),
-        )
-            && !modal_open
+        ) && !modal_open
         {
             self.handle_sidebar_action(action);
         }

@@ -45,11 +45,10 @@ pub fn show_modal<R>(
         .order(egui::Order::Middle)
         .fixed_pos(screen_rect.min)
         .show(ctx, |ui| {
-            let (rect, _) = ui.allocate_exact_size(
-                screen_rect.size(),
-                egui::Sense::click_and_drag(),
-            );
-            ui.painter().rect_filled(rect, 0.0, Color32::from_black_alpha(45));
+            let (rect, _) =
+                ui.allocate_exact_size(screen_rect.size(), egui::Sense::click_and_drag());
+            ui.painter()
+                .rect_filled(rect, 0.0, Color32::from_black_alpha(45));
         });
 
     let mut inner = None;
@@ -158,20 +157,15 @@ impl UnsavedChangesDialog {
         let response = show_modal(ctx, config, |ui| {
             ui.horizontal(|ui| {
                 let discard_clicked = ui
-                    .button(
-                        RichText::new("放弃修改").color(Color32::from_rgb(200, 60, 60)),
-                    )
+                    .button(RichText::new("放弃修改").color(Color32::from_rgb(200, 60, 60)))
                     .on_hover_text("放弃未保存的内容")
                     .clicked();
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let save_clicked = ui
                         .button(
-                            RichText::new(format!(
-                                "{} 保存",
-                                egui_phosphor::regular::CHECK
-                            ))
-                            .strong(),
+                            RichText::new(format!("{} 保存", egui_phosphor::regular::CHECK))
+                                .strong(),
                         )
                         .clicked();
 

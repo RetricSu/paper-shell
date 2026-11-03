@@ -1,6 +1,7 @@
 use crate::backend::workspace::{WorkspaceEntry, read_folder};
 use egui::Ui;
-use std::collections::HashMap;
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 pub enum SidebarAction {
@@ -10,29 +11,156 @@ pub enum SidebarAction {
     NewDocument(Option<PathBuf>),
 }
 
+/// Persistent workspace UI state (session state) decoupled from user settings.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct WorkspaceState {
+    #[serde(default)]
+    pub sidebar_expanded: bool,
+    #[serde(default)]
+    pub expanded_folders: BTreeSet<PathBuf>,
+    #[serde(default)]
+    pub collapsed_roots: BTreeSet<PathBuf>,
+}
+
+impl WorkspaceState {
+    pub const FILE_NAME: &'static str = "workspace_state.json";
+
+    /// Load persistent workspace state from data directory, sanitizing stale paths.
+    pub fn load(data_dir: &Path) -> Self {
+        let path = data_dir.join(Self::FILE_NAME);
+        if let Ok(file) = std::fs::File::open(&path) {
+            let reader = std::io::BufReader::new(file);
+            if let Ok(mut state) = serde_json::from_reader::<_, Self>(reader) {
+                state.sanitize();
+                return state;
+            }
+        }
+        Self::default()
+    }
+
+    /// Atomically save workspace state to data directory.
+    pub fn save(&self, data_dir: &Path) -> std::io::Result<()> {
+        let path = data_dir.join(Self::FILE_NAME);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let temp_path = path.with_extension("tmp");
+        {
+            let file = std::fs::File::create(&temp_path)?;
+            let writer = std::io::BufWriter::new(file);
+            serde_json::to_writer_pretty(writer, self)?;
+        }
+        std::fs::rename(temp_path, path)?;
+        Ok(())
+    }
+
+    /// Check whether a folder is open. Roots default to open, subfolders default to closed.
+    pub fn is_open(&self, path: &Path, is_root: bool) -> bool {
+        if is_root {
+            !self.collapsed_roots.contains(path)
+        } else {
+            self.expanded_folders.contains(path)
+        }
+    }
+
+    /// Update open state for a root or subfolder.
+    pub fn set_open(&mut self, path: &Path, is_root: bool, open: bool) {
+        if is_root {
+            if open {
+                self.collapsed_roots.remove(path);
+            } else {
+                self.collapsed_roots.insert(path.to_path_buf());
+            }
+        } else if open {
+            self.expanded_folders.insert(path.to_path_buf());
+        } else {
+            self.expanded_folders.remove(path);
+        }
+    }
+
+    /// Purge paths that no longer exist on disk to prevent zombie paths from accumulating.
+    pub fn sanitize(&mut self) {
+        self.expanded_folders.retain(|p| p.is_dir());
+        self.collapsed_roots.retain(|p| p.is_dir());
+    }
+}
+
 /// Directory contents are read only on first expansion or explicit refresh.
-#[derive(Default)]
 pub struct Sidebar {
-    expanded: bool,
+    state: WorkspaceState,
+    state_dirty: bool,
     folders: HashMap<PathBuf, Result<Vec<WorkspaceEntry>, String>>,
-    open_folders: HashMap<PathBuf, bool>,
+}
+
+impl Default for Sidebar {
+    fn default() -> Self {
+        Self::new(WorkspaceState::default())
+    }
 }
 
 impl Sidebar {
+    pub fn new(state: WorkspaceState) -> Self {
+        Self {
+            state,
+            state_dirty: false,
+            folders: HashMap::new(),
+        }
+    }
+
+    pub fn state(&self) -> &WorkspaceState {
+        &self.state
+    }
+
+    pub fn is_dirty(&self) -> bool {
+        self.state_dirty
+    }
+
+    pub fn save_if_dirty(&mut self, data_dir: &Path) {
+        if self.state_dirty {
+            if let Err(error) = self.state.save(data_dir) {
+                tracing::warn!("Failed to save workspace state: {}", error);
+            }
+            self.state_dirty = false;
+        }
+    }
+
+    pub fn save_state(&mut self, data_dir: &Path) -> std::io::Result<()> {
+        self.state_dirty = false;
+        self.state.save(data_dir)
+    }
+
+    pub fn on_root_removed(&mut self, root: &Path) {
+        self.state.collapsed_roots.remove(root);
+        self.state.expanded_folders.retain(|p| !p.starts_with(root));
+        self.state_dirty = true;
+    }
+
     pub fn refresh(&mut self) {
         self.folders.clear();
+        self.state.sanitize();
     }
 
     pub fn is_expanded(&self) -> bool {
-        self.expanded
+        self.state.sidebar_expanded
     }
 
     pub fn toggle(&mut self) {
-        self.expanded = !self.expanded;
+        self.state.sidebar_expanded = !self.state.sidebar_expanded;
+        self.state_dirty = true;
     }
 
     pub fn expand(&mut self) {
-        self.expanded = true;
+        if !self.state.sidebar_expanded {
+            self.state.sidebar_expanded = true;
+            self.state_dirty = true;
+        }
+    }
+
+    pub fn collapse(&mut self) {
+        if self.state.sidebar_expanded {
+            self.state.sidebar_expanded = false;
+            self.state_dirty = true;
+        }
     }
 
     pub fn show(
@@ -42,7 +170,7 @@ impl Sidebar {
         custom_roots: &[PathBuf],
         current_file: Option<&Path>,
     ) -> Option<SidebarAction> {
-        if !self.expanded {
+        if !self.state.sidebar_expanded {
             return None;
         }
         let mut action = None;
@@ -162,8 +290,8 @@ impl Sidebar {
         name: &str,
         root: bool,
     ) -> (egui::Response, bool) {
-        let open = self.open_folders.entry(path.to_path_buf()).or_insert(root);
-        let icon = if *open {
+        let is_open = self.state.is_open(path, root);
+        let icon = if is_open {
             egui_phosphor::regular::FOLDER_OPEN
         } else {
             egui_phosphor::regular::FOLDER_SIMPLE
@@ -173,17 +301,20 @@ impl Sidebar {
         let response = ui
             .push_id(path, |ui| {
                 ui.add(egui::Button::new(label).frame(false).truncate())
-                    .on_hover_text(if *open {
+                    .on_hover_text(if is_open {
                         "点击收起"
                     } else {
                         "点击展开"
                     })
             })
             .inner;
+        let mut new_open = is_open;
         if response.clicked() {
-            *open = !*open;
+            new_open = !is_open;
+            self.state.set_open(path, root, new_open);
+            self.state_dirty = true;
         }
-        (response, *open)
+        (response, new_open)
     }
 
     fn show_folder(
@@ -419,8 +550,113 @@ mod tests {
         let (output, _) = render(vec![]);
         render(click(text_position(&output, "隐藏文章列表")));
         render(vec![]);
-        assert!(!sidebar.expanded);
+        assert!(!sidebar.is_expanded());
         std::fs::remove_dir_all(root).unwrap();
         std::fs::remove_dir_all(custom).unwrap();
+    }
+
+    #[test]
+    fn workspace_state_save_load_and_sanitize() {
+        let temp_dir = std::env::temp_dir().join(format!("ws-state-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let sub1 = temp_dir.join("sub1");
+        let sub2 = temp_dir.join("sub2");
+        let deleted = temp_dir.join("deleted");
+        std::fs::create_dir_all(&sub1).unwrap();
+        std::fs::create_dir_all(&sub2).unwrap();
+        std::fs::create_dir_all(&deleted).unwrap();
+
+        let mut state = WorkspaceState {
+            sidebar_expanded: true,
+            ..Default::default()
+        };
+        state.set_open(&temp_dir, true, false); // collapse root
+        state.set_open(&sub1, false, true); // expand sub1
+        state.set_open(&deleted, false, true); // expand deleted
+
+        assert!(!state.is_open(&temp_dir, true));
+        assert!(state.is_open(&sub1, false));
+        assert!(!state.is_open(&sub2, false));
+        assert!(state.is_open(&deleted, false));
+
+        // Save state to disk
+        state.save(&temp_dir).unwrap();
+
+        // Remove deleted directory before loading
+        std::fs::remove_dir_all(&deleted).unwrap();
+
+        // Load back and verify sanitize pruned deleted directory
+        let loaded = WorkspaceState::load(&temp_dir);
+        assert!(loaded.sidebar_expanded);
+        assert!(!loaded.is_open(&temp_dir, true));
+        assert!(loaded.is_open(&sub1, false));
+        assert!(!loaded.is_open(&deleted, false));
+
+        std::fs::remove_dir_all(temp_dir).unwrap();
+    }
+
+    #[test]
+    fn sidebar_folder_toggle_persists_across_instances() {
+        let root = std::env::temp_dir().join(format!("sidebar-toggle-{}", uuid::Uuid::new_v4()));
+        let sub = root.join("nested");
+        std::fs::create_dir_all(&sub).unwrap();
+        let doc = sub.join("doc.md");
+        std::fs::write(&doc, "test").unwrap();
+
+        let data_dir = root.join("data");
+        std::fs::create_dir_all(&data_dir).unwrap();
+
+        let mut sidebar = Sidebar::new(WorkspaceState {
+            sidebar_expanded: true,
+            ..Default::default()
+        });
+
+        let ctx = egui::Context::default();
+        crate::style::configure_style(&ctx);
+        ctx.style_mut(|style| style.animation_time = 0.0);
+
+        let render = |sidebar: &mut Sidebar, events| {
+            ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(720.0, 468.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    sidebar.show(ctx, &root, &[], None);
+                },
+            )
+        };
+
+        // First frame: root is displayed, nested subfolder is collapsed by default
+        let output = render(&mut sidebar, vec![]);
+        let nested_pos = text_position(&output, "nested");
+
+        // Click to expand nested folder
+        render(&mut sidebar, click(nested_pos));
+        assert!(sidebar.is_dirty());
+        assert!(sidebar.state().is_open(&sub, false));
+
+        // Save state to data_dir
+        sidebar.save_if_dirty(&data_dir);
+        assert!(!sidebar.is_dirty());
+
+        // Create a new sidebar instance loading from data_dir
+        let loaded_state = WorkspaceState::load(&data_dir);
+        let mut new_sidebar = Sidebar::new(loaded_state);
+        assert!(new_sidebar.state().is_open(&sub, false));
+
+        // Render new sidebar: doc.md is already visible without clicking
+        let output = render(&mut new_sidebar, vec![]);
+        text_position(&output, "doc.md");
+
+        // Clean up root
+        new_sidebar.on_root_removed(&root);
+        assert!(!new_sidebar.state().is_open(&sub, false));
+
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

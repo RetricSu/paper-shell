@@ -42,10 +42,10 @@ switching articles or closing the window.
 
 ## Workspace files
 
-Click the **纸壳** title or use **文件 → 显示文章列表 / 隐藏文章列表**
-(Cmd/Ctrl+Shift+E) to show or hide the file tree. A tiny dot at the title's upper
-left is filled when the sidebar is visible and hollow when hidden. This command sits below a separator at the bottom of the File menu. The default
-workspace and all added folders appear as peer roots; each expands independently.
+Click the **纸壳** title or press **Cmd/Ctrl+Shift+E** to show or hide the file
+tree. A tiny dot at the title's upper left is filled when the sidebar is visible
+and hollow when hidden. The default workspace and all added folders appear as
+peer roots; each expands independently.
 Right-click blank space in the sidebar for **添加文件夹…** and **刷新**.
 When the article list is hidden, the editor shows a non-interactive paragraph-dot
 gutter. The focused paragraph's dot breathes gently; wrapped lines share one dot.

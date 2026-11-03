@@ -66,7 +66,7 @@ pub fn show_modal<R>(
         .frame(
             egui::Frame::window(&ctx.style())
                 .fill(Color32::WHITE)
-                .stroke(egui::Stroke::new(1.0, Color32::from_rgb(215, 215, 215)))
+                .stroke(egui::Stroke::new(1.0_f32, Color32::from_rgb(215, 215, 215)))
                 .corner_radius(egui::CornerRadius::ZERO)
                 .inner_margin(egui::Margin::symmetric(24, 20))
                 .shadow(egui::epaint::Shadow::NONE),

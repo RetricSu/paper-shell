@@ -141,7 +141,7 @@ impl HistoryWindow {
                     .frame(
                         egui::Frame::default()
                             .fill(Color32::from_rgb(248, 248, 248))
-                            .stroke(egui::Stroke::new(1.0, Color32::from_rgb(225, 225, 225)))
+                            .stroke(egui::Stroke::new(1.0_f32, Color32::from_rgb(225, 225, 225)))
                             .inner_margin(egui::Margin::symmetric(12, 8)),
                     )
                     .show(ctx, |ui| {
@@ -152,7 +152,7 @@ impl HistoryWindow {
                     .frame(
                         egui::Frame::default()
                             .fill(Color32::WHITE)
-                            .stroke(egui::Stroke::new(1.0, Color32::from_rgb(225, 225, 225)))
+                            .stroke(egui::Stroke::new(1.0_f32, Color32::from_rgb(225, 225, 225)))
                             .inner_margin(egui::Margin::ZERO),
                     )
                     .show(ctx, |ui| {
@@ -288,7 +288,7 @@ impl HistoryWindow {
                 .frame(
                     egui::Frame::default()
                         .fill(Color32::from_rgb(250, 250, 250))
-                        .stroke(egui::Stroke::new(1.0, Color32::from_rgb(230, 230, 230)))
+                        .stroke(egui::Stroke::new(1.0_f32, Color32::from_rgb(230, 230, 230)))
                         .inner_margin(egui::Margin::symmetric(8, 8)),
                 )
                 .resizable(true)

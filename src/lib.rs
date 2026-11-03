@@ -9,6 +9,7 @@ pub mod config;
 pub mod constant;
 pub mod file;
 pub mod messages;
+#[cfg(target_os = "macos")]
 pub mod open_with;
 pub mod plugin;
 pub mod process_env;

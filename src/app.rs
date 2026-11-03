@@ -98,11 +98,13 @@ impl Default for PaperShellApp {
             config.settings.external_plugin_settings.clone(),
         );
         let plugin_metadata = plugin_manager.metadata();
+        let workspace_state = crate::ui::sidebar::WorkspaceState::load(&config.data_dir());
+        let sidebar = crate::ui::sidebar::Sidebar::new(workspace_state);
 
         Self {
             editor,
             editor_backend: Arc::new(EditorBackend::default()),
-            sidebar: crate::ui::sidebar::Sidebar::default(),
+            sidebar,
             draft_directory: None,
             draft_doc_id: uuid::Uuid::new_v4().to_string(),
             saved_content: String::new(),
@@ -302,6 +304,7 @@ impl PaperShellApp {
                     .workspace_folders
                     .retain(|root| root != &path);
                 self.save_workspace_folders();
+                self.sidebar.on_root_removed(&path);
                 self.sidebar.refresh();
             }
             SidebarAction::NewDocument(directory) => {
@@ -1110,6 +1113,8 @@ impl eframe::App for PaperShellApp {
         if let Some(decision) = self.unsaved_dialog.show(ctx) {
             self.handle_unsaved_dialog_decision(ctx, decision);
         }
+
+        self.sidebar.save_if_dirty(&self.config.data_dir());
     }
 }
 

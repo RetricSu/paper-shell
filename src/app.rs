@@ -5,6 +5,7 @@ use crate::messages::ResponseMessage;
 use crate::plugin::builtin::cloud_backup::DocumentIdentity;
 use crate::plugin::{PluginContext, PluginManager};
 use crate::style::configure_style;
+use crate::ui::dialog::{DocumentChangeDecision, PendingDocumentAction, UnsavedChangesDialog};
 use crate::ui::editor::Editor;
 use crate::ui::history::{HistoryAction, HistoryWindow};
 use crate::ui::plugins::cloud_backup::{CloudBackupAction, CloudBackupDialog};
@@ -19,28 +20,6 @@ use crate::ui::plugins::PrintDialog;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
-
-const SAVE_CHANGES: &str = "保存";
-const DISCARD_CHANGES: &str = "放弃修改";
-const CANCEL_SWITCH: &str = "取消";
-
-// Only an explicit discard or a completed save may replace unsaved content.
-fn confirm_document_change(
-    content: &str,
-    saved_content: &str,
-    comments_dirty: bool,
-    ask: impl FnOnce() -> rfd::MessageDialogResult,
-    save: impl FnOnce() -> bool,
-) -> bool {
-    if content == saved_content && !comments_dirty {
-        return true;
-    }
-    match ask() {
-        rfd::MessageDialogResult::Custom(choice) if choice == SAVE_CHANGES => save(),
-        rfd::MessageDialogResult::Custom(choice) if choice == DISCARD_CHANGES => true,
-        _ => false,
-    }
-}
 
 fn write_cloud_recovery_snapshot(data_dir: &Path, content: &str) -> std::io::Result<PathBuf> {
     let directory = data_dir.join("history").join("cloud_backup_recovery");
@@ -85,6 +64,8 @@ pub struct PaperShellApp {
     external_plugin_config_window: ExternalPluginConfigWindow,
     cloud_backup_dialog: CloudBackupDialog,
     publish_dialog: PublishDialog,
+    unsaved_dialog: UnsavedChangesDialog,
+    allow_close_once: bool,
     #[cfg(not(target_os = "macos"))]
     print_dialog: PrintDialog,
     #[cfg(target_os = "macos")]
@@ -94,10 +75,10 @@ pub struct PaperShellApp {
 impl Default for PaperShellApp {
     fn default() -> Self {
         // Initialize tracing subscriber for console output
-        tracing_subscriber::fmt()
+        let _ = tracing_subscriber::fmt()
             .with_max_level(tracing::Level::DEBUG)
             .with_thread_ids(true)
-            .init();
+            .try_init();
 
         let (sender, receiver) = channel();
         let mut config = crate::config::Config::default();
@@ -143,6 +124,8 @@ impl Default for PaperShellApp {
             external_plugin_config_window: ExternalPluginConfigWindow::new(),
             cloud_backup_dialog: CloudBackupDialog::new(),
             publish_dialog: PublishDialog::new(),
+            unsaved_dialog: UnsavedChangesDialog::new(),
+            allow_close_once: false,
             #[cfg(not(target_os = "macos"))]
             print_dialog: PrintDialog::new(),
             #[cfg(target_os = "macos")]
@@ -222,39 +205,42 @@ impl PaperShellApp {
         }
     }
 
+    fn is_document_dirty(&self) -> bool {
+        self.editor.get_content() != self.saved_content
+            || self.editor.comments() != self.saved_comments.as_slice()
+    }
+
     fn open_file(&mut self, path: PathBuf) {
-        if self.editor.get_current_file() == Some(&path) || !self.confirm_document_switch() {
+        if self.editor.get_current_file() == Some(&path) {
             return;
         }
+        if self.is_document_dirty() {
+            self.unsaved_dialog
+                .open(PendingDocumentAction::OpenFile(path));
+            return;
+        }
+        self.apply_open_file(path);
+    }
+
+    fn apply_open_file(&mut self, path: PathBuf) {
         match self.load_file_data(&path) {
             Ok(data) => self.apply_load_file_data(data),
             Err(e) => self.file_error = Some(e),
         }
     }
 
-    fn confirm_document_switch(&mut self) -> bool {
-        let content = self.editor.get_content();
-        let saved_content = self.saved_content.clone();
-        let comments_dirty = self.editor.comments() != self.saved_comments.as_slice();
-        confirm_document_change(
-            &content,
-            &saved_content,
-            comments_dirty,
-            || {
-                rfd::MessageDialog::new()
-                    .set_title("未保存的文章")
-                    .set_description(
-                        "当前文章有未保存的内容，是否先保存？选择“放弃修改”将丢失这些内容。",
-                    )
-                    .set_buttons(rfd::MessageButtons::YesNoCancelCustom(
-                        SAVE_CHANGES.into(),
-                        DISCARD_CHANGES.into(),
-                        CANCEL_SWITCH.into(),
-                    ))
-                    .show()
-            },
-            || self.save_file(),
-        )
+    fn apply_new_document(&mut self, directory: Option<PathBuf>) {
+        self.draft_directory = Some(directory.unwrap_or_else(|| self.document_directory()));
+        let font_size = self.config.settings.font_size;
+        let line_spacing = self.config.settings.line_spacing;
+        self.editor = Editor::default();
+        self.editor.font_size = font_size;
+        self.editor.line_spacing = line_spacing;
+        self.editor.set_content(String::new());
+        self.draft_doc_id = uuid::Uuid::new_v4().to_string();
+        self.saved_content.clear();
+        self.saved_comments.clear();
+        self.time_backend.get_and_reset_writing_time();
     }
 
     fn document_directory(&self) -> PathBuf {
@@ -319,19 +305,11 @@ impl PaperShellApp {
                 self.sidebar.refresh();
             }
             SidebarAction::NewDocument(directory) => {
-                if self.confirm_document_switch() {
-                    self.draft_directory =
-                        Some(directory.unwrap_or_else(|| self.document_directory()));
-                    let font_size = self.config.settings.font_size;
-                    let line_spacing = self.config.settings.line_spacing;
-                    self.editor = Editor::default();
-                    self.editor.font_size = font_size;
-                    self.editor.line_spacing = line_spacing;
-                    self.editor.set_content(String::new());
-                    self.draft_doc_id = uuid::Uuid::new_v4().to_string();
-                    self.saved_content.clear();
-                    self.saved_comments.clear();
-                    self.time_backend.get_and_reset_writing_time();
+                if self.is_document_dirty() {
+                    self.unsaved_dialog
+                        .open(PendingDocumentAction::NewDocument(directory));
+                } else {
+                    self.apply_new_document(directory);
                 }
             }
         }
@@ -439,9 +417,13 @@ impl PaperShellApp {
                             .set_history(entries, &self.editor_backend)
                         {
                             tracing::info!("Failed to set history: {}", e);
+                            self.history_window.set_error(e);
                         }
                     }
-                    Err(e) => tracing::error!("Failed to load history: {}", e),
+                    Err(e) => {
+                        tracing::error!("Failed to load history: {}", e);
+                        self.history_window.set_error(e);
+                    }
                 },
                 ResponseMessage::OpenFile(path) => self.open_file(path),
                 ResponseMessage::OpenWorkspace(path) => self.add_workspace_folder(path),
@@ -460,15 +442,28 @@ impl PaperShellApp {
     fn handle_history_action(&mut self, action: HistoryAction) {
         match action {
             HistoryAction::RollbackToVersion(hash) => {
-                match self.editor_backend.restore_version(&hash) {
-                    Ok(content) => {
-                        self.editor.restore_content(content);
-                        tracing::info!("Rolled back to version: {}", hash);
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to rollback to version {}: {}", hash, e);
-                    }
+                if self.is_document_dirty() {
+                    self.unsaved_dialog
+                        .open(PendingDocumentAction::Rollback(hash));
+                } else {
+                    let _ = self.apply_rollback(&hash);
                 }
+            }
+        }
+    }
+
+    fn apply_rollback(&mut self, hash: &str) -> bool {
+        match self.editor_backend.restore_version(hash) {
+            Ok(content) => {
+                self.editor.restore_content(content);
+                tracing::info!("Rolled back to version: {}", hash);
+                true
+            }
+            Err(e) => {
+                let msg = format!("无法回滚到版本 {}: {}", hash, e);
+                tracing::error!("{}", msg);
+                self.file_error = Some(msg);
+                false
             }
         }
     }
@@ -629,21 +624,84 @@ impl PaperShellApp {
             }
         }
     }
+
+    fn handle_unsaved_dialog_decision(
+        &mut self,
+        ctx: &egui::Context,
+        decision: DocumentChangeDecision,
+    ) {
+        let Some(action) = self.unsaved_dialog.pending_action().cloned() else {
+            self.unsaved_dialog.close();
+            return;
+        };
+
+        match decision {
+            DocumentChangeDecision::Save => {
+                if self.save_file() {
+                    self.unsaved_dialog.close();
+                    self.execute_pending_document_action(ctx, action);
+                }
+            }
+            DocumentChangeDecision::Discard => {
+                self.unsaved_dialog.close();
+                self.execute_pending_document_action(ctx, action);
+            }
+            DocumentChangeDecision::Cancel => {
+                self.allow_close_once = false;
+                self.unsaved_dialog.close();
+            }
+        }
+    }
+
+    fn execute_pending_document_action(
+        &mut self,
+        ctx: &egui::Context,
+        action: PendingDocumentAction,
+    ) {
+        match action {
+            PendingDocumentAction::OpenFile(path) => {
+                self.apply_open_file(path);
+            }
+            PendingDocumentAction::NewDocument(directory) => {
+                self.apply_new_document(directory);
+            }
+            PendingDocumentAction::CloseWindow => {
+                self.allow_close_once = true;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+            PendingDocumentAction::Rollback(hash) => {
+                let _ = self.apply_rollback(&hash);
+            }
+        }
+    }
 }
 
 impl eframe::App for PaperShellApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.check_response_messages();
         self.update_time_backend_if_focus_changed();
-        if ctx.input(|input| input.viewport().close_requested()) && !self.confirm_document_switch()
-        {
-            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+        if ctx.input(|input| input.viewport().close_requested()) {
+            if self.allow_close_once {
+                self.allow_close_once = false;
+            } else if self.is_document_dirty() {
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                self.unsaved_dialog.open(PendingDocumentAction::CloseWindow);
+            }
         }
 
-        let shortcut_action = crate::ui::title_bar::TitleBar::shortcut(ctx);
+        let modal_open = self.unsaved_dialog.is_open();
+
+        let shortcut_action = if !modal_open {
+            crate::ui::title_bar::TitleBar::shortcut(ctx)
+        } else {
+            None
+        };
         let (total_words, cursor_words) = self.editor.get_stats();
         // Title Bar
         egui::TopBottomPanel::top("title_bar_panel").show(ctx, |ui| {
+            if modal_open {
+                ui.disable();
+            }
             let document_path = self
                 .editor
                 .get_current_file()
@@ -789,7 +847,8 @@ impl eframe::App for PaperShellApp {
             &self.config.data_dir(),
             &self.config.settings.workspace_folders,
             self.editor.get_current_file().map(|path| path.as_path()),
-        ) {
+        ) && !modal_open
+        {
             self.handle_sidebar_action(action);
         }
         if let Some(error) = self.file_error.clone() {
@@ -814,6 +873,9 @@ impl eframe::App for PaperShellApp {
                 }),
             )
             .show(ctx, |ui| {
+                if modal_open {
+                    ui.disable();
+                }
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     ui.vertical_centered(|ui| {
                         self.editor
@@ -1043,6 +1105,11 @@ impl eframe::App for PaperShellApp {
                 tracing::warn!("Plugin not found: print");
             }
         }
+
+        // Custom in-app unsaved changes confirmation dialog
+        if let Some(decision) = self.unsaved_dialog.show(ctx) {
+            self.handle_unsaved_dialog_decision(ctx, decision);
+        }
     }
 }
 
@@ -1066,90 +1133,111 @@ mod document_change_tests {
     }
 
     #[test]
-    fn unsaved_new_article_requires_a_decision_and_cancel_preserves_content() {
-        let mut editor = Editor::default();
-        editor.set_content("尚未保存的新文章".into());
-        assert!(editor.get_current_file().is_none());
-        let mut prompted = false;
-        let may_switch = confirm_document_change(
-            &editor.get_content(),
-            "",
-            false,
-            || {
-                prompted = true;
-                rfd::MessageDialogResult::Custom(CANCEL_SWITCH.into())
-            },
-            || panic!("Cancel must not save"),
+    fn test_dirty_detection_for_content_and_comments() {
+        let mut app = PaperShellApp {
+            saved_content: "baseline".into(),
+            ..Default::default()
+        };
+        app.editor.set_content("baseline".into());
+        assert!(!app.is_document_dirty());
+
+        // Changing content makes it dirty
+        app.editor.set_content("new text".into());
+        assert!(app.is_document_dirty());
+
+        // Reverting content restores clean state
+        app.editor.set_content("baseline".into());
+        assert!(!app.is_document_dirty());
+
+        // Changing comments without changing content makes it dirty
+        app.editor.set_comments(vec![crate::comments::TextComment {
+            id: "1".into(),
+            text: "note".into(),
+            start: 0,
+            end: 4,
+            quote: "base".into(),
+        }]);
+        assert!(app.is_document_dirty());
+    }
+
+    #[test]
+    fn test_decision_cancel_preserves_content_and_resets_dialog() {
+        let ctx = egui::Context::default();
+        let mut app = PaperShellApp {
+            saved_content: "original".into(),
+            ..Default::default()
+        };
+        app.editor.set_content("unsaved draft".into());
+        app.unsaved_dialog
+            .open(PendingDocumentAction::OpenFile(PathBuf::from("/other.txt")));
+
+        app.handle_unsaved_dialog_decision(&ctx, DocumentChangeDecision::Cancel);
+
+        assert!(!app.unsaved_dialog.is_open());
+        assert!(app.unsaved_dialog.pending_action().is_none());
+        assert_eq!(app.editor.get_content(), "unsaved draft");
+        assert!(!app.allow_close_once);
+    }
+
+    #[test]
+    fn test_decision_discard_close_sets_allow_close_without_mutating_saved_snapshot() {
+        let ctx = egui::Context::default();
+        let mut app = PaperShellApp {
+            saved_content: "persisted text".into(),
+            ..Default::default()
+        };
+        app.editor.set_content("unpersisted modifications".into());
+        app.unsaved_dialog.open(PendingDocumentAction::CloseWindow);
+
+        app.handle_unsaved_dialog_decision(&ctx, DocumentChangeDecision::Discard);
+
+        assert!(!app.unsaved_dialog.is_open());
+        assert!(app.allow_close_once);
+        // CRITICAL: saved_content must not be forged to fake clean state
+        assert_eq!(app.saved_content, "persisted text");
+        assert_eq!(app.editor.get_content(), "unpersisted modifications");
+    }
+
+    #[test]
+    fn test_decision_discard_new_document_applies_new_doc() {
+        let ctx = egui::Context::default();
+        let mut app = PaperShellApp::default();
+        app.editor.set_content("some text".into());
+        app.unsaved_dialog
+            .open(PendingDocumentAction::NewDocument(None));
+
+        app.handle_unsaved_dialog_decision(&ctx, DocumentChangeDecision::Discard);
+
+        assert!(!app.unsaved_dialog.is_open());
+        assert_eq!(app.editor.get_content(), "");
+        assert!(app.editor.get_current_file().is_none());
+    }
+
+    #[test]
+    fn test_rollback_failure_sets_visible_file_error() {
+        let mut app = PaperShellApp::default();
+        assert!(app.file_error.is_none());
+
+        let success = app.apply_rollback("nonexistent_hash_12345");
+        assert!(!success);
+        assert!(app.file_error.is_some());
+        assert!(
+            app.file_error
+                .as_ref()
+                .unwrap()
+                .contains("无法回滚到版本 nonexistent_hash_12345")
         );
-        if may_switch {
-            editor.set_content("以前的文章".into());
-        }
-        assert!(prompted);
-        assert!(!may_switch);
-        assert_eq!(editor.get_content(), "尚未保存的新文章");
     }
 
     #[test]
-    fn save_must_complete_before_switching() {
-        // false covers both cancelling the save dialog and a failed save.
-        for saved in [false, true] {
-            assert_eq!(
-                confirm_document_change(
-                    "new draft",
-                    "",
-                    false,
-                    || rfd::MessageDialogResult::Custom(SAVE_CHANGES.into()),
-                    || saved,
-                ),
-                saved
-            );
-        }
-    }
+    fn test_history_window_escape_does_not_double_close() {
+        let mut window = HistoryWindow::new();
+        window.open();
+        window.confirm_rollback = Some("hash123".into());
 
-    #[test]
-    fn only_explicit_discard_allows_switching_without_saving() {
-        for (choice, expected) in [
-            (
-                rfd::MessageDialogResult::Custom(DISCARD_CHANGES.into()),
-                true,
-            ),
-            (rfd::MessageDialogResult::Cancel, false),
-            (rfd::MessageDialogResult::Custom("unexpected".into()), false),
-        ] {
-            assert_eq!(
-                confirm_document_change(
-                    "edited article",
-                    "saved article",
-                    false,
-                    || choice,
-                    || { panic!("Only the save button may save") }
-                ),
-                expected
-            );
-        }
-    }
-
-    #[test]
-    fn comment_only_changes_require_a_save_decision() {
-        assert!(!confirm_document_change(
-            "saved article",
-            "saved article",
-            true,
-            || rfd::MessageDialogResult::Custom(CANCEL_SWITCH.into()),
-            || panic!("Cancel must not save"),
-        ));
-    }
-
-    #[test]
-    fn unchanged_article_needs_no_prompt() {
-        for content in ["", "saved article"] {
-            assert!(confirm_document_change(
-                content,
-                content,
-                false,
-                || panic!("Unchanged content must not prompt"),
-                || panic!("Unchanged content must not save"),
-            ));
-        }
+        // When confirm_rollback is Some, confirm_rollback is active.
+        // Once cancelled, confirm_rollback becomes None, but window remains open.
+        window.confirm_rollback = None;
+        assert!(window.is_open());
     }
 }

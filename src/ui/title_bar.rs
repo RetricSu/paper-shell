@@ -216,26 +216,6 @@ impl TitleBar {
                                 action = Some(TitleBarAction::History);
                                 ui.close();
                             }
-                            ui.separator();
-                            if ui
-                                .add(
-                                    egui::Button::new(if sidebar_expanded {
-                                        "隐藏文章列表"
-                                    } else {
-                                        "显示文章列表"
-                                    })
-                                    .shortcut_text(
-                                        ui.ctx().format_shortcut(&egui::KeyboardShortcut::new(
-                                            egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
-                                            egui::Key::E,
-                                        )),
-                                    ),
-                                )
-                                .clicked()
-                            {
-                                action = Some(TitleBarAction::ToggleSidebar);
-                                ui.close();
-                            }
                         },
                     );
                     ui.menu_button(
@@ -811,5 +791,114 @@ mod tests {
                 }
             });
         });
+    }
+
+    #[test]
+    fn file_menu_does_not_contain_toggle_article_list() {
+        let ctx = egui::Context::default();
+        crate::style::configure_style(&ctx);
+
+        let find_text_position = |output: &egui::FullOutput, needle: &str| -> Option<egui::Pos2> {
+            output.shapes.iter().find_map(|shape| {
+                if let egui::Shape::Text(text) = &shape.shape
+                    && text.galley.text().contains(needle)
+                {
+                    Some(text.pos + text.galley.size() * 0.5)
+                } else {
+                    None
+                }
+            })
+        };
+
+        let has_text = |output: &egui::FullOutput, needle: &str| -> bool {
+            output.shapes.iter().any(|shape| {
+                if let egui::Shape::Text(text) = &shape.shape {
+                    text.galley.text().contains(needle)
+                } else {
+                    false
+                }
+            })
+        };
+
+        let render_title_bar =
+            |ctx: &egui::Context, events: Vec<egui::Event>| -> egui::FullOutput {
+                ctx.run(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(1000.0, 700.0),
+                        )),
+                        events,
+                        ..Default::default()
+                    },
+                    |ctx| {
+                        egui::TopBottomPanel::top("title").show(ctx, |ui| {
+                            let _ = TitleBar::show(
+                                ui,
+                                TitleBarState {
+                                    title: "Test Document",
+                                    document_path: Some("/tmp/test.txt"),
+                                    word_count: 100,
+                                    cursor_word_count: 50,
+                                    selection_word_count: None,
+                                    writing_time: 120,
+                                    has_current_file: true,
+                                    chinese_fonts: &[],
+                                    current_font: "Default",
+                                    font_size: 14.0,
+                                    line_spacing: 1.5,
+                                    recent_files: &[],
+                                    plugins: &[],
+                                    sidebar_expanded: false,
+                                },
+                            );
+                        });
+                    },
+                )
+            };
+
+        // Frame 1: initial render
+        let output1 = render_title_bar(&ctx, vec![]);
+        let file_pos = find_text_position(&output1, "文件").expect("File menu button must exist");
+
+        // Frame 2: click the File menu
+        let click_events = vec![
+            egui::Event::PointerButton {
+                pos: file_pos,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+            egui::Event::PointerButton {
+                pos: file_pos,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ];
+        let _ = render_title_bar(&ctx, click_events);
+
+        // Frame 3: file menu is open
+        let output3 = render_title_bar(&ctx, vec![]);
+        assert!(
+            has_text(&output3, "新建窗口"),
+            "File menu should contain '新建窗口'"
+        );
+        assert!(
+            has_text(&output3, "保存"),
+            "File menu should contain '保存'"
+        );
+        assert!(
+            has_text(&output3, "版本历史…"),
+            "File menu should contain '版本历史…'"
+        );
+        assert!(
+            !has_text(&output3, "显示文章列表"),
+            "File menu should not contain '显示文章列表'"
+        );
+        assert!(
+            !has_text(&output3, "隐藏文章列表"),
+            "File menu should not contain '隐藏文章列表'"
+        );
     }
 }

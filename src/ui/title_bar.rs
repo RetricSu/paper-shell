@@ -237,15 +237,6 @@ impl TitleBar {
                                 ui.close();
                             }
                             ui.separator();
-                            if ui
-                                .button("整理段落缩进")
-                                .on_hover_text("为段落首行添加缩进空格")
-                                .clicked()
-                            {
-                                action = Some(TitleBarAction::Format);
-                                ui.close();
-                            }
-                            ui.separator();
                             let mut checked = vim_mode;
                             if ui.checkbox(&mut checked, "Vim 模式 (Esc)").clicked() {
                                 action = Some(TitleBarAction::ToggleVimMode);
@@ -393,6 +384,10 @@ impl TitleBar {
                             egui::Button::new(format!("{} 字体", egui_phosphor::regular::TEXT_T))
                                 .right_text(format!("{current_font_label} ⏵")),
                         )
+                        .config(
+                            egui::containers::menu::MenuConfig::default()
+                                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside),
+                        )
                         .ui(ui, |ui| {
                             let sub_width = 196.0;
                             ui.set_width(sub_width);
@@ -406,7 +401,6 @@ impl TitleBar {
                                 .clicked()
                             {
                                 action = Some(TitleBarAction::FontChange("Default".to_string()));
-                                ui.close();
                             }
                             ui.separator();
                             egui::ScrollArea::vertical()
@@ -426,11 +420,20 @@ impl TitleBar {
                                         {
                                             action =
                                                 Some(TitleBarAction::FontChange(font_name.clone()));
-                                            ui.close();
                                         }
                                     }
                                 });
                         });
+
+                        ui.separator();
+
+                        if ui
+                            .button("整理段落缩进")
+                            .on_hover_text("为段落首行添加缩进空格")
+                            .clicked()
+                        {
+                            action = Some(TitleBarAction::Format);
+                        }
 
                         ui.separator();
 
@@ -445,7 +448,6 @@ impl TitleBar {
                             .clicked()
                         {
                             action = Some(TitleBarAction::ResetTypography);
-                            ui.close();
                         }
                     });
                     ui.menu_button(
@@ -606,6 +608,111 @@ impl TitleBar {
 mod tests {
     use super::*;
 
+    const TEST_SCREEN_SIZE: egui::Vec2 = egui::vec2(1000.0, 700.0);
+
+    fn test_screen_rect() -> egui::Rect {
+        egui::Rect::from_min_size(egui::Pos2::ZERO, TEST_SCREEN_SIZE)
+    }
+
+    fn click_events(pos: egui::Pos2) -> Vec<egui::Event> {
+        vec![
+            egui::Event::PointerMoved(pos),
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ]
+    }
+
+    fn text_position(output: &egui::FullOutput, needle: &str) -> Option<egui::Pos2> {
+        output.shapes.iter().find_map(|shape| {
+            if let egui::Shape::Text(text) = &shape.shape
+                && text.galley.text().contains(needle)
+            {
+                Some(text.pos + text.galley.size() * 0.5)
+            } else {
+                None
+            }
+        })
+    }
+
+    fn has_text(output: &egui::FullOutput, needle: &str) -> bool {
+        text_position(output, needle).is_some()
+    }
+
+    fn render_typography_title_bar(
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+        fonts: &[String],
+        current_font: &str,
+        font_size: f32,
+        line_spacing: f32,
+    ) -> (egui::FullOutput, Option<TitleBarAction>) {
+        let mut action = None;
+        let output = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(test_screen_rect()),
+                events,
+                ..Default::default()
+            },
+            |ctx| {
+                egui::TopBottomPanel::top("title").show(ctx, |ui| {
+                    action = TitleBar::show(
+                        ui,
+                        TitleBarState {
+                            title: "Test Document",
+                            document_path: Some("/tmp/test.txt"),
+                            word_count: 100,
+                            cursor_word_count: 50,
+                            selection_word_count: None,
+                            writing_time: 120,
+                            has_current_file: true,
+                            chinese_fonts: fonts,
+                            current_font,
+                            font_size,
+                            line_spacing,
+                            recent_files: &[],
+                            plugins: &[],
+                            sidebar_expanded: true,
+                            vim_mode: false,
+                            vim_mode_label: None,
+                        },
+                    );
+                });
+            },
+        );
+        (output, action)
+    }
+
+    fn click_text(
+        ctx: &egui::Context,
+        output: &egui::FullOutput,
+        needle: &str,
+        fonts: &[String],
+        current_font: &str,
+        font_size: f32,
+        line_spacing: f32,
+    ) -> (egui::FullOutput, Option<TitleBarAction>) {
+        let pos = text_position(output, needle)
+            .unwrap_or_else(|| panic!("expected visible text containing {needle:?}"));
+        render_typography_title_bar(
+            ctx,
+            click_events(pos),
+            fonts,
+            current_font,
+            font_size,
+            line_spacing,
+        )
+    }
+
     #[test]
     fn compact_title_bar_fits_narrow_windows_with_long_document_names() {
         for (width, selection_word_count) in [
@@ -760,14 +867,11 @@ mod tests {
         crate::style::configure_style(&ctx);
         let fonts = vec!["PingFang SC".to_string(), "STSong".to_string()];
         let input = egui::RawInput {
-            screen_rect: Some(egui::Rect::from_min_size(
-                egui::Pos2::ZERO,
-                egui::vec2(1000.0, 700.0),
-            )),
+            screen_rect: Some(test_screen_rect()),
             ..Default::default()
         };
         // Frame 1: render title bar
-        let _ = ctx.run(input.clone(), |ctx| {
+        let output1 = ctx.run(input.clone(), |ctx| {
             egui::TopBottomPanel::top("title").show(ctx, |ui| {
                 let _ = TitleBar::show(
                     ui,
@@ -793,26 +897,12 @@ mod tests {
             });
         });
 
-        // Frame 2: click the "排版" menu button (x = 174.0, y = 12.0)
+        // Frame 2: locate and click the "排版" menu button from rendered text.
+        let typography_pos =
+            text_position(&output1, "排版").expect("typography menu button must exist");
         let input2 = egui::RawInput {
-            screen_rect: Some(egui::Rect::from_min_size(
-                egui::Pos2::ZERO,
-                egui::vec2(1000.0, 700.0),
-            )),
-            events: vec![
-                egui::Event::PointerButton {
-                    pos: egui::pos2(174.0, 12.0),
-                    button: egui::PointerButton::Primary,
-                    pressed: true,
-                    modifiers: egui::Modifiers::NONE,
-                },
-                egui::Event::PointerButton {
-                    pos: egui::pos2(174.0, 12.0),
-                    button: egui::PointerButton::Primary,
-                    pressed: false,
-                    modifiers: egui::Modifiers::NONE,
-                },
-            ],
+            screen_rect: Some(test_screen_rect()),
+            events: click_events(typography_pos),
             ..Default::default()
         };
         let _ = ctx.run(input2, |ctx| {
@@ -843,10 +933,7 @@ mod tests {
 
         // Frame 3: popup is open; verify popup exists and has a compact, elegant width
         let input3 = egui::RawInput {
-            screen_rect: Some(egui::Rect::from_min_size(
-                egui::Pos2::ZERO,
-                egui::vec2(1000.0, 700.0),
-            )),
+            screen_rect: Some(test_screen_rect()),
             ..Default::default()
         };
         let _ = ctx.run(input3, |ctx| {
@@ -888,6 +975,153 @@ mod tests {
                 }
             });
         });
+    }
+
+    #[test]
+    fn format_is_in_typography_menu_and_not_edit_menu() {
+        let ctx = egui::Context::default();
+        crate::style::configure_style(&ctx);
+        let fonts = vec!["PingFang SC".to_string(), "STSong".to_string()];
+        let (initial, _) = render_typography_title_bar(&ctx, vec![], &fonts, "Default", 14.0, 1.5);
+
+        let _ = click_text(&ctx, &initial, "编辑", &fonts, "Default", 14.0, 1.5);
+        let (edit_open, _) =
+            render_typography_title_bar(&ctx, vec![], &fonts, "Default", 14.0, 1.5);
+        assert!(has_text(&edit_open, "查找与替换"));
+        assert!(has_text(&edit_open, "Vim 模式"));
+        assert!(!has_text(&edit_open, "整理段落缩进"));
+
+        let _ = click_text(&ctx, &edit_open, "排版", &fonts, "Default", 14.0, 1.5);
+        let (typography_open, _) =
+            render_typography_title_bar(&ctx, vec![], &fonts, "Default", 14.0, 1.5);
+        assert!(has_text(&typography_open, "字号"));
+        assert!(has_text(&typography_open, "行间距"));
+        assert!(has_text(&typography_open, "整理段落缩进"));
+        assert!(has_text(&typography_open, "重置默认排版"));
+    }
+
+    #[test]
+    fn font_selection_keeps_both_menus_open_for_consecutive_changes() {
+        let ctx = egui::Context::default();
+        crate::style::configure_style(&ctx);
+        let fonts = vec!["PingFang SC".to_string(), "STSong".to_string()];
+
+        let (initial, _) = render_typography_title_bar(&ctx, vec![], &fonts, "Default", 14.0, 1.5);
+        let _ = click_text(&ctx, &initial, "排版", &fonts, "Default", 14.0, 1.5);
+        let (typography_open, _) =
+            render_typography_title_bar(&ctx, vec![], &fonts, "Default", 14.0, 1.5);
+        let _ = click_text(&ctx, &typography_open, "字体", &fonts, "Default", 14.0, 1.5);
+        let (font_menu_open, _) =
+            render_typography_title_bar(&ctx, vec![], &fonts, "Default", 14.0, 1.5);
+        assert!(has_text(&font_menu_open, "系统默认"));
+        assert!(has_text(&font_menu_open, "PingFang SC"));
+        assert!(has_text(&font_menu_open, "STSong"));
+
+        let (_, first_action) = click_text(
+            &ctx,
+            &font_menu_open,
+            "STSong",
+            &fonts,
+            "Default",
+            14.0,
+            1.5,
+        );
+        assert!(matches!(
+            first_action,
+            Some(TitleBarAction::FontChange(ref font)) if font == "STSong"
+        ));
+        let (after_first_change, _) =
+            render_typography_title_bar(&ctx, vec![], &fonts, "STSong", 14.0, 1.5);
+        assert!(has_text(&after_first_change, "字号"));
+        assert!(has_text(&after_first_change, "系统默认"));
+        assert!(has_text(&after_first_change, "PingFang SC"));
+
+        let (_, second_action) = click_text(
+            &ctx,
+            &after_first_change,
+            "PingFang SC",
+            &fonts,
+            "STSong",
+            14.0,
+            1.5,
+        );
+        assert!(matches!(
+            second_action,
+            Some(TitleBarAction::FontChange(ref font)) if font == "PingFang SC"
+        ));
+        let (after_second_change, _) =
+            render_typography_title_bar(&ctx, vec![], &fonts, "PingFang SC", 14.0, 1.5);
+        assert!(has_text(&after_second_change, "字号"));
+        assert!(has_text(&after_second_change, "系统默认"));
+        assert!(has_text(&after_second_change, "STSong"));
+    }
+
+    #[test]
+    fn typography_actions_dispatch_and_keep_the_menu_open() {
+        let ctx = egui::Context::default();
+        crate::style::configure_style(&ctx);
+        let fonts = vec!["PingFang SC".to_string()];
+
+        let (initial, _) = render_typography_title_bar(&ctx, vec![], &fonts, "Default", 14.0, 1.5);
+        let _ = click_text(&ctx, &initial, "排版", &fonts, "Default", 14.0, 1.5);
+        let (mut menu, _) = render_typography_title_bar(&ctx, vec![], &fonts, "Default", 14.0, 1.5);
+
+        let (_, format_action) =
+            click_text(&ctx, &menu, "整理段落缩进", &fonts, "Default", 14.0, 1.5);
+        assert!(matches!(format_action, Some(TitleBarAction::Format)));
+        (menu, _) = render_typography_title_bar(&ctx, vec![], &fonts, "Default", 14.0, 1.5);
+        assert!(has_text(&menu, "字号"));
+
+        let (_, reset_action) =
+            click_text(&ctx, &menu, "重置默认排版", &fonts, "Default", 14.0, 1.5);
+        assert!(matches!(
+            reset_action,
+            Some(TitleBarAction::ResetTypography)
+        ));
+        (menu, _) = render_typography_title_bar(&ctx, vec![], &fonts, "Default", 14.0, 1.5);
+        assert!(has_text(&menu, "行间距"));
+
+        let (_, size_action) = click_text(&ctx, &menu, "16", &fonts, "Default", 14.0, 1.5);
+        assert!(matches!(
+            size_action,
+            Some(TitleBarAction::FontSizeChange(size)) if (size - 16.0).abs() < f32::EPSILON
+        ));
+        (menu, _) = render_typography_title_bar(&ctx, vec![], &fonts, "Default", 16.0, 1.5);
+        assert!(has_text(&menu, "整理段落缩进"));
+
+        let (_, spacing_action) = click_text(&ctx, &menu, "1.8", &fonts, "Default", 16.0, 1.5);
+        assert!(matches!(
+            spacing_action,
+            Some(TitleBarAction::LineSpacingChange(spacing))
+                if (spacing - 1.8).abs() < f32::EPSILON
+        ));
+        let (after_spacing, _) =
+            render_typography_title_bar(&ctx, vec![], &fonts, "Default", 16.0, 1.8);
+        assert!(has_text(&after_spacing, "重置默认排版"));
+    }
+
+    #[test]
+    fn clicking_outside_closes_typography_and_font_menus() {
+        let ctx = egui::Context::default();
+        crate::style::configure_style(&ctx);
+        let fonts = vec!["PingFang SC".to_string(), "STSong".to_string()];
+
+        let (initial, _) = render_typography_title_bar(&ctx, vec![], &fonts, "Default", 14.0, 1.5);
+        let _ = click_text(&ctx, &initial, "排版", &fonts, "Default", 14.0, 1.5);
+        let (typography_open, _) =
+            render_typography_title_bar(&ctx, vec![], &fonts, "Default", 14.0, 1.5);
+        let _ = click_text(&ctx, &typography_open, "字体", &fonts, "Default", 14.0, 1.5);
+        let (font_menu_open, _) =
+            render_typography_title_bar(&ctx, vec![], &fonts, "Default", 14.0, 1.5);
+        assert!(has_text(&font_menu_open, "STSong"));
+
+        let outside = test_screen_rect().right_bottom() - egui::vec2(16.0, 16.0);
+        let _ =
+            render_typography_title_bar(&ctx, click_events(outside), &fonts, "Default", 14.0, 1.5);
+        let (closed, _) = render_typography_title_bar(&ctx, vec![], &fonts, "Default", 14.0, 1.5);
+        assert!(!has_text(&closed, "字号"));
+        assert!(!has_text(&closed, "整理段落缩进"));
+        assert!(!has_text(&closed, "STSong"));
     }
 
     #[test]

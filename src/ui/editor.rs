@@ -4,6 +4,7 @@ use crate::comments::{
 use egui::{Galley, Ui};
 use std::sync::Arc;
 
+use crate::ui::vim::{VimAction, VimMode, VimState};
 use std::path::PathBuf;
 
 #[derive(Default)]
@@ -51,6 +52,8 @@ pub struct Editor {
     open_comment: Option<OpenComment>,
     // Search and replace state
     search_replace: SearchReplaceState,
+    vim: VimState,
+    should_focus: bool,
     pub font_size: f32,
     pub line_spacing: f32,
 }
@@ -71,6 +74,8 @@ impl Default for Editor {
             comment_composer: None,
             open_comment: None,
             search_replace: SearchReplaceState::default(),
+            vim: VimState::default(),
+            should_focus: false,
             font_size: 14.0,
             line_spacing: 1.5,
         }
@@ -78,6 +83,54 @@ impl Default for Editor {
 }
 
 impl Editor {
+    #[cfg(test)]
+    pub fn new_for_test() -> Self {
+        Self::default()
+    }
+
+    pub fn focus(&mut self) {
+        self.should_focus = true;
+    }
+
+    #[cfg(test)]
+    pub fn is_vim_enabled(&self) -> bool {
+        self.vim.enabled
+    }
+
+    pub fn set_vim_mode(&mut self, enabled: bool) {
+        self.vim.enabled = enabled;
+        if !enabled {
+            self.vim.mode = VimMode::Insert;
+            self.vim.pending = None;
+        }
+    }
+
+    pub fn get_vim_mode_label(&self) -> Option<&'static str> {
+        if !self.vim.enabled {
+            return None;
+        }
+        match self.vim.mode {
+            VimMode::Normal => Some("普通"),
+            VimMode::Visual => Some("可视"),
+            VimMode::Insert => Some("插入"),
+        }
+    }
+
+    /// Whether the search/replace dialog currently owns keyboard focus.
+    pub fn is_search_dialog_open(&self) -> bool {
+        self.search_replace.show_dialog
+    }
+
+    /// Feed a synthetic Escape event captured by `raw_input_hook` before egui's
+    /// `Focus::begin_pass` clears the focused widget. This guarantees Vim mode
+    /// switching and focus retention even when the OS/IME consumes Escape.
+    pub fn process_pending_vim_escape(&mut self, ui: &mut Ui) {
+        let id = ui.make_persistent_id("main_editor");
+        // Re-anchor focus on the editor so Normal mode commands always have a target.
+        ui.memory_mut(|m| m.request_focus(id));
+        self.vim.on_escape();
+    }
+
     pub fn show(&mut self, ui: &mut Ui) {
         self.show_with_paragraph_dots(ui, true);
     }
@@ -96,6 +149,88 @@ impl Editor {
         if self.reset_edit_state {
             egui::text_edit::TextEditState::default().store(ui.ctx(), id);
             self.reset_edit_state = false;
+        }
+
+        if self.should_focus {
+            ui.memory_mut(|m| m.request_focus(id));
+            self.should_focus = false;
+        }
+
+        let focused = ui.memory(|m| m.has_focus(id));
+        if self.vim.enabled && focused {
+            let cursor = egui::text_edit::TextEditState::load(ui.ctx(), id)
+                .and_then(|state| state.cursor.char_range().map(|r| r.primary.index))
+                .or(self.cursor_index)
+                .unwrap_or(0);
+
+            let action = ui.input_mut(|i| {
+                self.vim
+                    .process_events(&mut i.events, focused, &content, cursor)
+            });
+
+            match action {
+                VimAction::ContentChanged {
+                    new_content,
+                    new_cursor,
+                } => {
+                    content = new_content;
+                    self.cached_word_count = None;
+                    self.search_replace.matches.clear();
+                    self.search_replace.current_match = None;
+                    self.search_replace.match_index = 0;
+
+                    let mut edit_state =
+                        egui::text_edit::TextEditState::load(ui.ctx(), id).unwrap_or_default();
+                    edit_state
+                        .cursor
+                        .set_char_range(Some(egui::text::CCursorRange::one(
+                            egui::text::CCursor::new(new_cursor),
+                        )));
+                    edit_state.store(ui.ctx(), id);
+                }
+                VimAction::ClearSelection => {
+                    if let Some(mut edit_state) = egui::text_edit::TextEditState::load(ui.ctx(), id)
+                        && let Some(range) = edit_state.cursor.char_range()
+                    {
+                        edit_state
+                            .cursor
+                            .set_char_range(Some(egui::text::CCursorRange::one(range.primary)));
+                        edit_state.store(ui.ctx(), id);
+                    }
+                }
+                VimAction::SetCursor(pos) => {
+                    let mut edit_state =
+                        egui::text_edit::TextEditState::load(ui.ctx(), id).unwrap_or_default();
+                    edit_state
+                        .cursor
+                        .set_char_range(Some(egui::text::CCursorRange::one(
+                            egui::text::CCursor::new(pos),
+                        )));
+                    edit_state.store(ui.ctx(), id);
+                }
+                VimAction::Yank(text) => {
+                    ui.ctx().copy_text(text);
+                }
+                VimAction::Paste { count } => {
+                    let clipboard = arboard::Clipboard::new()
+                        .ok()
+                        .and_then(|mut cb| cb.get_text().ok())
+                        .unwrap_or_default();
+                    let text = if !clipboard.is_empty() {
+                        clipboard
+                    } else {
+                        self.vim.register().to_string()
+                    };
+                    if !text.is_empty() {
+                        let pasted = text.repeat(count.max(1));
+                        ui.input_mut(|i| i.events.push(egui::Event::Paste(pasted)));
+                    }
+                }
+                VimAction::OpenSearch => {
+                    self.open_search_replace();
+                }
+                VimAction::ModeChanged | VimAction::None => {}
+            }
         }
 
         ui.horizontal_top(|ui| {
@@ -142,6 +277,24 @@ impl Editor {
                 .layouter(&mut layouter)
                 .show(ui);
 
+            if self.vim.enabled {
+                ui.memory_mut(|m| {
+                    m.set_focus_lock_filter(
+                        id,
+                        egui::EventFilter {
+                            horizontal_arrows: true,
+                            vertical_arrows: true,
+                            tab: false,
+                            escape: true,
+                        },
+                    );
+                    if self.vim.mode == VimMode::Normal && (focused || output.response.has_focus())
+                    {
+                        m.request_focus(id);
+                    }
+                });
+            }
+
             let selection = output.cursor_range.filter(|range| !range.is_empty());
             if self.selection != selection {
                 // The title bar is drawn before the editor, so refresh its statistics.
@@ -150,7 +303,12 @@ impl Editor {
             self.selection = selection;
 
             Self::enable_scroll_to_cursor(ui, &output);
-            Self::fix_macos_ime(&output, ui);
+            if self.vim.enabled && self.vim.mode == VimMode::Normal {
+                ui.ctx().output_mut(|o| o.ime = None);
+                Self::draw_vim_block_cursor(&output, ui);
+            } else {
+                Self::fix_macos_ime(&output, ui);
+            }
             self.draw_underline_decoration_at_focus_line(&output, ui);
             let context_edit = self.add_context_menu(&output, &mut content);
 
@@ -674,6 +832,30 @@ impl Editor {
             });
         }
         // =========================================================
+    }
+
+    fn draw_vim_block_cursor(output: &egui::text_edit::TextEditOutput, ui: &mut Ui) {
+        if !output.response.has_focus() {
+            return;
+        }
+        if let Some(cursor_range) = output.cursor_range {
+            let i = cursor_range.primary.index;
+            let r1 = output.galley.pos_from_cursor(cursor_range.primary);
+            let r2 = output
+                .galley
+                .pos_from_cursor(egui::text::CCursor::new(i.saturating_add(1)));
+
+            let screen_min = output.galley_pos + r1.min.to_vec2();
+            let height = if r1.height() > 0.0 { r1.height() } else { 18.0 };
+            let width = if (r2.min.y - r1.min.y).abs() < 1.0 && r2.min.x > r1.min.x {
+                r2.min.x - r1.min.x
+            } else {
+                (height * 0.5).max(8.0)
+            };
+            let rect = egui::Rect::from_min_size(screen_min, egui::vec2(width, height));
+            let color = ui.visuals().text_color().gamma_multiply(0.4);
+            ui.painter().rect_filled(rect, 0.0, color);
+        }
     }
 
     fn draw_underline_decoration_at_focus_line(

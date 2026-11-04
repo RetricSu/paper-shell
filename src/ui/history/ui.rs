@@ -3,13 +3,13 @@ use super::types::{DiffLine, DiffRow};
 use egui::{Color32, FontId, RichText, TextFormat, Ui, Vec2, text::LayoutJob};
 use similar::{ChangeTag, TextDiff};
 
-// Color constants for better maintainability
-const REMOVED_LINE_BG: Color32 = Color32::from_rgb(255, 230, 230);
-const ADDED_LINE_BG: Color32 = Color32::from_rgb(230, 255, 230);
-const REMOVED_WORD_BG: Color32 = Color32::from_rgb(255, 170, 170);
-const ADDED_WORD_BG: Color32 = Color32::from_rgb(170, 255, 170);
-const REMOVED_TEXT_COLOR: Color32 = Color32::from_rgb(150, 0, 0);
-const ADDED_TEXT_COLOR: Color32 = Color32::from_rgb(0, 100, 0);
+// Quiet semantic colors keep changes legible without overwhelming the document.
+const REMOVED_LINE_BG: Color32 = Color32::from_rgb(250, 240, 240);
+const ADDED_LINE_BG: Color32 = Color32::from_rgb(238, 246, 239);
+const REMOVED_WORD_BG: Color32 = Color32::from_rgb(242, 211, 211);
+const ADDED_WORD_BG: Color32 = Color32::from_rgb(205, 230, 210);
+const REMOVED_TEXT_COLOR: Color32 = Color32::from_rgb(145, 64, 64);
+const ADDED_TEXT_COLOR: Color32 = Color32::from_rgb(44, 105, 60);
 
 /// Render the diff view with word-level highlighting
 pub fn render_diff_view(ui: &mut Ui, diff_lines: &[DiffLine]) {
@@ -30,7 +30,7 @@ pub fn render_diff_view(ui: &mut Ui, diff_lines: &[DiffLine]) {
                 egui::Frame::default()
                     .inner_margin(egui::Margin::symmetric(8, 4))
                     .show(ui, |ui| {
-                        ui.add(egui::Label::new(RichText::new(text).monospace().size(14.0)).wrap());
+                        ui.add(egui::Label::new(RichText::new(text).size(14.0)).wrap());
                     });
             }
             DiffRow::Pair(left_block, right_block) => {
@@ -82,7 +82,7 @@ pub fn render_word_highlight(
     is_left: bool,
     width: f32,
 ) {
-    let font_id = FontId::monospace(14.0);
+    let font_id = FontId::proportional(14.0);
 
     let (line_bg, prefix) = if is_left {
         (REMOVED_LINE_BG, "- ")
@@ -104,7 +104,7 @@ pub fn render_word_highlight(
         } else {
             Color32::TRANSPARENT
         })
-        .inner_margin(8.0) // Increased padding
+        .inner_margin(egui::Margin::symmetric(8, 4))
         .show(ui, |ui| {
             // Ensure the frame takes up the full width
             ui.set_min_width(width - 16.0); // Subtract padding (8.0 * 2)
@@ -157,8 +157,8 @@ pub fn render_word_highlight(
                                         TextFormat {
                                             font_id: font_id.clone(),
                                             color: REMOVED_TEXT_COLOR,
-                                            background: REMOVED_WORD_BG, // High contrast highlight ON TOP of frame
-                                            line_height: Some(24.0),     // Add line height
+                                            background: REMOVED_WORD_BG,
+                                            line_height: Some(24.0), // Add line height
                                             ..Default::default()
                                         },
                                     );
@@ -172,8 +172,8 @@ pub fn render_word_highlight(
                                         TextFormat {
                                             font_id: font_id.clone(),
                                             color: ADDED_TEXT_COLOR,
-                                            background: ADDED_WORD_BG, // High contrast highlight ON TOP of frame
-                                            line_height: Some(24.0),   // Add line height
+                                            background: ADDED_WORD_BG,
+                                            line_height: Some(24.0), // Add line height
                                             ..Default::default()
                                         },
                                     );

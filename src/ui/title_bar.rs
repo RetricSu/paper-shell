@@ -5,6 +5,7 @@ use std::path::PathBuf;
 pub enum TitleBarAction {
     NewWindow,
     ToggleSidebar,
+    ToggleVimMode,
     Save,
     Open,
     OpenFile(PathBuf),
@@ -42,6 +43,8 @@ pub struct TitleBarState<'a> {
     pub line_spacing: f32,
     pub recent_files: &'a [PathBuf],
     pub plugins: &'a [PluginMetadata],
+    pub vim_mode: bool,
+    pub vim_mode_label: Option<&'a str>,
 }
 
 impl TitleBar {
@@ -61,6 +64,8 @@ impl TitleBar {
             line_spacing,
             recent_files,
             plugins,
+            vim_mode,
+            vim_mode_label,
         } = state;
 
         let mut action = None;
@@ -116,6 +121,10 @@ impl TitleBar {
                         .small(),
                     )
                     .on_hover_text(&detail);
+                    if let Some(label) = vim_mode_label {
+                        ui.add_space(6.0);
+                        ui.label(egui::RichText::new(label).small().strong());
+                    }
                     ui.add_space(8.0);
                 }
                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
@@ -234,6 +243,12 @@ impl TitleBar {
                                 .clicked()
                             {
                                 action = Some(TitleBarAction::Format);
+                                ui.close();
+                            }
+                            ui.separator();
+                            let mut checked = vim_mode;
+                            if ui.checkbox(&mut checked, "Vim 模式 (Esc)").clicked() {
+                                action = Some(TitleBarAction::ToggleVimMode);
                                 ui.close();
                             }
                         },
@@ -491,6 +506,17 @@ impl TitleBar {
         action
     }
 
+    pub fn paint_bottom_border(ctx: &egui::Context, panel_rect: egui::Rect) {
+        // TopBottomPanel's built-in separator uses noninteractive.bg_stroke,
+        // which our global style makes transparent. Keep this hairline explicit.
+        let color = ctx.style().visuals.text_color().gamma_multiply(0.18);
+        ctx.layer_painter(egui::LayerId::background()).hline(
+            panel_rect.x_range(),
+            panel_rect.bottom() - 0.5,
+            egui::Stroke::new(1.0_f32, color),
+        );
+    }
+
     fn menu_item(ui: &mut Ui, label: &str, key: Option<egui::Key>) -> egui::Response {
         let mut button = egui::Button::new(label);
         if let Some(key) = key {
@@ -617,11 +643,70 @@ mod tests {
                         recent_files: &[],
                         plugins: &[],
                         sidebar_expanded: false,
+                        vim_mode: false,
+                        vim_mode_label: None,
                     });
                     assert!(ui.min_rect().width() <= available + 1.0, "title overflow at {width}");
                     assert!(ui.min_rect().height() <= 24.0, "title bar must remain a single compact row");
                 });
             });
+        }
+    }
+
+    #[test]
+    fn title_bar_bottom_border_remains_visible_across_frames() {
+        let ctx = egui::Context::default();
+        crate::style::configure_style(&ctx);
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1000.0, 700.0),
+            )),
+            ..Default::default()
+        };
+
+        for _ in 0..3 {
+            let mut panel_bottom = 0.0;
+            let output = ctx.run(input.clone(), |ctx| {
+                let panel = egui::TopBottomPanel::top("title").show(ctx, |ui| {
+                    let _ = TitleBar::show(
+                        ui,
+                        TitleBarState {
+                            title: "Test Document",
+                            document_path: None,
+                            word_count: 100,
+                            cursor_word_count: 50,
+                            selection_word_count: None,
+                            writing_time: 120,
+                            has_current_file: true,
+                            chinese_fonts: &[],
+                            current_font: "Default",
+                            font_size: 14.0,
+                            line_spacing: 1.5,
+                            recent_files: &[],
+                            plugins: &[],
+                            sidebar_expanded: false,
+                            vim_mode: false,
+                            vim_mode_label: None,
+                        },
+                    );
+                });
+                panel_bottom = panel.response.rect.bottom();
+                TitleBar::paint_bottom_border(ctx, panel.response.rect);
+            });
+
+            let border_y = panel_bottom - 0.5;
+            assert!(
+                output.shapes.iter().any(|shape| {
+                    matches!(&shape.shape, egui::Shape::LineSegment { points, stroke }
+                        if points[0].y == points[1].y
+                            && points[0].y == border_y
+                            && (points[1].x - points[0].x).abs() >= 999.0
+                            && stroke.width == 1.0
+                            && stroke.color.a() > 0)
+                }),
+                "title bar must paint its own visible bottom border on every frame"
+            );
         }
     }
 
@@ -695,6 +780,8 @@ mod tests {
                         recent_files: &[],
                         plugins: &[],
                         sidebar_expanded: true,
+                        vim_mode: false,
+                        vim_mode_label: None,
                     },
                 );
             });
@@ -741,6 +828,8 @@ mod tests {
                         recent_files: &[],
                         plugins: &[],
                         sidebar_expanded: true,
+                        vim_mode: false,
+                        vim_mode_label: None,
                     },
                 );
             });
@@ -773,6 +862,8 @@ mod tests {
                         recent_files: &[],
                         plugins: &[],
                         sidebar_expanded: true,
+                        vim_mode: false,
+                        vim_mode_label: None,
                     },
                 );
             });
@@ -850,6 +941,8 @@ mod tests {
                                     recent_files: &[],
                                     plugins: &[],
                                     sidebar_expanded: false,
+                                    vim_mode: false,
+                                    vim_mode_label: None,
                                 },
                             );
                         });

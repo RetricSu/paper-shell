@@ -1,6 +1,6 @@
 [package]
 name = "paper-shell"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2024"
 description = "A simple, compact and informative text editor for everyday writing."
 
@@ -37,6 +37,7 @@ xxhash-rust = { version = "0.8", features = ["xxh64"] }
 uuid = { version = "1.0", features = ["v4"] }
 thiserror = "2.0"
 similar = "2.5"
+arboard = "3"
 once_cell = "1.21.3"
 toml = "0.8"
 ureq = "3.5.0"
@@ -55,6 +56,7 @@ xattr = "1.0"
 objc2 = "0.6.3"
 objc2-app-kit = "0.3.2"
 objc2-foundation = "0.3.2"
+block2 = "0.6.2"
 
 # AppKit layout/printing must be exercised on the process main thread.
 [[test]]

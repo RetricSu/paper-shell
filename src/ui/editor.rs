@@ -44,6 +44,7 @@ pub struct Editor {
     selection: Option<egui::text::CCursorRange>,
     last_galley: Option<Arc<Galley>>,
     is_focused: bool,
+    ime_composing: bool,
     current_file: Option<PathBuf>,
     current_file_total_time: u64,
     cached_word_count: Option<usize>,
@@ -67,6 +68,7 @@ impl Default for Editor {
             selection: None,
             last_galley: None,
             is_focused: false,
+            ime_composing: false,
             current_file: None,
             current_file_total_time: 0,
             cached_word_count: None,
@@ -157,6 +159,27 @@ impl Editor {
         }
 
         let focused = ui.memory(|m| m.has_focus(id));
+        if focused {
+            ui.input(|input| {
+                for event in &input.events {
+                    match event {
+                        egui::Event::Ime(egui::ImeEvent::Preedit(text)) => {
+                            self.ime_composing = !text.is_empty();
+                        }
+                        egui::Event::Ime(
+                            egui::ImeEvent::Enabled
+                            | egui::ImeEvent::Commit(_)
+                            | egui::ImeEvent::Disabled,
+                        ) => {
+                            self.ime_composing = false;
+                        }
+                        _ => {}
+                    }
+                }
+            });
+        } else {
+            self.ime_composing = false;
+        }
         if self.vim.enabled && focused {
             let cursor = egui::text_edit::TextEditState::load(ui.ctx(), id)
                 .and_then(|state| state.cursor.char_range().map(|r| r.primary.index))
@@ -445,6 +468,7 @@ impl Editor {
         self.selection = None;
         self.cursor_index = None;
         self.last_galley = None;
+        self.ime_composing = false;
         self.search_replace.matches.clear();
         self.search_replace.current_match = None;
         self.search_replace.match_index = 0;
@@ -1103,7 +1127,11 @@ impl Editor {
     }
 
     fn selected_range(output: &egui::text_edit::TextEditOutput) -> Option<(usize, usize)> {
-        let range = output.cursor_range.filter(|range| !range.is_empty())?;
+        // Clicking the comment tool transfers focus; the selection is still in state.
+        let range = output
+            .cursor_range
+            .or_else(|| output.state.cursor.char_range())
+            .filter(|range| !range.is_empty())?;
         Some((
             range.primary.index.min(range.secondary.index),
             range.primary.index.max(range.secondary.index),
@@ -1151,7 +1179,14 @@ impl Editor {
         let Some((start, end)) = Self::selected_range(output) else {
             return;
         };
-        if !output.response.has_focus() || self.comment_composer.is_some() {
+        // IME preedit text uses a non-empty cursor range too. Keep the tool hidden
+        // throughout composition, including repaint frames with no input events.
+        if (!output.response.has_focus() && !output.response.lost_focus())
+            || self.comment_composer.is_some()
+            || self.ime_composing
+            || output.response.changed()
+            || output.response.is_pointer_button_down_on()
+        {
             return;
         }
 
@@ -1168,11 +1203,10 @@ impl Editor {
             .fixed_pos(position)
             .show(ui.ctx(), |ui| {
                 egui::Frame::popup(ui.style()).show(ui, |ui| {
-                    if ui
+                    let button = ui
                         .button(format!("{} 评论", egui_phosphor::regular::CHAT_TEXT))
-                        .on_hover_text("为选中文字添加评论 / 备注")
-                        .clicked()
-                    {
+                        .on_hover_text("为选中文字添加评论 / 备注");
+                    if button.clicked() {
                         self.begin_comment(output, start, end);
                     }
                 });
@@ -1783,6 +1817,184 @@ fn is_cjk(c: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn render_comment_tool(
+        ctx: &egui::Context,
+        editor: &mut Editor,
+        events: Vec<egui::Event>,
+        selection: Option<(usize, usize)>,
+    ) -> bool {
+        let output = render_editor(ctx, editor, events, selection);
+        output.shapes.iter().any(|shape| {
+            matches!(&shape.shape, egui::Shape::Text(text) if text.galley.text().ends_with(" 评论"))
+        })
+    }
+
+    fn render_editor(
+        ctx: &egui::Context,
+        editor: &mut Editor,
+        events: Vec<egui::Event>,
+        selection: Option<(usize, usize)>,
+    ) -> egui::FullOutput {
+        ctx.run(
+            egui::RawInput {
+                events,
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    if let Some((start, end)) = selection {
+                        let id = ui.make_persistent_id("main_editor");
+                        let mut state =
+                            egui::text_edit::TextEditState::load(ctx, id).unwrap_or_default();
+                        state
+                            .cursor
+                            .set_char_range(Some(egui::text::CCursorRange::two(
+                                egui::text::CCursor::new(start),
+                                egui::text::CCursor::new(end),
+                            )));
+                        state.store(ctx, id);
+                        ui.memory_mut(|memory| memory.request_focus(id));
+                    }
+                    editor.show(ui);
+                });
+            },
+        )
+    }
+
+    #[test]
+    fn comment_tool_stays_hidden_during_ime_composition_and_typing() {
+        use egui::{Event, ImeEvent};
+
+        let ctx = egui::Context::default();
+        let mut editor = Editor::default();
+        editor.set_content("hello world".into());
+        editor.focus();
+        assert!(!render_comment_tool(&ctx, &mut editor, vec![], None));
+        render_comment_tool(&ctx, &mut editor, vec![], Some((0, 5)));
+        assert!(render_comment_tool(&ctx, &mut editor, vec![], None));
+        // Enabling an IME alone does not mean text is being composed.
+        assert!(render_comment_tool(
+            &ctx,
+            &mut editor,
+            vec![Event::Ime(ImeEvent::Enabled)],
+            None,
+        ));
+
+        assert!(!render_comment_tool(
+            &ctx,
+            &mut editor,
+            vec![Event::Ime(ImeEvent::Preedit("ni".into()))],
+            None,
+        ));
+        // Preedit remains selected on idle frames even though no new event arrives.
+        for _ in 0..3 {
+            assert!(!render_comment_tool(&ctx, &mut editor, vec![], None));
+        }
+        assert!(editor.selection.is_some());
+        assert!(!render_comment_tool(
+            &ctx,
+            &mut editor,
+            vec![Event::Ime(ImeEvent::Preedit("ni".into()))],
+            None,
+        ));
+        assert!(!render_comment_tool(
+            &ctx,
+            &mut editor,
+            vec![
+                Event::Ime(ImeEvent::Commit("你".into())),
+                Event::Ime(ImeEvent::Disabled)
+            ],
+            None,
+        ));
+        assert!(!render_comment_tool(&ctx, &mut editor, vec![], None));
+        assert_eq!(editor.get_content(), "你 world");
+
+        // A deliberate selection still offers comments after composition ends.
+        render_comment_tool(&ctx, &mut editor, vec![], Some((0, 1)));
+        assert!(render_comment_tool(&ctx, &mut editor, vec![], None));
+        assert!(!render_comment_tool(
+            &ctx,
+            &mut editor,
+            vec![Event::Text("hello".into())],
+            None,
+        ));
+        assert!(!render_comment_tool(&ctx, &mut editor, vec![], None));
+        assert_eq!(editor.get_content(), "hello world");
+    }
+
+    #[test]
+    fn comment_tool_waits_for_selection_release_and_remains_clickable() {
+        use egui::{Event, Modifiers, PointerButton};
+
+        let ctx = egui::Context::default();
+        let mut editor = Editor::default();
+        editor.set_content("hello world".into());
+        editor.focus();
+        let output = render_editor(&ctx, &mut editor, vec![], None);
+        let text = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.text() == "hello world" => Some(text),
+                _ => None,
+            })
+            .unwrap();
+        let start = text.pos
+            + text
+                .galley
+                .pos_from_cursor(egui::text::CCursor::new(0))
+                .center()
+                .to_vec2();
+        let end = text.pos
+            + text
+                .galley
+                .pos_from_cursor(egui::text::CCursor::new(5))
+                .center()
+                .to_vec2();
+        let pointer = |pos, pressed| Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        };
+        render_editor(
+            &ctx,
+            &mut editor,
+            vec![Event::PointerMoved(start), pointer(start, true)],
+            None,
+        );
+        assert!(!render_comment_tool(
+            &ctx,
+            &mut editor,
+            vec![Event::PointerMoved(end)],
+            None
+        ));
+        assert!(editor.selection.is_some());
+        assert!(!render_comment_tool(&ctx, &mut editor, vec![], None));
+        render_editor(&ctx, &mut editor, vec![pointer(end, false)], None);
+        let output = render_editor(&ctx, &mut editor, vec![], None);
+        let button = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.text().ends_with(" 评论") => {
+                    Some(text.pos + text.galley.rect.center().to_vec2())
+                }
+                _ => None,
+            })
+            .expect("comment button appears after releasing the selection");
+        assert!(render_comment_tool(
+            &ctx,
+            &mut editor,
+            vec![Event::PointerMoved(button), pointer(button, true)],
+            None
+        ));
+        render_editor(&ctx, &mut editor, vec![pointer(button, false)], None);
+        assert!(editor.comment_composer.is_some());
+        let comment = &editor.comment_composer.as_ref().unwrap().comment;
+        assert_eq!((comment.start, comment.end), (0, 5));
+    }
 
     fn gutter_circles(output: &egui::FullOutput) -> Vec<egui::epaint::CircleShape> {
         output

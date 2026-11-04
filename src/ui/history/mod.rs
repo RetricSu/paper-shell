@@ -136,24 +136,19 @@ impl HistoryWindow {
             |ctx, _class| {
                 crate::style::configure_style(ctx);
 
-                // Title bar with refined border
-                egui::TopBottomPanel::top("history_title_bar")
-                    .frame(
-                        egui::Frame::default()
-                            .fill(Color32::from_rgb(248, 248, 248))
-                            .stroke(egui::Stroke::new(1.0_f32, Color32::from_rgb(225, 225, 225)))
-                            .inner_margin(egui::Margin::symmetric(12, 8)),
-                    )
-                    .show(ctx, |ui| {
+                // Use the same panel styling as the main window.
+                let title_bar_panel =
+                    egui::TopBottomPanel::top("history_title_bar").show(ctx, |ui| {
                         self.show_title_bar(ui);
                     });
+                crate::ui::title_bar::TitleBar::paint_bottom_border(
+                    ctx,
+                    title_bar_panel.response.rect,
+                );
 
                 egui::CentralPanel::default()
                     .frame(
-                        egui::Frame::default()
-                            .fill(Color32::WHITE)
-                            .stroke(egui::Stroke::new(1.0_f32, Color32::from_rgb(225, 225, 225)))
-                            .inner_margin(egui::Margin::ZERO),
+                        egui::Frame::central_panel(&ctx.style()).inner_margin(egui::Margin::ZERO),
                     )
                     .show(ctx, |ui| {
                         self.show_content(ui);
@@ -194,15 +189,19 @@ impl HistoryWindow {
                 .send_viewport_cmd(egui::ViewportCommand::Maximized(!is_maximized));
         }
 
+        ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
+        ui.spacing_mut().interact_size.y = 20.0;
+
         ui.horizontal(|ui| {
-            // Title
+            // Match the quiet document title in the main window.
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                let title_color = ui.visuals().text_color().gamma_multiply(0.82);
                 ui.label(
                     egui::RichText::new(format!(
                         "{} 版本历史",
                         egui_phosphor::regular::CLOCK_COUNTER_CLOCKWISE
                     ))
-                    .strong(),
+                    .color(title_color),
                 );
             });
 
@@ -212,7 +211,10 @@ impl HistoryWindow {
 
                 // Close button
                 if ui
-                    .add_sized([22.0, 20.0], egui::Button::new(egui_phosphor::regular::X))
+                    .add_sized(
+                        [22.0, 20.0],
+                        egui::Button::new(egui_phosphor::regular::X).frame(false),
+                    )
                     .on_hover_text("关闭")
                     .clicked()
                 {
@@ -228,7 +230,7 @@ impl HistoryWindow {
                 };
                 let max_tip = if is_maximized { "还原" } else { "最大化" };
                 if ui
-                    .add_sized([22.0, 20.0], egui::Button::new(max_icon))
+                    .add_sized([22.0, 20.0], egui::Button::new(max_icon).frame(false))
                     .on_hover_text(max_tip)
                     .clicked()
                 {
@@ -240,7 +242,7 @@ impl HistoryWindow {
                 if ui
                     .add_sized(
                         [22.0, 20.0],
-                        egui::Button::new(egui_phosphor::regular::MINUS),
+                        egui::Button::new(egui_phosphor::regular::MINUS).frame(false),
                     )
                     .on_hover_text("最小化")
                     .clicked()
@@ -283,18 +285,16 @@ impl HistoryWindow {
                 return;
             }
 
-            // Use SidePanel for better layout (left panel for versions)
+            // Keep the version list visually consistent with the workspace sidebar.
             egui::SidePanel::left("version_list_panel")
-                .frame(
-                    egui::Frame::default()
-                        .fill(Color32::from_rgb(250, 250, 250))
-                        .stroke(egui::Stroke::new(1.0_f32, Color32::from_rgb(230, 230, 230)))
-                        .inner_margin(egui::Margin::symmetric(8, 8)),
-                )
                 .resizable(true)
-                .default_width(220.0)
+                .default_width(230.0)
                 .width_range(180.0..=360.0)
                 .show_inside(ui, |ui| {
+                    ui.spacing_mut().item_spacing = egui::vec2(4.0, 3.0);
+                    let text_color = ui.visuals().text_color();
+                    ui.visuals_mut().selection.bg_fill = Color32::from_gray(232);
+                    ui.visuals_mut().selection.stroke = egui::Stroke::new(1.0_f32, text_color);
                     ScrollArea::vertical().show(ui, |ui| {
                         // Show in reverse order (newest first)
                         for (i, version_data) in history_data.iter().enumerate().rev() {
@@ -309,7 +309,12 @@ impl HistoryWindow {
                             let version_label =
                                 format!("{} {}", egui_phosphor::regular::GIT_COMMIT, timestamp);
 
-                            if ui.selectable_label(is_selected, version_label).clicked() {
+                            if ui
+                                .add(
+                                    egui::Button::selectable(is_selected, version_label).truncate(),
+                                )
+                                .clicked()
+                            {
                                 self.selected_index = Some(i);
                             }
                         }
@@ -318,11 +323,7 @@ impl HistoryWindow {
 
             // Central panel for diff view
             egui::CentralPanel::default()
-                .frame(
-                    egui::Frame::default()
-                        .fill(Color32::WHITE)
-                        .inner_margin(egui::Margin::same(12)),
-                )
+                .frame(egui::Frame::default().inner_margin(egui::Margin::same(12)))
                 .show_inside(ui, |ui| {
                     if let Some(selected_idx) = self.selected_index {
                         if let Some(version_data) = history_data.get(selected_idx) {
@@ -333,14 +334,14 @@ impl HistoryWindow {
                                     |ui| {
                                         ui.label(
                                             RichText::new(format!("+{}", version_data.added_count))
-                                                .color(Color32::from_rgb(0, 100, 0)),
+                                                .color(crate::style::STATUS_GREEN),
                                         );
                                         ui.label(
                                             RichText::new(format!(
                                                 "-{}",
                                                 version_data.removed_count
                                             ))
-                                            .color(Color32::from_rgb(150, 0, 0)),
+                                            .color(Color32::from_rgb(145, 64, 64)),
                                         );
                                         let time = version_data.entry.time_spent.unwrap_or(0);
                                         let hours = time / 3600;
@@ -357,7 +358,8 @@ impl HistoryWindow {
                                                 egui_phosphor::regular::CLOCK,
                                                 time_str
                                             ))
-                                            .small(),
+                                            .small()
+                                            .color(ui.visuals().text_color().gamma_multiply(0.65)),
                                         );
                                     },
                                 );
@@ -371,10 +373,13 @@ impl HistoryWindow {
                                                 egui::Layout::right_to_left(egui::Align::Center),
                                                 |ui| {
                                                     if ui
-                                                        .button(format!(
-                                                            "{} 回滚到此版本",
-                                                            egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE
-                                                        ))
+                                                        .add(
+                                                            egui::Button::new(format!(
+                                                                "{} 回滚到此版本",
+                                                                egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE
+                                                            ))
+                                                            .frame(false),
+                                                        )
                                                         .clicked()
                                                     {
                                                         self.confirm_rollback = Some(
@@ -391,7 +396,8 @@ impl HistoryWindow {
                                                 version_data.entry.hash
                                             ))
                                             .monospace()
-                                            .small(),
+                                            .small()
+                                            .color(ui.visuals().text_color().gamma_multiply(0.65)),
                                         );
                                     },
                                 );

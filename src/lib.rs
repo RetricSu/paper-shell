@@ -7,6 +7,7 @@ pub mod backend;
 pub mod comments;
 pub mod config;
 pub mod constant;
+pub mod escape_monitor;
 pub mod file;
 pub mod messages;
 #[cfg(target_os = "macos")]

@@ -68,6 +68,7 @@ pub struct PaperShellApp {
     allow_close_once: bool,
     #[cfg(not(target_os = "macos"))]
     print_dialog: PrintDialog,
+    vim_pending_escape: bool,
     #[cfg(target_os = "macos")]
     print_requested: bool,
 }
@@ -87,6 +88,7 @@ impl Default for PaperShellApp {
         let mut editor = Editor::default();
         editor.font_size = config.settings.font_size;
         editor.line_spacing = config.settings.line_spacing;
+        editor.set_vim_mode(config.settings.vim_mode);
         let available_fonts = crate::ui::font::enumerate_chinese_fonts();
 
         let plugins_dir = config.data_dir().join("plugins");
@@ -130,6 +132,7 @@ impl Default for PaperShellApp {
             allow_close_once: false,
             #[cfg(not(target_os = "macos"))]
             print_dialog: PrintDialog::new(),
+            vim_pending_escape: false,
             #[cfg(target_os = "macos")]
             print_requested: false,
         }
@@ -147,6 +150,21 @@ impl PaperShellApp {
         }
         if let Some(path) = initial_file {
             app.open_file(path);
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            let (esc_sender, esc_receiver) = std::sync::mpsc::channel();
+            crate::escape_monitor::set_escape_sender(esc_sender);
+            crate::escape_monitor::install_escape_monitor();
+            let sender = app.response_sender.clone();
+            let ctx = cc.egui_ctx.clone();
+            std::thread::spawn(move || {
+                while esc_receiver.recv().is_ok() {
+                    let _ = sender.send(ResponseMessage::VimEscape);
+                    ctx.request_repaint();
+                }
+            });
         }
 
         app
@@ -238,6 +256,7 @@ impl PaperShellApp {
         self.editor = Editor::default();
         self.editor.font_size = font_size;
         self.editor.line_spacing = line_spacing;
+        self.editor.set_vim_mode(self.config.settings.vim_mode);
         self.editor.set_content(String::new());
         self.draft_doc_id = uuid::Uuid::new_v4().to_string();
         self.saved_content.clear();
@@ -411,7 +430,7 @@ impl PaperShellApp {
     }
 
     fn check_response_messages(&mut self) {
-        if let Ok(response) = self.response_receiver.try_recv() {
+        while let Ok(response) = self.response_receiver.try_recv() {
             match response {
                 ResponseMessage::HistoryLoaded(result) => match result {
                     Ok(entries) => {
@@ -437,6 +456,11 @@ impl PaperShellApp {
                         tracing::info!("Plugin '{}' finished", name);
                     }
                     self.plugin_output.finish(name, result);
+                }
+                ResponseMessage::VimEscape => {
+                    if self.config.settings.vim_mode {
+                        self.vim_pending_escape = true;
+                    }
                 }
             }
         }
@@ -680,6 +704,34 @@ impl PaperShellApp {
 }
 
 impl eframe::App for PaperShellApp {
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        if self.config.settings.vim_mode && !self.editor.is_search_dialog_open() {
+            let had_escape = raw_input.events.iter().any(|event| {
+                matches!(
+                    event,
+                    egui::Event::Key {
+                        key: egui::Key::Escape,
+                        pressed: true,
+                        ..
+                    }
+                )
+            });
+            if had_escape {
+                raw_input.events.retain(|event| {
+                    !matches!(
+                        event,
+                        egui::Event::Key {
+                            key: egui::Key::Escape,
+                            pressed: true,
+                            ..
+                        }
+                    )
+                });
+                self.vim_pending_escape = true;
+            }
+        }
+    }
+
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.check_response_messages();
         self.update_time_backend_if_focus_changed();
@@ -727,6 +779,8 @@ impl eframe::App for PaperShellApp {
                     recent_files: &self.config.settings.recent_files,
                     plugins: &self.plugin_metadata,
                     sidebar_expanded: self.sidebar.is_expanded(),
+                    vim_mode: self.config.settings.vim_mode,
+                    vim_mode_label: self.editor.get_vim_mode_label(),
                 },
             )
             .or(shortcut_action)
@@ -734,6 +788,13 @@ impl eframe::App for PaperShellApp {
                 match action {
                     crate::ui::title_bar::TitleBarAction::NewWindow => self.spawn_new_window(),
                     crate::ui::title_bar::TitleBarAction::ToggleSidebar => self.sidebar.toggle(),
+                    crate::ui::title_bar::TitleBarAction::ToggleVimMode => {
+                        self.config.settings.vim_mode = !self.config.settings.vim_mode;
+                        self.editor.set_vim_mode(self.config.settings.vim_mode);
+                        if let Err(error) = self.config.save() {
+                            self.file_error = Some(format!("无法保存 Vim 模式设置: {}", error));
+                        }
+                    }
                     crate::ui::title_bar::TitleBarAction::Save => {
                         self.save_file();
                     }
@@ -882,6 +943,10 @@ impl eframe::App for PaperShellApp {
                 }
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     ui.vertical_centered(|ui| {
+                        if self.vim_pending_escape {
+                            self.editor.process_pending_vim_escape(ui);
+                            self.vim_pending_escape = false;
+                        }
                         self.editor
                             .show_with_paragraph_dots(ui, !self.sidebar.is_expanded());
                     });
@@ -1245,5 +1310,130 @@ mod document_change_tests {
         // Once cancelled, confirm_rollback becomes None, but window remains open.
         window.confirm_rollback = None;
         assert!(window.is_open());
+    }
+}
+
+#[cfg(test)]
+mod final_integration_tests {
+    use super::*;
+
+    #[test]
+    fn test_vim_mode_full_workflow() {
+        let mut app = PaperShellApp::default();
+        app.config.settings.vim_mode = true;
+        app.editor.set_vim_mode(true);
+        app.editor.set_content("第一行\n第二行\n第三行".to_string());
+
+        let ctx = egui::Context::default();
+        let mut frame = eframe::Frame::_new_kittest();
+
+        // F1: initial
+        let _ = ctx.run(
+            egui::RawInput {
+                focused: true,
+                ..Default::default()
+            },
+            |ctx| {
+                eframe::App::update(&mut app, ctx, &mut frame);
+            },
+        );
+
+        // F2: click editor to focus
+        let _ = ctx.run(
+            egui::RawInput {
+                focused: true,
+                events: vec![
+                    egui::Event::PointerButton {
+                        pos: egui::pos2(100.0, 100.0),
+                        button: egui::PointerButton::Primary,
+                        pressed: true,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                    egui::Event::PointerButton {
+                        pos: egui::pos2(100.0, 100.0),
+                        button: egui::PointerButton::Primary,
+                        pressed: false,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+                ..Default::default()
+            },
+            |ctx| {
+                eframe::App::update(&mut app, ctx, &mut frame);
+            },
+        );
+
+        // F3: normal frame so had_focus_last_frame is true
+        let _ = ctx.run(
+            egui::RawInput {
+                focused: true,
+                ..Default::default()
+            },
+            |ctx| {
+                eframe::App::update(&mut app, ctx, &mut frame);
+            },
+        );
+        assert!(ctx.memory(|m| m.focused()).is_some());
+
+        // F4: Escape via raw_input_hook
+        let mut raw_input = egui::RawInput {
+            focused: true,
+            events: vec![egui::Event::Key {
+                key: egui::Key::Escape,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            ..Default::default()
+        };
+        eframe::App::raw_input_hook(&mut app, &ctx, &mut raw_input);
+        assert!(
+            raw_input.events.is_empty(),
+            "Escape must be swallowed by raw_input_hook"
+        );
+        assert!(app.vim_pending_escape);
+
+        let _ = ctx.run(raw_input, |ctx| {
+            eframe::App::update(&mut app, ctx, &mut frame);
+        });
+
+        // Verify mode switched to Normal AND focus is retained!
+        assert_eq!(app.editor.get_vim_mode_label(), Some("普通"));
+        assert!(
+            ctx.memory(|m| m.focused()).is_some(),
+            "Editor MUST retain focus after Escape!"
+        );
+
+        // F5: 'j' in Normal mode should NOT insert text
+        let _ = ctx.run(
+            egui::RawInput {
+                focused: true,
+                events: vec![egui::Event::Text("j".to_string())],
+                ..Default::default()
+            },
+            |ctx| {
+                eframe::App::update(&mut app, ctx, &mut frame);
+            },
+        );
+        assert_eq!(app.editor.get_vim_mode_label(), Some("普通"));
+        assert_eq!(
+            app.editor.get_content(),
+            "第一行\n第二行\n第三行",
+            "'j' must not insert text in Normal mode"
+        );
+
+        // F6: 'i' back to Insert mode
+        let _ = ctx.run(
+            egui::RawInput {
+                focused: true,
+                events: vec![egui::Event::Text("i".to_string())],
+                ..Default::default()
+            },
+            |ctx| {
+                eframe::App::update(&mut app, ctx, &mut frame);
+            },
+        );
+        assert_eq!(app.editor.get_vim_mode_label(), Some("插入"));
     }
 }

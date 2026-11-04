@@ -5,6 +5,7 @@ use std::path::PathBuf;
 pub enum TitleBarAction {
     NewWindow,
     ToggleSidebar,
+    ToggleVimMode,
     Save,
     Open,
     OpenFile(PathBuf),
@@ -42,6 +43,8 @@ pub struct TitleBarState<'a> {
     pub line_spacing: f32,
     pub recent_files: &'a [PathBuf],
     pub plugins: &'a [PluginMetadata],
+    pub vim_mode: bool,
+    pub vim_mode_label: Option<&'a str>,
 }
 
 impl TitleBar {
@@ -61,6 +64,8 @@ impl TitleBar {
             line_spacing,
             recent_files,
             plugins,
+            vim_mode,
+            vim_mode_label,
         } = state;
 
         let mut action = None;
@@ -116,6 +121,10 @@ impl TitleBar {
                         .small(),
                     )
                     .on_hover_text(&detail);
+                    if let Some(label) = vim_mode_label {
+                        ui.add_space(6.0);
+                        ui.label(egui::RichText::new(label).small().strong());
+                    }
                     ui.add_space(8.0);
                 }
                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
@@ -234,6 +243,12 @@ impl TitleBar {
                                 .clicked()
                             {
                                 action = Some(TitleBarAction::Format);
+                                ui.close();
+                            }
+                            ui.separator();
+                            let mut checked = vim_mode;
+                            if ui.checkbox(&mut checked, "Vim 模式 (Esc)").clicked() {
+                                action = Some(TitleBarAction::ToggleVimMode);
                                 ui.close();
                             }
                         },
@@ -628,6 +643,8 @@ mod tests {
                         recent_files: &[],
                         plugins: &[],
                         sidebar_expanded: false,
+                        vim_mode: false,
+                        vim_mode_label: None,
                     });
                     assert!(ui.min_rect().width() <= available + 1.0, "title overflow at {width}");
                     assert!(ui.min_rect().height() <= 24.0, "title bar must remain a single compact row");
@@ -669,6 +686,8 @@ mod tests {
                             recent_files: &[],
                             plugins: &[],
                             sidebar_expanded: false,
+                            vim_mode: false,
+                            vim_mode_label: None,
                         },
                     );
                 });
@@ -761,6 +780,8 @@ mod tests {
                         recent_files: &[],
                         plugins: &[],
                         sidebar_expanded: true,
+                        vim_mode: false,
+                        vim_mode_label: None,
                     },
                 );
             });
@@ -807,6 +828,8 @@ mod tests {
                         recent_files: &[],
                         plugins: &[],
                         sidebar_expanded: true,
+                        vim_mode: false,
+                        vim_mode_label: None,
                     },
                 );
             });
@@ -839,6 +862,8 @@ mod tests {
                         recent_files: &[],
                         plugins: &[],
                         sidebar_expanded: true,
+                        vim_mode: false,
+                        vim_mode_label: None,
                     },
                 );
             });
@@ -916,6 +941,8 @@ mod tests {
                                     recent_files: &[],
                                     plugins: &[],
                                     sidebar_expanded: false,
+                                    vim_mode: false,
+                                    vim_mode_label: None,
                                 },
                             );
                         });

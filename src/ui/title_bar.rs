@@ -507,8 +507,8 @@ impl TitleBar {
     }
 
     pub fn paint_bottom_border(ctx: &egui::Context, panel_rect: egui::Rect) {
-        // TopBottomPanel's built-in separator uses noninteractive.bg_stroke,
-        // which our global style makes transparent. Keep this hairline explicit.
+        // The panels disable their built-in separator so this remains the only
+        // title-bar hairline even though the shared separator style is visible.
         let color = ctx.style().visuals.text_color().gamma_multiply(0.18);
         ctx.layer_painter(egui::LayerId::background()).hline(
             panel_rect.x_range(),
@@ -654,7 +654,7 @@ mod tests {
     }
 
     #[test]
-    fn title_bar_bottom_border_remains_visible_across_frames() {
+    fn title_bar_paints_one_custom_bottom_border_across_frames() {
         let ctx = egui::Context::default();
         crate::style::configure_style(&ctx);
         let input = egui::RawInput {
@@ -668,7 +668,8 @@ mod tests {
         for _ in 0..3 {
             let mut panel_bottom = 0.0;
             let output = ctx.run(input.clone(), |ctx| {
-                let panel = egui::TopBottomPanel::top("title").show(ctx, |ui| {
+                let title_bar = egui::TopBottomPanel::top("title").show_separator_line(false);
+                let panel = title_bar.show(ctx, |ui| {
                     let _ = TitleBar::show(
                         ui,
                         TitleBarState {
@@ -696,16 +697,21 @@ mod tests {
             });
 
             let border_y = panel_bottom - 0.5;
-            assert!(
-                output.shapes.iter().any(|shape| {
+            let border_count = output
+                .shapes
+                .iter()
+                .filter(|shape| {
                     matches!(&shape.shape, egui::Shape::LineSegment { points, stroke }
                         if points[0].y == points[1].y
                             && points[0].y == border_y
                             && (points[1].x - points[0].x).abs() >= 999.0
                             && stroke.width == 1.0
                             && stroke.color.a() > 0)
-                }),
-                "title bar must paint its own visible bottom border on every frame"
+                })
+                .count();
+            assert_eq!(
+                border_count, 1,
+                "title bar must paint exactly one visible bottom border on every frame"
             );
         }
     }
@@ -973,6 +979,17 @@ mod tests {
 
         // Frame 3: file menu is open
         let output3 = render_title_bar(&ctx, vec![]);
+        assert!(
+            output3.shapes.iter().any(|shape| {
+                matches!(&shape.shape, egui::Shape::LineSegment { points, stroke }
+                    if points[0].y == points[1].y
+                        && points[0].y > 35.0
+                        && (180.0..=240.0).contains(&(points[1].x - points[0].x).abs())
+                        && stroke.width > 0.0
+                        && stroke.color.a() > 0)
+            }),
+            "File menu should paint a visible separator"
+        );
         assert!(
             has_text(&output3, "新建窗口"),
             "File menu should contain '新建窗口'"

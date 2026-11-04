@@ -753,7 +753,10 @@ impl eframe::App for PaperShellApp {
         };
         let (total_words, cursor_words) = self.editor.get_stats();
         // Title Bar
-        let title_bar_panel = egui::TopBottomPanel::top("title_bar_panel").show(ctx, |ui| {
+        let title_bar = egui::TopBottomPanel::top("title_bar_panel")
+            // This panel has one explicit border painted below.
+            .show_separator_line(false);
+        let title_bar_panel = title_bar.show(ctx, |ui| {
             if modal_open {
                 ui.disable();
             }

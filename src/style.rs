@@ -33,8 +33,8 @@ pub fn configure_style(ctx: &Context) {
         widget.corner_radius = egui::CornerRadius::ZERO;
     }
 
-    // Minimalist colors
-    visuals.widgets.noninteractive.bg_stroke = Stroke::new(0.0_f32, Color32::TRANSPARENT);
+    // Minimalist colors. Keep noninteractive.bg_stroke visible: egui also uses
+    // it for widget separators and panel edges.
     visuals.widgets.inactive.bg_fill = Color32::TRANSPARENT;
     visuals.widgets.hovered.bg_fill = Color32::from_gray(240);
     visuals.widgets.active.bg_fill = Color32::from_gray(230);
@@ -43,4 +43,19 @@ pub fn configure_style(ctx: &Context) {
     visuals.selection.stroke = Stroke::new(1.0_f32, Color32::from_rgb(100, 100, 100));
 
     ctx.set_visuals(visuals);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shared_style_keeps_egui_separators_visible() {
+        let ctx = Context::default();
+        configure_style(&ctx);
+
+        let separator_stroke = ctx.style().visuals.widgets.noninteractive.bg_stroke;
+        assert!(separator_stroke.width > 0.0);
+        assert!(separator_stroke.color.a() > 0);
+    }
 }

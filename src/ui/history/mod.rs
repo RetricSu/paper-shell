@@ -137,8 +137,10 @@ impl HistoryWindow {
                 crate::style::configure_style(ctx);
 
                 // Use the same panel styling as the main window.
-                let title_bar_panel =
-                    egui::TopBottomPanel::top("history_title_bar").show(ctx, |ui| {
+                let title_bar_panel = egui::TopBottomPanel::top("history_title_bar")
+                    // Match the main window's single, explicitly painted border.
+                    .show_separator_line(false)
+                    .show(ctx, |ui| {
                         self.show_title_bar(ui);
                     });
                 crate::ui::title_bar::TitleBar::paint_bottom_border(

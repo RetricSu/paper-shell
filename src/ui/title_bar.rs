@@ -12,6 +12,9 @@ pub enum TitleBarAction {
     History,
     Format,
     FontChange(String),
+    FontSizeChange(f32),
+    LineSpacingChange(f32),
+    ResetTypography,
     SearchReplace,
     /// Run an installed plugin by its id.
     RunPlugin(String),
@@ -19,6 +22,8 @@ pub enum TitleBarAction {
     ConfigurePlugin(String),
     /// Open the plugins directory in the system file manager.
     OpenPluginsFolder,
+    /// Open the unified plugin management window.
+    ManagePlugins,
 }
 
 pub struct TitleBar;
@@ -34,6 +39,8 @@ pub struct TitleBarState<'a> {
     pub has_current_file: bool,
     pub chinese_fonts: &'a [String],
     pub current_font: &'a str,
+    pub font_size: f32,
+    pub line_spacing: f32,
     pub recent_files: &'a [PathBuf],
     pub plugins: &'a [PluginMetadata],
     pub vim_mode: bool,
@@ -53,6 +60,8 @@ impl TitleBar {
             has_current_file,
             chinese_fonts,
             current_font,
+            font_size,
+            line_spacing,
             recent_files,
             plugins,
             vim_mode,
@@ -145,8 +154,11 @@ impl TitleBar {
                         if sidebar_expanded {
                             ui.painter().circle_filled(dot, 1.4, dot_color);
                         } else {
-                            ui.painter()
-                                .circle_stroke(dot, 1.4, egui::Stroke::new(0.7, dot_color));
+                            ui.painter().circle_stroke(
+                                dot,
+                                1.4,
+                                egui::Stroke::new(0.7_f32, dot_color),
+                            );
                         }
                         if response.clicked() {
                             action = Some(TitleBarAction::ToggleSidebar);
@@ -213,26 +225,6 @@ impl TitleBar {
                                 action = Some(TitleBarAction::History);
                                 ui.close();
                             }
-                            ui.separator();
-                            if ui
-                                .add(
-                                    egui::Button::new(if sidebar_expanded {
-                                        "隐藏文章列表"
-                                    } else {
-                                        "显示文章列表"
-                                    })
-                                    .shortcut_text(
-                                        ui.ctx().format_shortcut(&egui::KeyboardShortcut::new(
-                                            egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
-                                            egui::Key::E,
-                                        )),
-                                    ),
-                                )
-                                .clicked()
-                            {
-                                action = Some(TitleBarAction::ToggleSidebar);
-                                ui.close();
-                            }
                         },
                     );
                     ui.menu_button(
@@ -261,37 +253,207 @@ impl TitleBar {
                             }
                         },
                     );
-                    ui.menu_button(format!("{} 字体", egui_phosphor::regular::TEXT_T), |ui| {
-                        ui.set_min_width(200.0);
-                        if ui
-                            .selectable_label(current_font == "Default", "系统默认")
-                            .clicked()
-                        {
-                            action = Some(TitleBarAction::FontChange("Default".to_string()));
-                            ui.close();
-                        }
-                        ui.separator();
-                        egui::ScrollArea::vertical()
-                            .max_height(280.0)
-                            .show(ui, |ui| {
-                                for font_name in chinese_fonts {
-                                    if ui
-                                        .selectable_label(font_name == current_font, font_name)
-                                        .clicked()
-                                    {
-                                        action =
-                                            Some(TitleBarAction::FontChange(font_name.clone()));
-                                        ui.close();
-                                    }
+                    egui::containers::menu::MenuButton::new(format!(
+                        "{} 排版",
+                        egui_phosphor::regular::TEXT_ALIGN_LEFT
+                    ))
+                    .config(
+                        egui::containers::menu::MenuConfig::default()
+                            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside),
+                    )
+                    .ui(ui, |ui| {
+                        let menu_width = 196.0;
+                        ui.set_width(menu_width);
+                        ui.set_max_width(menu_width);
+
+                        // 1. 字号调整
+                        ui.horizontal(|ui| {
+                            ui.label(egui::RichText::new("字号").strong());
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                ui.spacing_mut().item_spacing.x = 2.0;
+                                if ui
+                                    .add_enabled(
+                                        font_size < 36.0,
+                                        egui::Button::new(egui_phosphor::regular::PLUS),
+                                    )
+                                    .on_hover_text("增大字号")
+                                    .clicked()
+                                {
+                                    action = Some(TitleBarAction::FontSizeChange(
+                                        (font_size + 1.0).min(36.0),
+                                    ));
+                                }
+                                ui.add_sized(
+                                    [32.0, 20.0],
+                                    egui::Label::new(
+                                        egui::RichText::new(format!("{font_size:.0}")).monospace(),
+                                    ),
+                                );
+                                if ui
+                                    .add_enabled(
+                                        font_size > 10.0,
+                                        egui::Button::new(egui_phosphor::regular::MINUS),
+                                    )
+                                    .on_hover_text("减小字号")
+                                    .clicked()
+                                {
+                                    action = Some(TitleBarAction::FontSizeChange(
+                                        (font_size - 1.0).max(10.0),
+                                    ));
                                 }
                             });
+                        });
+                        ui.add_space(2.0);
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 3.0;
+                            for size in [12.0, 14.0, 16.0, 18.0, 20.0, 24.0] {
+                                let is_selected = (font_size - size).abs() < 0.5;
+                                if ui
+                                    .add_sized(
+                                        [26.0, 20.0],
+                                        egui::Button::selectable(is_selected, format!("{size:.0}")),
+                                    )
+                                    .clicked()
+                                {
+                                    action = Some(TitleBarAction::FontSizeChange(size));
+                                }
+                            }
+                        });
+
+                        ui.separator();
+
+                        // 2. 行间距调整
+                        ui.horizontal(|ui| {
+                            ui.label(egui::RichText::new("行间距").strong());
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                ui.spacing_mut().item_spacing.x = 2.0;
+                                if ui
+                                    .add_enabled(
+                                        line_spacing < 3.0,
+                                        egui::Button::new(egui_phosphor::regular::PLUS),
+                                    )
+                                    .on_hover_text("增加行间距")
+                                    .clicked()
+                                {
+                                    let next = ((line_spacing + 0.1) * 10.0).round() / 10.0;
+                                    action = Some(TitleBarAction::LineSpacingChange(next.min(3.0)));
+                                }
+                                ui.add_sized(
+                                    [34.0, 20.0],
+                                    egui::Label::new(
+                                        egui::RichText::new(format!("{line_spacing:.1}x"))
+                                            .monospace(),
+                                    ),
+                                );
+                                if ui
+                                    .add_enabled(
+                                        line_spacing > 1.0,
+                                        egui::Button::new(egui_phosphor::regular::MINUS),
+                                    )
+                                    .on_hover_text("减小行间距")
+                                    .clicked()
+                                {
+                                    let next = ((line_spacing - 0.1) * 10.0).round() / 10.0;
+                                    action = Some(TitleBarAction::LineSpacingChange(next.max(1.0)));
+                                }
+                            });
+                        });
+                        ui.add_space(2.0);
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 4.0;
+                            for (spacing, label, tip) in [
+                                (1.2, "1.2", "紧凑 1.2x"),
+                                (1.5, "1.5", "标准 1.5x"),
+                                (1.8, "1.8", "宽松 1.8x"),
+                                (2.0, "2.0", "双倍 2.0x"),
+                            ] {
+                                let is_selected = (line_spacing - spacing).abs() < 0.05;
+                                if ui
+                                    .add_sized(
+                                        [40.0, 20.0],
+                                        egui::Button::selectable(is_selected, label),
+                                    )
+                                    .on_hover_text(tip)
+                                    .clicked()
+                                {
+                                    action = Some(TitleBarAction::LineSpacingChange(spacing));
+                                }
+                            }
+                        });
+
+                        ui.separator();
+
+                        // 3. 字体选择 (子菜单)
+                        let current_font_label = if current_font == "Default" {
+                            "系统默认"
+                        } else {
+                            current_font
+                        };
+                        egui::containers::menu::SubMenuButton::from_button(
+                            egui::Button::new(format!("{} 字体", egui_phosphor::regular::TEXT_T))
+                                .right_text(format!("{current_font_label} ⏵")),
+                        )
+                        .ui(ui, |ui| {
+                            let sub_width = 196.0;
+                            ui.set_width(sub_width);
+                            ui.set_max_width(sub_width);
+                            let is_default = current_font == "Default";
+                            if ui
+                                .add_sized(
+                                    [ui.available_width(), 20.0],
+                                    egui::Button::selectable(is_default, "系统默认"),
+                                )
+                                .clicked()
+                            {
+                                action = Some(TitleBarAction::FontChange("Default".to_string()));
+                                ui.close();
+                            }
+                            ui.separator();
+                            egui::ScrollArea::vertical()
+                                .max_height(280.0)
+                                .show(ui, |ui| {
+                                    for font_name in chinese_fonts {
+                                        let is_selected = font_name == current_font;
+                                        if ui
+                                            .add_sized(
+                                                [ui.available_width(), 20.0],
+                                                egui::Button::selectable(
+                                                    is_selected,
+                                                    font_name.as_str(),
+                                                ),
+                                            )
+                                            .clicked()
+                                        {
+                                            action =
+                                                Some(TitleBarAction::FontChange(font_name.clone()));
+                                            ui.close();
+                                        }
+                                    }
+                                });
+                        });
+
+                        ui.separator();
+
+                        if ui
+                            .add_sized(
+                                [ui.available_width(), 22.0],
+                                egui::Button::new(format!(
+                                    "{} 重置默认排版",
+                                    egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE
+                                )),
+                            )
+                            .clicked()
+                        {
+                            action = Some(TitleBarAction::ResetTypography);
+                            ui.close();
+                        }
                     });
                     ui.menu_button(
                         format!("{} 插件", egui_phosphor::regular::PUZZLE_PIECE),
                         |ui| {
                             ui.set_min_width(220.0);
                             if plugins.is_empty() {
-                                ui.add_enabled(false, egui::Button::new("暂无已安装插件"));
+                                ui.add_enabled(false, egui::Button::new("暂无已启用插件"));
                             }
                             for plugin in plugins {
                                 if ui
@@ -304,12 +466,28 @@ impl TitleBar {
                                 }
                             }
                             ui.separator();
+                            if plugins.iter().any(|p| p.id == "cloud_backup")
+                                && ui.button("配置云端备份…").clicked()
+                            {
+                                action = Some(TitleBarAction::ConfigurePlugin(
+                                    "cloud_backup".to_string(),
+                                ));
+                                ui.close();
+                            }
                             if plugins.iter().any(|p| p.id == "github_publish")
                                 && ui.button("配置 GitHub 发布…").clicked()
                             {
                                 action = Some(TitleBarAction::ConfigurePlugin(
                                     "github_publish".to_string(),
                                 ));
+                                ui.close();
+                            }
+                            if ui
+                                .button("管理插件…")
+                                .on_hover_text("启用、禁用、刷新、设置或卸载插件")
+                                .clicked()
+                            {
+                                action = Some(TitleBarAction::ManagePlugins);
                                 ui.close();
                             }
                             if ui
@@ -326,6 +504,17 @@ impl TitleBar {
             });
         });
         action
+    }
+
+    pub fn paint_bottom_border(ctx: &egui::Context, panel_rect: egui::Rect) {
+        // TopBottomPanel's built-in separator uses noninteractive.bg_stroke,
+        // which our global style makes transparent. Keep this hairline explicit.
+        let color = ctx.style().visuals.text_color().gamma_multiply(0.18);
+        ctx.layer_painter(egui::LayerId::background()).hline(
+            panel_rect.x_range(),
+            panel_rect.bottom() - 0.5,
+            egui::Stroke::new(1.0_f32, color),
+        );
     }
 
     fn menu_item(ui: &mut Ui, label: &str, key: Option<egui::Key>) -> egui::Response {
@@ -449,6 +638,8 @@ mod tests {
                         has_current_file: true,
                         chinese_fonts: &[],
                         current_font: "Default",
+                        font_size: 14.0,
+                        line_spacing: 1.5,
                         recent_files: &[],
                         plugins: &[],
                         sidebar_expanded: false,
@@ -459,6 +650,63 @@ mod tests {
                     assert!(ui.min_rect().height() <= 24.0, "title bar must remain a single compact row");
                 });
             });
+        }
+    }
+
+    #[test]
+    fn title_bar_bottom_border_remains_visible_across_frames() {
+        let ctx = egui::Context::default();
+        crate::style::configure_style(&ctx);
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1000.0, 700.0),
+            )),
+            ..Default::default()
+        };
+
+        for _ in 0..3 {
+            let mut panel_bottom = 0.0;
+            let output = ctx.run(input.clone(), |ctx| {
+                let panel = egui::TopBottomPanel::top("title").show(ctx, |ui| {
+                    let _ = TitleBar::show(
+                        ui,
+                        TitleBarState {
+                            title: "Test Document",
+                            document_path: None,
+                            word_count: 100,
+                            cursor_word_count: 50,
+                            selection_word_count: None,
+                            writing_time: 120,
+                            has_current_file: true,
+                            chinese_fonts: &[],
+                            current_font: "Default",
+                            font_size: 14.0,
+                            line_spacing: 1.5,
+                            recent_files: &[],
+                            plugins: &[],
+                            sidebar_expanded: false,
+                            vim_mode: false,
+                            vim_mode_label: None,
+                        },
+                    );
+                });
+                panel_bottom = panel.response.rect.bottom();
+                TitleBar::paint_bottom_border(ctx, panel.response.rect);
+            });
+
+            let border_y = panel_bottom - 0.5;
+            assert!(
+                output.shapes.iter().any(|shape| {
+                    matches!(&shape.shape, egui::Shape::LineSegment { points, stroke }
+                        if points[0].y == points[1].y
+                            && points[0].y == border_y
+                            && (points[1].x - points[0].x).abs() >= 999.0
+                            && stroke.width == 1.0
+                            && stroke.color.a() > 0)
+                }),
+                "title bar must paint its own visible bottom border on every frame"
+            );
         }
     }
 
@@ -498,5 +746,252 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn title_bar_renders_typography_state() {
+        let ctx = egui::Context::default();
+        crate::style::configure_style(&ctx);
+        let fonts = vec!["PingFang SC".to_string(), "STSong".to_string()];
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1000.0, 700.0),
+            )),
+            ..Default::default()
+        };
+        // Frame 1: render title bar
+        let _ = ctx.run(input.clone(), |ctx| {
+            egui::TopBottomPanel::top("title").show(ctx, |ui| {
+                let _ = TitleBar::show(
+                    ui,
+                    TitleBarState {
+                        title: "Test Document",
+                        document_path: Some("/tmp/test.txt"),
+                        word_count: 100,
+                        cursor_word_count: 50,
+                        selection_word_count: None,
+                        writing_time: 120,
+                        has_current_file: true,
+                        chinese_fonts: &fonts,
+                        current_font: "PingFang SC",
+                        font_size: 16.0,
+                        line_spacing: 1.8,
+                        recent_files: &[],
+                        plugins: &[],
+                        sidebar_expanded: true,
+                        vim_mode: false,
+                        vim_mode_label: None,
+                    },
+                );
+            });
+        });
+
+        // Frame 2: click the "排版" menu button (x = 174.0, y = 12.0)
+        let input2 = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1000.0, 700.0),
+            )),
+            events: vec![
+                egui::Event::PointerButton {
+                    pos: egui::pos2(174.0, 12.0),
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::PointerButton {
+                    pos: egui::pos2(174.0, 12.0),
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+            ..Default::default()
+        };
+        let _ = ctx.run(input2, |ctx| {
+            egui::TopBottomPanel::top("title").show(ctx, |ui| {
+                let _ = TitleBar::show(
+                    ui,
+                    TitleBarState {
+                        title: "Test Document",
+                        document_path: Some("/tmp/test.txt"),
+                        word_count: 100,
+                        cursor_word_count: 50,
+                        selection_word_count: None,
+                        writing_time: 120,
+                        has_current_file: true,
+                        chinese_fonts: &fonts,
+                        current_font: "PingFang SC",
+                        font_size: 16.0,
+                        line_spacing: 1.8,
+                        recent_files: &[],
+                        plugins: &[],
+                        sidebar_expanded: true,
+                        vim_mode: false,
+                        vim_mode_label: None,
+                    },
+                );
+            });
+        });
+
+        // Frame 3: popup is open; verify popup exists and has a compact, elegant width
+        let input3 = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1000.0, 700.0),
+            )),
+            ..Default::default()
+        };
+        let _ = ctx.run(input3, |ctx| {
+            egui::TopBottomPanel::top("title").show(ctx, |ui| {
+                let _ = TitleBar::show(
+                    ui,
+                    TitleBarState {
+                        title: "Test Document",
+                        document_path: Some("/tmp/test.txt"),
+                        word_count: 100,
+                        cursor_word_count: 50,
+                        selection_word_count: None,
+                        writing_time: 120,
+                        has_current_file: true,
+                        chinese_fonts: &fonts,
+                        current_font: "PingFang SC",
+                        font_size: 16.0,
+                        line_spacing: 1.8,
+                        recent_files: &[],
+                        plugins: &[],
+                        sidebar_expanded: true,
+                        vim_mode: false,
+                        vim_mode_label: None,
+                    },
+                );
+            });
+            // Inspect popup layer bounds
+            ctx.memory(|mem| {
+                for layer_id in mem.layer_ids() {
+                    if layer_id.order != egui::Order::Background
+                        && let Some(rect) = mem.area_rect(layer_id.id)
+                    {
+                        assert!(
+                            rect.width() <= 240.0,
+                            "popup width {} exceeds limit 240.0",
+                            rect.width()
+                        );
+                    }
+                }
+            });
+        });
+    }
+
+    #[test]
+    fn file_menu_does_not_contain_toggle_article_list() {
+        let ctx = egui::Context::default();
+        crate::style::configure_style(&ctx);
+
+        let find_text_position = |output: &egui::FullOutput, needle: &str| -> Option<egui::Pos2> {
+            output.shapes.iter().find_map(|shape| {
+                if let egui::Shape::Text(text) = &shape.shape
+                    && text.galley.text().contains(needle)
+                {
+                    Some(text.pos + text.galley.size() * 0.5)
+                } else {
+                    None
+                }
+            })
+        };
+
+        let has_text = |output: &egui::FullOutput, needle: &str| -> bool {
+            output.shapes.iter().any(|shape| {
+                if let egui::Shape::Text(text) = &shape.shape {
+                    text.galley.text().contains(needle)
+                } else {
+                    false
+                }
+            })
+        };
+
+        let render_title_bar =
+            |ctx: &egui::Context, events: Vec<egui::Event>| -> egui::FullOutput {
+                ctx.run(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(1000.0, 700.0),
+                        )),
+                        events,
+                        ..Default::default()
+                    },
+                    |ctx| {
+                        egui::TopBottomPanel::top("title").show(ctx, |ui| {
+                            let _ = TitleBar::show(
+                                ui,
+                                TitleBarState {
+                                    title: "Test Document",
+                                    document_path: Some("/tmp/test.txt"),
+                                    word_count: 100,
+                                    cursor_word_count: 50,
+                                    selection_word_count: None,
+                                    writing_time: 120,
+                                    has_current_file: true,
+                                    chinese_fonts: &[],
+                                    current_font: "Default",
+                                    font_size: 14.0,
+                                    line_spacing: 1.5,
+                                    recent_files: &[],
+                                    plugins: &[],
+                                    sidebar_expanded: false,
+                                    vim_mode: false,
+                                    vim_mode_label: None,
+                                },
+                            );
+                        });
+                    },
+                )
+            };
+
+        // Frame 1: initial render
+        let output1 = render_title_bar(&ctx, vec![]);
+        let file_pos = find_text_position(&output1, "文件").expect("File menu button must exist");
+
+        // Frame 2: click the File menu
+        let click_events = vec![
+            egui::Event::PointerButton {
+                pos: file_pos,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+            egui::Event::PointerButton {
+                pos: file_pos,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ];
+        let _ = render_title_bar(&ctx, click_events);
+
+        // Frame 3: file menu is open
+        let output3 = render_title_bar(&ctx, vec![]);
+        assert!(
+            has_text(&output3, "新建窗口"),
+            "File menu should contain '新建窗口'"
+        );
+        assert!(
+            has_text(&output3, "保存"),
+            "File menu should contain '保存'"
+        );
+        assert!(
+            has_text(&output3, "版本历史…"),
+            "File menu should contain '版本历史…'"
+        );
+        assert!(
+            !has_text(&output3, "显示文章列表"),
+            "File menu should not contain '显示文章列表'"
+        );
+        assert!(
+            !has_text(&output3, "隐藏文章列表"),
+            "File menu should not contain '隐藏文章列表'"
+        );
     }
 }

@@ -1,3 +1,6 @@
+use crate::comments::{
+    EditOperation, TextComment, apply_edit, reconcile_comments, sanitize_comments,
+};
 use egui::{Galley, Ui};
 use std::sync::Arc;
 
@@ -16,7 +19,24 @@ struct SearchReplaceState {
     match_index: usize,                    // Current match index
 }
 
-#[derive(Default)]
+struct CommentComposer {
+    comment: TextComment,
+    position: egui::Pos2,
+    anchor_valid: bool,
+    error: Option<String>,
+}
+
+struct OpenCommentDraft {
+    id: String,
+    text: String,
+}
+
+struct OpenComment {
+    comments: Vec<OpenCommentDraft>,
+    selected: usize,
+    position: egui::Pos2,
+}
+
 pub struct Editor {
     content: String,
     reset_edit_state: bool,
@@ -27,10 +47,39 @@ pub struct Editor {
     current_file: Option<PathBuf>,
     current_file_total_time: u64,
     cached_word_count: Option<usize>,
+    comments: Vec<TextComment>,
+    comment_composer: Option<CommentComposer>,
+    open_comment: Option<OpenComment>,
     // Search and replace state
     search_replace: SearchReplaceState,
     vim: VimState,
     should_focus: bool,
+    pub font_size: f32,
+    pub line_spacing: f32,
+}
+
+impl Default for Editor {
+    fn default() -> Self {
+        Self {
+            content: String::new(),
+            reset_edit_state: false,
+            cursor_index: None,
+            selection: None,
+            last_galley: None,
+            is_focused: false,
+            current_file: None,
+            current_file_total_time: 0,
+            cached_word_count: None,
+            comments: Vec::new(),
+            comment_composer: None,
+            open_comment: None,
+            search_replace: SearchReplaceState::default(),
+            vim: VimState::default(),
+            should_focus: false,
+            font_size: 14.0,
+            line_spacing: 1.5,
+        }
+    }
 }
 
 impl Editor {
@@ -88,6 +137,14 @@ impl Editor {
 
     pub fn show_with_paragraph_dots(&mut self, ui: &mut Ui, show_dots: bool) {
         let mut content = std::mem::take(&mut self.content);
+        let previous_content = content.clone();
+        let previous_cursor = self.cursor_index;
+        let previous_selection = self.selection.map(|range| {
+            (
+                range.primary.index.min(range.secondary.index),
+                range.primary.index.max(range.secondary.index),
+            )
+        });
         let id = ui.make_persistent_id("main_editor");
         if self.reset_edit_state {
             egui::text_edit::TextEditState::default().store(ui.ctx(), id);
@@ -182,13 +239,42 @@ impl Editor {
                 ui.spacing_mut().item_spacing.x = 4.0;
                 ui.allocate_space(egui::vec2(14.0, 0.0));
             }
+            let font_size = if self.font_size > 0.0 {
+                self.font_size
+            } else {
+                14.0
+            };
+            let line_spacing = if self.line_spacing > 0.0 {
+                self.line_spacing
+            } else {
+                1.5
+            };
+            let font_id = egui::FontId::new(font_size, egui::FontFamily::Proportional);
+            let text_color = ui.visuals().text_color();
+
+            let mut layouter = |ui: &Ui, text: &dyn egui::TextBuffer, wrap_width: f32| {
+                let text_str = text.as_str();
+                let line_height = font_size * line_spacing;
+                let mut layout_job = egui::text::LayoutJob::simple(
+                    text_str.to_string(),
+                    font_id.clone(),
+                    text_color,
+                    wrap_width,
+                );
+                for section in &mut layout_job.sections {
+                    section.format.line_height = Some(line_height);
+                }
+                ui.fonts_mut(|f| f.layout_job(layout_job))
+            };
+
             let output = egui::TextEdit::multiline(&mut content)
                 .id(id)
                 .frame(false)
                 .margin(egui::Margin::symmetric(2, 2))
                 .desired_width(ui.available_width())
                 .desired_rows(30)
-                .font(egui::FontId::monospace(14.0))
+                .font(font_id.clone())
+                .layouter(&mut layouter)
                 .show(ui);
 
             if self.vim.enabled {
@@ -224,9 +310,31 @@ impl Editor {
                 Self::fix_macos_ime(&output, ui);
             }
             self.draw_underline_decoration_at_focus_line(&output, ui);
+            let context_edit = self.add_context_menu(&output, &mut content);
+
+            if content != previous_content {
+                let edit = context_edit.or_else(|| {
+                    Self::edit_operation_from_events(
+                        ui,
+                        &previous_content,
+                        &content,
+                        previous_selection,
+                        previous_cursor,
+                        output.cursor_range.map(|range| range.primary.index),
+                    )
+                });
+                self.reconcile_document_edit(&previous_content, &content, edit);
+                self.cached_word_count = None;
+                self.search_replace.matches.clear();
+                self.search_replace.current_match = None;
+                self.search_replace.match_index = 0;
+                self.selection = None;
+            }
+
             self.highlight_matches(&output, ui, &content);
             self.highlight_search_matches(&output, ui, &content);
-            self.add_context_menu(&output, &mut content);
+            self.highlight_comments(&output, ui);
+            self.show_selection_comment_button(&output, ui);
 
             if show_dots {
                 Self::draw_paragraph_dots(ui, &output, &content, gutter_origin);
@@ -235,18 +343,12 @@ impl Editor {
             self.content = content;
 
             let editor_response = &output.response;
-            if editor_response.changed() {
-                self.cached_word_count = None;
-                self.search_replace.matches.clear();
-                self.search_replace.current_match = None;
-                self.search_replace.match_index = 0;
-            }
             if editor_response.clicked() {
                 editor_response.request_focus();
             }
         });
 
-        // Show search and replace dialog
+        self.show_comment_windows(ui);
         self.show_search_replace_dialog(ui);
     }
 
@@ -273,7 +375,7 @@ impl Editor {
         let painter = ui.painter_at(gutter_rect);
         painter.line_segment(
             [gutter_rect.right_top(), gutter_rect.right_bottom()],
-            egui::Stroke::new(1.0, ui.visuals().text_color().gamma_multiply(0.18)),
+            egui::Stroke::new(1.0_f32, ui.visuals().text_color().gamma_multiply(0.18)),
         );
         let active_line = output
             .cursor_range
@@ -323,7 +425,7 @@ impl Editor {
                     painter.circle_stroke(
                         center,
                         2.5,
-                        egui::Stroke::new(1.0, color.gamma_multiply(0.3)),
+                        egui::Stroke::new(1.0_f32, color.gamma_multiply(0.3)),
                     );
                 }
             }
@@ -346,8 +448,212 @@ impl Editor {
         self.search_replace.matches.clear();
         self.search_replace.current_match = None;
         self.search_replace.match_index = 0;
+        self.comments.clear();
+        self.comment_composer = None;
+        self.open_comment = None;
         self.reset_edit_state = true;
         self.cached_word_count = None; // 清除缓存
+    }
+
+    pub fn comments(&self) -> &[TextComment] {
+        &self.comments
+    }
+
+    pub fn set_comments(&mut self, mut comments: Vec<TextComment>) {
+        sanitize_comments(&mut comments, &self.content);
+        self.comments = comments;
+        self.comment_composer = None;
+        self.open_comment = None;
+    }
+
+    /// Restore a historical version using a diff rather than guessing one edit range.
+    pub fn restore_content(&mut self, content: String) {
+        self.replace_content_preserving_comments(content);
+        self.selection = None;
+        self.cursor_index = None;
+        self.last_galley = None;
+        self.search_replace.matches.clear();
+        self.search_replace.current_match = None;
+        self.search_replace.match_index = 0;
+        self.reset_edit_state = true;
+    }
+
+    fn replace_content_preserving_comments(&mut self, content: String) {
+        let previous = self.content.clone();
+        self.reconcile_document_edit(&previous, &content, None);
+        self.content = content;
+        self.cached_word_count = None;
+    }
+
+    fn reconcile_document_edit(
+        &mut self,
+        previous: &str,
+        content: &str,
+        edit: Option<EditOperation>,
+    ) {
+        self.transform_anchors(|comments| {
+            if let Some(edit) = edit {
+                apply_edit(comments, edit);
+            } else {
+                reconcile_comments(comments, previous, content);
+            }
+        });
+    }
+
+    fn apply_operation_to_anchors(&mut self, edit: EditOperation) {
+        self.transform_anchors(|comments| {
+            apply_edit(comments, edit);
+        });
+    }
+
+    fn transform_anchors(&mut self, transform: impl Fn(&mut Vec<TextComment>)) {
+        transform(&mut self.comments);
+        if let Some(composer) = &mut self.comment_composer
+            && composer.anchor_valid
+        {
+            let mut pending = vec![composer.comment.clone()];
+            transform(&mut pending);
+            if let Some(updated) = pending.pop() {
+                composer.comment = updated;
+            } else {
+                composer.anchor_valid = false;
+                composer.error = Some("原选区已被完整删除，草稿仍保留，但无法绑定评论。".into());
+            }
+        }
+        self.prune_open_comments();
+    }
+
+    fn prune_open_comments(&mut self) {
+        if let Some(open) = &mut self.open_comment {
+            open.comments
+                .retain(|draft| self.comments.iter().any(|comment| comment.id == draft.id));
+            open.selected = open.selected.min(open.comments.len().saturating_sub(1));
+        }
+        if self
+            .open_comment
+            .as_ref()
+            .is_some_and(|open| open.comments.is_empty())
+        {
+            self.open_comment = None;
+        }
+    }
+
+    fn edit_operation_from_events(
+        ui: &Ui,
+        old: &str,
+        new: &str,
+        previous_selection: Option<(usize, usize)>,
+        previous_cursor: Option<usize>,
+        new_cursor: Option<usize>,
+    ) -> Option<EditOperation> {
+        let events = ui.input(|input| input.events.clone());
+        let is_undo_or_redo = events.iter().any(|event| {
+            matches!(
+                event,
+                egui::Event::Key {
+                    key: egui::Key::Z | egui::Key::Y,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } if modifiers.command || modifiers.ctrl
+            )
+        });
+        if is_undo_or_redo {
+            return None;
+        }
+
+        let mut insertion = false;
+        let mut deletion = false;
+        let mut cut = false;
+        for event in &events {
+            match event {
+                egui::Event::Text(_) | egui::Event::Paste(_) => insertion = true,
+                egui::Event::Cut => cut = true,
+                egui::Event::Key {
+                    key: egui::Key::Backspace | egui::Key::Delete,
+                    pressed: true,
+                    ..
+                } => deletion = true,
+                egui::Event::Key {
+                    key: egui::Key::Enter,
+                    pressed: true,
+                    ..
+                } => insertion = true,
+                _ => {}
+            }
+        }
+        if u8::from(insertion) + u8::from(deletion) + u8::from(cut) != 1 {
+            return None;
+        }
+
+        let old_len = old.chars().count();
+        let new_len = new.chars().count();
+        let selection = previous_selection.filter(|(start, end)| start < end && *end <= old_len);
+        if insertion {
+            let (start, end) = match selection {
+                Some(selection) => selection,
+                None => {
+                    let cursor = previous_cursor?;
+                    (cursor, cursor)
+                }
+            };
+            let inserted_len = new_len.checked_sub(old_len.checked_sub(end - start)?)?;
+            Some(EditOperation {
+                start,
+                end,
+                inserted_len,
+            })
+        } else if cut {
+            let (start, end) = selection?;
+            Some(EditOperation {
+                start,
+                end,
+                inserted_len: 0,
+            })
+        } else if let Some((start, end)) = selection {
+            Some(EditOperation {
+                start,
+                end,
+                inserted_len: 0,
+            })
+        } else {
+            let start = new_cursor?;
+            let end = start.checked_add(old_len.checked_sub(new_len)?)?;
+            (end <= old_len).then_some(EditOperation {
+                start,
+                end,
+                inserted_len: 0,
+            })
+        }
+    }
+
+    pub fn add_comment(&mut self, start: usize, end: usize, text: String) -> bool {
+        if text.trim().is_empty() || start >= end || end > self.content.chars().count() {
+            return false;
+        }
+        let quote = Self::char_slice(&self.content, start, end).to_string();
+        self.comments.push(TextComment {
+            id: uuid::Uuid::new_v4().to_string(),
+            text,
+            start,
+            end,
+            quote,
+        });
+        true
+    }
+
+    fn char_slice(content: &str, start: usize, end: usize) -> &str {
+        let start_byte = content
+            .char_indices()
+            .nth(start)
+            .map(|(index, _)| index)
+            .unwrap_or(content.len());
+        let end_byte = content
+            .char_indices()
+            .nth(end)
+            .map(|(index, _)| index)
+            .unwrap_or(content.len());
+        &content[start_byte..end_byte]
     }
 
     pub fn get_word_count(&mut self) -> usize {
@@ -432,7 +738,7 @@ impl Editor {
     /// Blank lines are preserved as is.
     pub fn format(&mut self) {
         let formatted = Self::add_paragraph_indentation(&self.content);
-        self.content = formatted;
+        self.replace_content_preserving_comments(formatted);
     }
 
     /// Helper function to add two spaces at the beginning of each line
@@ -585,7 +891,7 @@ impl Editor {
                         egui::pos2(min_x, underline_y),
                         egui::pos2(max_x, underline_y),
                     ],
-                    egui::Stroke::new(1.0, ui.visuals().weak_text_color()),
+                    egui::Stroke::new(1.0_f32, ui.visuals().weak_text_color()),
                     4.0, // dash_length
                     2.0, // gap_length
                 ));
@@ -686,8 +992,10 @@ impl Editor {
 
                     // Draw
                     let fill_color = ui.visuals().selection.bg_fill.linear_multiply(0.3);
-                    let stroke =
-                        egui::Stroke::new(1.0, ui.visuals().selection.bg_fill.linear_multiply(0.6));
+                    let stroke = egui::Stroke::new(
+                        1.0_f32,
+                        ui.visuals().selection.bg_fill.linear_multiply(0.6),
+                    );
                     ui.painter().rect(
                         highlight_rect,
                         2.0,
@@ -781,7 +1089,7 @@ impl Editor {
                         highlight_rect,
                         1.0,
                         fill_color,
-                        egui::Stroke::new(1.0, stroke_color),
+                        egui::Stroke::new(1.0_f32, stroke_color),
                         egui::StrokeKind::Middle,
                     );
                 }
@@ -794,7 +1102,310 @@ impl Editor {
         }
     }
 
-    fn add_context_menu(&mut self, output: &egui::text_edit::TextEditOutput, content: &mut String) {
+    fn selected_range(output: &egui::text_edit::TextEditOutput) -> Option<(usize, usize)> {
+        let range = output.cursor_range.filter(|range| !range.is_empty())?;
+        Some((
+            range.primary.index.min(range.secondary.index),
+            range.primary.index.max(range.secondary.index),
+        ))
+    }
+
+    fn comment_popup_position(
+        output: &egui::text_edit::TextEditOutput,
+        char_index: usize,
+    ) -> egui::Pos2 {
+        let cursor = egui::text::CCursor::new(char_index);
+        let rect = output
+            .galley
+            .pos_from_cursor(cursor)
+            .translate(output.galley_pos.to_vec2());
+        egui::pos2(rect.min.x, rect.max.y + 6.0)
+    }
+
+    fn begin_comment(
+        &mut self,
+        output: &egui::text_edit::TextEditOutput,
+        start: usize,
+        end: usize,
+    ) {
+        self.comment_composer = Some(CommentComposer {
+            comment: TextComment {
+                id: String::new(),
+                text: String::new(),
+                start,
+                end,
+                quote: String::new(),
+            },
+            position: Self::comment_popup_position(output, end),
+            anchor_valid: true,
+            error: None,
+        });
+        self.open_comment = None;
+    }
+
+    fn show_selection_comment_button(
+        &mut self,
+        output: &egui::text_edit::TextEditOutput,
+        ui: &mut Ui,
+    ) {
+        let Some((start, end)) = Self::selected_range(output) else {
+            return;
+        };
+        if !output.response.has_focus() || self.comment_composer.is_some() {
+            return;
+        }
+
+        let screen_rect = ui.ctx().content_rect();
+        let mut position = Self::comment_popup_position(output, end);
+        position.x = position
+            .x
+            .clamp(screen_rect.min.x, screen_rect.max.x - 96.0);
+        position.y = position
+            .y
+            .clamp(screen_rect.min.y, screen_rect.max.y - 38.0);
+        egui::Area::new(ui.make_persistent_id("selection_comment_tool"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(position)
+            .show(ui.ctx(), |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    if ui
+                        .button(format!("{} 评论", egui_phosphor::regular::CHAT_TEXT))
+                        .on_hover_text("为选中文字添加评论 / 备注")
+                        .clicked()
+                    {
+                        self.begin_comment(output, start, end);
+                    }
+                });
+            });
+    }
+
+    fn highlight_comments(&mut self, output: &egui::text_edit::TextEditOutput, ui: &mut Ui) {
+        if self.comments.is_empty() {
+            return;
+        }
+
+        let fill = egui::Color32::from_rgba_unmultiplied(230, 174, 55, 30);
+        let underline = egui::Color32::from_rgb(173, 120, 24);
+        let mut row_start = 0;
+        for row in &output.galley.rows {
+            let row_end = row_start + row.char_count_excluding_newline();
+            for comment in &self.comments {
+                let start = comment.start.max(row_start);
+                let end = comment.end.min(row_end);
+                if start < end {
+                    let x_start = row.x_offset(start - row_start);
+                    let x_end = row.x_offset(end - row_start);
+                    let min =
+                        output.galley_pos + row.rect().min.to_vec2() + egui::vec2(x_start, 0.0);
+                    let max = output.galley_pos
+                        + row.rect().min.to_vec2()
+                        + egui::vec2(x_end, row.rect().height());
+                    let rect = egui::Rect::from_min_max(min, max);
+                    ui.painter().rect_filled(rect, 1.0, fill);
+                    ui.painter().line_segment(
+                        [rect.left_bottom(), rect.right_bottom()],
+                        egui::Stroke::new(1.0_f32, underline),
+                    );
+                }
+            }
+            row_start = row_end + usize::from(row.ends_with_newline);
+        }
+
+        if output.response.clicked()
+            && !output.response.dragged()
+            && let Some(range) = output.cursor_range.filter(|range| range.is_empty())
+        {
+            let index = range.primary.index;
+            self.open_comments_at(index, Self::comment_popup_position(output, index));
+            if self.open_comment.is_some() {
+                self.comment_composer = None;
+            }
+        }
+    }
+
+    fn open_comments_at(&mut self, index: usize, position: egui::Pos2) {
+        let comments: Vec<OpenCommentDraft> = self
+            .comments
+            .iter()
+            .filter(|comment| comment.start <= index && index < comment.end)
+            .map(|comment| OpenCommentDraft {
+                id: comment.id.clone(),
+                text: comment.text.clone(),
+            })
+            .collect();
+        if !comments.is_empty() {
+            self.open_comment = Some(OpenComment {
+                comments,
+                selected: 0,
+                position,
+            });
+        }
+    }
+
+    fn submit_comment(&mut self) {
+        let Some(composer) = &mut self.comment_composer else {
+            return;
+        };
+        if !composer.anchor_valid
+            || composer.comment.text.trim().is_empty()
+            || composer.comment.start >= composer.comment.end
+            || composer.comment.end > self.content.chars().count()
+        {
+            composer.error = Some("无法绑定原选区；草稿已保留，请取消或返回继续编辑。".into());
+            return;
+        }
+
+        let mut composer = self
+            .comment_composer
+            .take()
+            .expect("composer checked above");
+        composer.comment.id = uuid::Uuid::new_v4().to_string();
+        composer.comment.quote =
+            Self::char_slice(&self.content, composer.comment.start, composer.comment.end)
+                .to_string();
+        self.comments.push(composer.comment);
+    }
+
+    fn show_comment_windows(&mut self, ui: &mut Ui) {
+        if let Some(mut composer) = self.comment_composer.take() {
+            let mut cancel = false;
+            let mut save = false;
+            egui::Window::new("添加评论 / 备注")
+                .fixed_pos(composer.position)
+                .collapsible(false)
+                .resizable(false)
+                .show(ui.ctx(), |ui| {
+                    ui.add(
+                        egui::TextEdit::multiline(&mut composer.comment.text)
+                            .hint_text("写下评论或备注…")
+                            .desired_width(280.0)
+                            .desired_rows(5),
+                    );
+                    if let Some(error) = &composer.error {
+                        ui.colored_label(ui.visuals().error_fg_color, error);
+                    }
+                    ui.horizontal(|ui| {
+                        if ui
+                            .add_enabled(
+                                composer.anchor_valid && !composer.comment.text.trim().is_empty(),
+                                egui::Button::new("添加评论"),
+                            )
+                            .clicked()
+                        {
+                            save = true;
+                        }
+                        if ui.button("取消").clicked() {
+                            cancel = true;
+                        }
+                    });
+                });
+            if ui.input(|input| input.key_pressed(egui::Key::Escape)) {
+                cancel = true;
+            }
+            if save {
+                self.comment_composer = Some(composer);
+                self.submit_comment();
+            } else if !cancel {
+                self.comment_composer = Some(composer);
+            }
+        }
+
+        let Some(mut open) = self.open_comment.take() else {
+            return;
+        };
+        let mut visible = true;
+        let mut done = false;
+        let mut delete = false;
+        egui::Window::new("评论 / 备注")
+            .open(&mut visible)
+            .fixed_pos(open.position)
+            .collapsible(false)
+            .resizable(false)
+            .show(ui.ctx(), |ui| {
+                if open.comments.len() > 1 {
+                    ui.horizontal_wrapped(|ui| {
+                        for index in 0..open.comments.len() {
+                            if ui
+                                .selectable_label(
+                                    open.selected == index,
+                                    format!("评论 {}", index + 1),
+                                )
+                                .clicked()
+                            {
+                                open.selected = index;
+                            }
+                        }
+                    });
+                    ui.separator();
+                }
+                let selected_id = &open.comments[open.selected].id;
+                let Some(comment) = self
+                    .comments
+                    .iter()
+                    .find(|comment| comment.id == *selected_id)
+                else {
+                    return;
+                };
+                let quote = if comment.quote.chars().count() > 80 {
+                    format!("{}…", comment.quote.chars().take(80).collect::<String>())
+                } else {
+                    comment.quote.clone()
+                };
+                ui.label(egui::RichText::new(format!("“{}”", quote)).small().weak());
+                ui.add(
+                    egui::TextEdit::multiline(&mut open.comments[open.selected].text)
+                        .desired_width(280.0)
+                        .desired_rows(5),
+                );
+                ui.horizontal(|ui| {
+                    if ui
+                        .add_enabled(
+                            !open.comments[open.selected].text.trim().is_empty(),
+                            egui::Button::new("完成"),
+                        )
+                        .clicked()
+                    {
+                        done = true;
+                    }
+                    if ui.button("删除评论").clicked() {
+                        delete = true;
+                    }
+                });
+            });
+        if ui.input(|input| input.key_pressed(egui::Key::Escape)) {
+            visible = false;
+        }
+
+        if delete {
+            let selected_id = open.comments[open.selected].id.clone();
+            self.comments.retain(|comment| comment.id != selected_id);
+            open.comments.remove(open.selected);
+            open.selected = open.selected.min(open.comments.len().saturating_sub(1));
+            if visible && !open.comments.is_empty() {
+                self.open_comment = Some(open);
+            }
+        } else if done {
+            for draft in open.comments {
+                if !draft.text.trim().is_empty()
+                    && let Some(comment) = self
+                        .comments
+                        .iter_mut()
+                        .find(|comment| comment.id == draft.id)
+                {
+                    comment.text = draft.text;
+                }
+            }
+        } else if visible {
+            self.open_comment = Some(open);
+        }
+    }
+
+    fn add_context_menu(
+        &mut self,
+        output: &egui::text_edit::TextEditOutput,
+        content: &mut String,
+    ) -> Option<EditOperation> {
+        let mut context_edit = None;
         // Add context menu for copy-paste operations
         output.response.context_menu(|ui| {
             // Get selected text if any
@@ -820,6 +1431,18 @@ impl Editor {
                 None
             };
 
+            if selected_text.is_some()
+                && let Some((start, end)) = Self::selected_range(output)
+                && ui
+                    .button(format!(
+                        "{} 添加评论 / 备注",
+                        egui_phosphor::regular::CHAT_TEXT
+                    ))
+                    .clicked()
+            {
+                self.begin_comment(output, start, end);
+                ui.close();
+            }
             if ui
                 .button(format!("{} 剪切", egui_phosphor::regular::SCISSORS))
                 .clicked()
@@ -830,6 +1453,11 @@ impl Editor {
                     if let Some(cursor_range) = output.cursor_range {
                         let start = cursor_range.primary.index.min(cursor_range.secondary.index);
                         let end = cursor_range.primary.index.max(cursor_range.secondary.index);
+                        context_edit = Some(EditOperation {
+                            start,
+                            end,
+                            inserted_len: 0,
+                        });
                         let start_byte = content
                             .char_indices()
                             .nth(start)
@@ -844,6 +1472,11 @@ impl Editor {
                     }
                 } else {
                     ui.ctx().copy_text(content.clone());
+                    context_edit = Some(EditOperation {
+                        start: 0,
+                        end: content.chars().count(),
+                        inserted_len: 0,
+                    });
                     content.clear();
                 }
                 ui.close();
@@ -868,6 +1501,7 @@ impl Editor {
                 ui.close();
             }
         });
+        context_edit
     }
 
     // Search and replace functionality
@@ -1082,8 +1716,16 @@ impl Editor {
 
     fn replace_current(&mut self) {
         if let Some((start, end)) = self.search_replace.current_match {
+            let char_start = self.content[..start].chars().count();
+            let char_end = self.content[..end].chars().count();
+            self.apply_operation_to_anchors(EditOperation {
+                start: char_start,
+                end: char_end,
+                inserted_len: self.search_replace.replace_text.chars().count(),
+            });
             self.content
                 .replace_range(start..end, &self.search_replace.replace_text);
+            self.cached_word_count = None;
             // Update matches after replacement
             self.find_matches();
             // Try to find the next match at the same position or after
@@ -1112,6 +1754,16 @@ impl Editor {
         }
         new_content.push_str(&self.content[last_end..]);
 
+        let replacements = self.search_replace.matches.clone();
+        for (start, end) in replacements.iter().rev() {
+            let char_start = self.content[..*start].chars().count();
+            let char_end = self.content[..*end].chars().count();
+            self.apply_operation_to_anchors(EditOperation {
+                start: char_start,
+                end: char_end,
+                inserted_len: self.search_replace.replace_text.chars().count(),
+            });
+        }
         self.content = new_content;
         self.search_replace.matches.clear();
         self.search_replace.current_match = None;
@@ -1233,6 +1885,143 @@ mod tests {
             unfocused
                 .iter()
                 .all(|circle| circle.fill == egui::Color32::TRANSPARENT)
+        );
+    }
+
+    #[test]
+    fn undo_restores_comment_anchors_by_diff_not_the_previous_selection() {
+        let ctx = egui::Context::default();
+        let mut editor = Editor::default();
+        editor.set_content("abcXdef".into());
+        assert!(editor.add_comment(4, 7, "keep def".into()));
+        let events = vec![egui::Event::Key {
+            key: egui::Key::Z,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::COMMAND,
+        }];
+        let _ = ctx.run(
+            egui::RawInput {
+                events,
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let edit = Editor::edit_operation_from_events(
+                        ui,
+                        "abcXdef",
+                        "abcdef",
+                        Some((4, 7)),
+                        Some(7),
+                        Some(4),
+                    );
+                    assert_eq!(edit, None);
+                    editor.reconcile_document_edit("abcXdef", "abcdef", edit);
+                });
+            },
+        );
+        assert_eq!(
+            (editor.comments()[0].start, editor.comments()[0].end),
+            (3, 6)
+        );
+    }
+
+    #[test]
+    fn pending_comment_anchor_tracks_edits_and_failed_submit_keeps_draft() {
+        let mut editor = Editor::default();
+        editor.set_content("abc def".into());
+        editor.comment_composer = Some(CommentComposer {
+            comment: TextComment {
+                id: String::new(),
+                text: "draft".into(),
+                start: 4,
+                end: 7,
+                quote: String::new(),
+            },
+            position: egui::Pos2::ZERO,
+            anchor_valid: true,
+            error: None,
+        });
+        editor.apply_operation_to_anchors(EditOperation {
+            start: 0,
+            end: 0,
+            inserted_len: 1,
+        });
+        editor.content = "Xabc def".into();
+        editor.submit_comment();
+        assert_eq!(
+            (editor.comments()[0].start, editor.comments()[0].end),
+            (5, 8)
+        );
+        assert_eq!(editor.comments()[0].quote, "def");
+        assert!(editor.add_comment(0, 3, "keep abc".into()));
+
+        editor.comment_composer = Some(CommentComposer {
+            comment: TextComment {
+                id: String::new(),
+                text: "do not lose me".into(),
+                start: 5,
+                end: 8,
+                quote: String::new(),
+            },
+            position: egui::Pos2::ZERO,
+            anchor_valid: true,
+            error: None,
+        });
+        editor.apply_operation_to_anchors(EditOperation {
+            start: 5,
+            end: 8,
+            inserted_len: 0,
+        });
+        editor.content = "Xabc ".into();
+        editor.submit_comment();
+        assert_eq!(editor.comments().len(), 1);
+        let composer = editor.comment_composer.as_ref().unwrap();
+        assert!(!composer.anchor_valid);
+        assert_eq!(composer.comment.text, "do not lose me");
+        assert!(composer.error.is_some());
+    }
+
+    #[test]
+    fn clicking_overlapping_comments_opens_every_match() {
+        let mut editor = Editor::default();
+        editor.set_content("abcdef".into());
+        assert!(editor.add_comment(0, 4, "first".into()));
+        assert!(editor.add_comment(2, 6, "second".into()));
+        editor.open_comments_at(3, egui::Pos2::ZERO);
+        let open = editor.open_comment.as_ref().unwrap();
+        assert_eq!(open.comments.len(), 2);
+        assert_eq!(open.comments[0].text, "first");
+        assert_eq!(open.comments[1].text, "second");
+    }
+
+    #[test]
+    fn search_replace_all_uses_the_exact_replaced_ranges() {
+        let mut editor = Editor::default();
+        editor.set_content("world and world".into());
+        assert!(editor.add_comment(0, 5, "first".into()));
+        assert!(editor.add_comment(10, 15, "second".into()));
+        editor.search_replace.search_text = "world".into();
+        editor.search_replace.replace_text = "universe".into();
+        editor.find_matches();
+        editor.replace_all();
+        assert_eq!(editor.get_content(), "universe and universe");
+        assert!(editor.comments().is_empty());
+    }
+
+    #[test]
+    fn comments_keep_unicode_character_ranges_and_original_quotes() {
+        let mut editor = Editor::default();
+        editor.set_content("甲😀乙丙".into());
+        assert!(editor.add_comment(1, 3, "备注".into()));
+        assert_eq!(editor.comments()[0].quote, "😀乙");
+        assert!(!editor.add_comment(2, 2, "空选区".into()));
+        assert!(!editor.add_comment(0, 1, "   ".into()));
+        editor.restore_content("甲😀丙".into());
+        assert_eq!(
+            (editor.comments()[0].start, editor.comments()[0].end),
+            (1, 2)
         );
     }
 
@@ -1413,5 +2202,47 @@ mod tests {
             Editor::add_paragraph_indentation("    Extra spaces."),
             "  Extra spaces."
         );
+    }
+
+    #[test]
+    fn typography_layout_changes_row_height() {
+        let ctx = egui::Context::default();
+        let mut editor1 = Editor {
+            font_size: 14.0,
+            line_spacing: 1.0,
+            ..Default::default()
+        };
+        editor1.set_content("First line\nSecond line\nThird line".to_string());
+
+        let mut editor2 = Editor {
+            font_size: 14.0,
+            line_spacing: 2.0,
+            ..Default::default()
+        };
+        editor2.set_content("First line\nSecond line\nThird line".to_string());
+
+        let mut editor3 = Editor {
+            font_size: 20.0,
+            line_spacing: 1.5,
+            ..Default::default()
+        };
+        editor3.set_content("First line\nSecond line\nThird line".to_string());
+
+        let _ = ctx.run(Default::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                editor1.show(ui);
+                editor2.show(ui);
+                editor3.show(ui);
+            });
+        });
+
+        let galley1 = editor1.last_galley.as_ref().unwrap();
+        let galley2 = editor2.last_galley.as_ref().unwrap();
+        let galley3 = editor3.last_galley.as_ref().unwrap();
+
+        // 14pt * 2.0 line spacing should be taller than 14pt * 1.0 line spacing
+        assert!(galley2.size().y > galley1.size().y);
+        // 20pt * 1.5 should be taller than 14pt * 1.0
+        assert!(galley3.size().y > galley1.size().y);
     }
 }

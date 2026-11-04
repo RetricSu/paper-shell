@@ -5,7 +5,9 @@
 //! by calling [`PluginOutputWindow::start`] when launching a plugin and
 //! [`PluginOutputWindow::finish`] when the result arrives.
 
-use egui::{Color32, Context, RichText, Vec2};
+#[cfg(not(target_os = "macos"))]
+use egui::Vec2;
+use egui::{Color32, Context, RichText};
 
 #[derive(Default)]
 pub struct PluginOutputWindow {
@@ -91,7 +93,7 @@ impl PluginOutputWindow {
             egui::ScrollArea::vertical()
                 .max_height(320.0)
                 .show(ui, |ui| {
-                    ui.label(RichText::new(format!("{} {}", icon, &self.body)).color(color));
+                    ui.label(RichText::new(format!("{} {}", icon, self.body)).color(color));
                 });
         });
 
@@ -108,6 +110,7 @@ pub struct GithubPublishConfigWindow {
     base_dir: String,
     collections: Vec<crate::plugin::builtin::github_publish::CollectionConfig>,
     show_hint: bool,
+    save_error: Option<String>,
 }
 
 impl Default for GithubPublishConfigWindow {
@@ -127,7 +130,18 @@ impl GithubPublishConfigWindow {
             base_dir: String::new(),
             collections: Vec::new(),
             show_hint: false,
+            save_error: None,
         }
+    }
+
+    pub fn close(&mut self) {
+        self.open = false;
+        self.save_error = None;
+    }
+
+    pub fn notify_save_error(&mut self, err: String) {
+        self.save_error = Some(err);
+        self.open = true;
     }
 
     pub fn open(
@@ -143,6 +157,7 @@ impl GithubPublishConfigWindow {
         self.collections = config.collections.clone();
         self.open = true;
         self.show_hint = show_hint;
+        self.save_error = None;
     }
 
     pub fn show(
@@ -165,6 +180,14 @@ impl GithubPublishConfigWindow {
         .resizable(false)
         .default_width(420.0)
         .show(ctx, |ui| {
+            if let Some(err) = &self.save_error {
+                ui.label(
+                    RichText::new(format!("保存失败: {}", err))
+                        .color(Color32::from_rgb(220, 70, 70)),
+                );
+                ui.add_space(8.0);
+            }
+
             if self.show_hint {
                 ui.label(
                     RichText::new("请先配置博客仓库地址（格式：owner/repo，例如 RetricSu/blog）")
@@ -244,11 +267,11 @@ impl GithubPublishConfigWindow {
                             collections: self.collections.clone(),
                         },
                     );
-                    self.open = false;
                 }
 
                 if ui.button("取消").clicked() {
                     self.open = false;
+                    self.save_error = None;
                 }
             });
         });
@@ -264,11 +287,13 @@ pub struct PublishParams {
     pub collection_dir: String,
 }
 
+#[cfg(not(target_os = "macos"))]
 pub struct PrintParams {
     pub printer: Option<String>,
     pub margin_points: u16,
 }
 
+#[cfg(not(target_os = "macos"))]
 pub struct PrintDialog {
     open: bool,
     document_name: String,
@@ -279,12 +304,14 @@ pub struct PrintDialog {
     viewport_id: egui::ViewportId,
 }
 
+#[cfg(not(target_os = "macos"))]
 impl Default for PrintDialog {
     fn default() -> Self {
         Self::new()
     }
 }
 
+#[cfg(not(target_os = "macos"))]
 impl PrintDialog {
     pub fn new() -> Self {
         Self {
@@ -361,7 +388,7 @@ impl PrintDialog {
                     let margin = self.margin_points as f32 / 3.0;
                     egui::Frame::new()
                         .fill(Color32::from_rgb(248, 247, 244))
-                        .stroke(egui::Stroke::new(1.0, Color32::from_rgb(205, 202, 194)))
+                        .stroke(egui::Stroke::new(1.0_f32, Color32::from_rgb(205, 202, 194)))
                         .inner_margin(egui::Margin::same(margin as i8))
                         .show(ui, |ui| {
                             ui.set_min_height(420.0);
@@ -533,3 +560,6 @@ impl PublishDialog {
         published
     }
 }
+
+pub mod cloud_backup;
+pub mod manager;

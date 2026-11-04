@@ -34,13 +34,13 @@ pub fn configure_style(ctx: &Context) {
     }
 
     // Minimalist colors
-    visuals.widgets.noninteractive.bg_stroke = Stroke::new(0.0, Color32::TRANSPARENT);
+    visuals.widgets.noninteractive.bg_stroke = Stroke::new(0.0_f32, Color32::TRANSPARENT);
     visuals.widgets.inactive.bg_fill = Color32::TRANSPARENT;
     visuals.widgets.hovered.bg_fill = Color32::from_gray(240);
     visuals.widgets.active.bg_fill = Color32::from_gray(230);
 
     visuals.selection.bg_fill = Color32::from_rgb(200, 220, 255);
-    visuals.selection.stroke = Stroke::new(1.0, Color32::from_rgb(100, 100, 100));
+    visuals.selection.stroke = Stroke::new(1.0_f32, Color32::from_rgb(100, 100, 100));
 
     ctx.set_visuals(visuals);
 }

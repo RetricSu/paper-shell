@@ -701,7 +701,7 @@ impl eframe::App for PaperShellApp {
         };
         let (total_words, cursor_words) = self.editor.get_stats();
         // Title Bar
-        egui::TopBottomPanel::top("title_bar_panel").show(ctx, |ui| {
+        let title_bar_panel = egui::TopBottomPanel::top("title_bar_panel").show(ctx, |ui| {
             if modal_open {
                 ui.disable();
             }
@@ -844,6 +844,7 @@ impl eframe::App for PaperShellApp {
                 }
             }
         });
+        crate::ui::title_bar::TitleBar::paint_bottom_border(ctx, title_bar_panel.response.rect);
 
         if let Some(action) = self.sidebar.show(
             ctx,

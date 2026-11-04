@@ -28,8 +28,10 @@ These automated checks do not cover interactive desktop UI acceptance.
 
 ## Inline comments
 
-Select any non-empty text range and use the floating **评论** button (or right-click
-and choose **添加评论 / 备注**). Commented text has a pale amber highlight and an
+Select any non-empty text range and release the mouse to use the floating **评论**
+button (or right-click and choose **添加评论 / 备注**). The floating button stays
+hidden while typing, composing text with an IME, or dragging a selection.
+Commented text has a pale amber highlight and an
 underline. Click it to edit or delete the comment. Anchors follow later insertions,
 deletions, formatting, search/replace, and history restores; partial deletion keeps
 the comment on the remaining text, while deleting or replacing the entire range

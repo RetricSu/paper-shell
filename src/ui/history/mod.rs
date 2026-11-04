@@ -286,7 +286,7 @@ impl HistoryWindow {
             }
 
             // Keep the version list visually consistent with the workspace sidebar.
-            egui::SidePanel::left("version_list_panel")
+            let version_list_panel = egui::SidePanel::left("version_list_panel")
                 .resizable(true)
                 .default_width(230.0)
                 .width_range(180.0..=360.0)
@@ -306,13 +306,8 @@ impl HistoryWindow {
                                 .format("%Y-%m-%d %H:%M:%S")
                                 .to_string();
 
-                            let version_label =
-                                format!("{} {}", egui_phosphor::regular::GIT_COMMIT, timestamp);
-
                             if ui
-                                .add(
-                                    egui::Button::selectable(is_selected, version_label).truncate(),
-                                )
+                                .add(egui::Button::selectable(is_selected, timestamp).truncate())
                                 .clicked()
                             {
                                 self.selected_index = Some(i);
@@ -320,6 +315,15 @@ impl HistoryWindow {
                         }
                     });
                 });
+
+            // The global style hides panel separators, so draw this hairline explicitly.
+            let panel_rect = version_list_panel.response.rect;
+            let divider_color = ui.visuals().text_color().gamma_multiply(0.18);
+            ui.painter().vline(
+                panel_rect.right() - 0.5,
+                panel_rect.y_range(),
+                egui::Stroke::new(1.0_f32, divider_color),
+            );
 
             // Central panel for diff view
             egui::CentralPanel::default()

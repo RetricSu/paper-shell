@@ -11,4 +11,5 @@ pub enum ResponseMessage {
         name: String,
         result: Result<String, String>,
     },
+    VimEscape,
 }

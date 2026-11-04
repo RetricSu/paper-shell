@@ -6,6 +6,7 @@ pub mod app;
 pub mod backend;
 pub mod config;
 pub mod constant;
+pub mod escape_monitor;
 pub mod file;
 pub mod messages;
 pub mod open_with;

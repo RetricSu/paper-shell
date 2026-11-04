@@ -36,9 +36,15 @@ impl Config {
     /// Save current configuration to disk
     #[allow(dead_code)]
     pub fn save(&self) -> Result<(), ConfigError> {
-        confy::store(APP_NAME, None, &self.settings)?;
-        info!("Save config to {:?}", Self::config_path()?);
-        Ok(())
+        #[cfg(test)]
+        return Ok(());
+
+        #[cfg(not(test))]
+        {
+            confy::store(APP_NAME, None, &self.settings)?;
+            info!("Save config to {:?}", Self::config_path()?);
+            Ok(())
+        }
     }
 
     /// Get the application data directory
@@ -69,11 +75,21 @@ impl Config {
     }
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for Config {
     fn default() -> Self {
-        Self::load().unwrap_or_else(|_| Self {
-            settings: Settings::default(),
-        })
+        #[cfg(test)]
+        {
+            Self {
+                settings: Settings::default(),
+            }
+        }
+        #[cfg(not(test))]
+        {
+            Self::load().unwrap_or_else(|_| Self {
+                settings: Settings::default(),
+            })
+        }
     }
 }
 
@@ -97,6 +113,10 @@ pub struct Settings {
     #[serde(default)]
     pub recent_files: Vec<PathBuf>,
 
+    /// Whether Vim mode is enabled
+    #[serde(default)]
+    pub vim_mode: bool,
+
     /// Folders displayed alongside the default workspace.
     #[serde(default)]
     pub workspace_folders: Vec<PathBuf>,
@@ -116,6 +136,7 @@ impl Default for Settings {
             autosave_interval: 300, // 5 minutes
             font_size: 14.0,
             recent_files: Vec::new(),
+            vim_mode: false,
             custom_workspace: None,
             workspace_folders: Vec::new(),
             github_publish: crate::plugin::builtin::github_publish::GithubPublishConfig::default(),

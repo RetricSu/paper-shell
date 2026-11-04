@@ -440,7 +440,7 @@ impl HistoryWindow {
                 id: "history_confirm_rollback",
                 title: "确认回滚到此版本",
                 icon: egui_phosphor::regular::WARNING,
-                icon_color: Color32::from_rgb(217, 119, 6),
+                icon_color: Color32::from_rgb(173, 120, 24),
                 message: "确定要将文档回滚到此版本吗？\n当前编辑器的内容将被该历史版本替换。",
                 width: 340.0,
             };
@@ -451,20 +451,20 @@ impl HistoryWindow {
             let response = crate::ui::dialog::show_modal(ui.ctx(), config, |ui| {
                 ui.horizontal(|ui| {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui
-                            .button(
-                                RichText::new(format!(
-                                    "{} 确认回滚",
-                                    egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE
-                                ))
-                                .strong(),
-                            )
-                            .clicked()
+                        if crate::ui::dialog::modal_button(
+                            ui,
+                            RichText::new(format!(
+                                "{} 确认回滚",
+                                egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE
+                            ))
+                            .strong(),
+                        )
+                        .clicked()
                         {
                             confirm_clicked = true;
                         }
 
-                        if ui.button("取消").clicked() {
+                        if crate::ui::dialog::modal_button(ui, "取消").clicked() {
                             cancel_clicked = true;
                         }
                     });

@@ -10,6 +10,7 @@ pub enum TitleBarAction {
     Open,
     OpenFile(PathBuf),
     History,
+    Statistics,
     Format,
     FontChange(String),
     FontSizeChange(f32),
@@ -113,14 +114,23 @@ impl TitleBar {
                     let selection_label = selection_word_count
                         .map(|count| format!("选中 {count}  ·  "))
                         .unwrap_or_default();
-                    ui.label(
-                        egui::RichText::new(format!(
-                            "{}{} / {}  ·  {}",
-                            selection_label, cursor_word_count, word_count, time
-                        ))
-                        .small(),
-                    )
-                    .on_hover_text(&detail);
+                    if ui
+                        .add(
+                            egui::Label::new(
+                                egui::RichText::new(format!(
+                                    "{}{} / {}  ·  {}",
+                                    selection_label, cursor_word_count, word_count, time
+                                ))
+                                .small(),
+                            )
+                            .sense(egui::Sense::click()),
+                        )
+                        .on_hover_text(format!("{detail}\n点击查看写作统计"))
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .clicked()
+                    {
+                        action = Some(TitleBarAction::Statistics);
+                    }
                     if let Some(label) = vim_mode_label {
                         ui.add_space(6.0);
                         ui.label(egui::RichText::new(label).small().strong());
@@ -223,6 +233,10 @@ impl TitleBar {
                                 .clicked()
                             {
                                 action = Some(TitleBarAction::History);
+                                ui.close();
+                            }
+                            if ui.button("写作统计…").clicked() {
+                                action = Some(TitleBarAction::Statistics);
                                 ui.close();
                             }
                         },
@@ -711,6 +725,28 @@ mod tests {
             font_size,
             line_spacing,
         )
+    }
+
+    #[test]
+    fn clicking_title_word_count_opens_statistics() {
+        let ctx = egui::Context::default();
+        let fonts = [];
+        let _ = render_typography_title_bar(&ctx, vec![], &fonts, "Default", 14.0, 1.5);
+        let (output, _) = render_typography_title_bar(&ctx, vec![], &fonts, "Default", 14.0, 1.5);
+        // This label is right-aligned, so its galley origin is its right edge.
+        let pos = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.text().contains("50 / 100") => {
+                    Some(text.visual_bounding_rect().center())
+                }
+                _ => None,
+            })
+            .unwrap();
+        let (_, action) =
+            render_typography_title_bar(&ctx, click_events(pos), &fonts, "Default", 14.0, 1.5);
+        assert!(matches!(action, Some(TitleBarAction::Statistics)));
     }
 
     #[test]

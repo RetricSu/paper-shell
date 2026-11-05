@@ -218,6 +218,104 @@ impl EditorBackend {
         self.load_history_by_uuid(&uuid)
     }
 
+    /// Read all recorded documents once, off the UI thread. No source files or
+    /// metadata are changed, and moved/deleted documents retain their history.
+    pub fn load_writing_statistics(
+        &self,
+    ) -> Result<crate::statistics::WritingStatistics, BackendError> {
+        let mut statistics = crate::statistics::WritingStatistics::default();
+        let mut paths = Vec::new();
+        for entry in fs::read_dir(&self.history_dir)? {
+            let entry = entry?;
+            if entry.file_type()?.is_file()
+                && entry.path().extension().is_some_and(|ext| ext == "json")
+            {
+                paths.push(entry.path());
+            }
+        }
+        paths.sort();
+        for path in paths {
+            match self.load_document_statistics(&path, &mut statistics.warnings) {
+                Ok(document) if !document.days.is_empty() => statistics.documents.push(document),
+                Ok(_) => {}
+                Err(error) => statistics
+                    .warnings
+                    .push(format!("{}: {error}", path.display())),
+            }
+        }
+        statistics
+            .documents
+            .sort_by(|a, b| b.words.cmp(&a.words).then_with(|| a.id.cmp(&b.id)));
+        Ok(statistics)
+    }
+
+    fn load_document_statistics(
+        &self,
+        path: &Path,
+        warnings: &mut Vec<String>,
+    ) -> Result<crate::statistics::DocumentStatistics, BackendError> {
+        use crate::statistics::{DocumentStatistics, count_words, word_changes};
+
+        let mut entries: Vec<HistoryEntry> = serde_json::from_str(&fs::read_to_string(path)?)?;
+        entries.sort_by_key(|entry| entry.timestamp);
+        let mut document = DocumentStatistics {
+            id: path
+                .file_stem()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned(),
+            path: entries
+                .iter()
+                .rev()
+                .find_map(|entry| entry.file_path.clone()),
+            ..Default::default()
+        };
+        let mut previous = Some(String::new());
+        let mut previous_hash = None;
+        for entry in &entries {
+            let date = entry.timestamp.with_timezone(&chrono::Local).date_naive();
+            let day = document.days.entry(date).or_default();
+            day.seconds += entry.time_spent.unwrap_or(0);
+            // Repeated saves can add focus time, but never add the same words again.
+            if previous.is_some() && previous_hash == Some(&entry.hash) {
+                continue;
+            }
+            let blob = self.blobs_dir.join(&entry.hash);
+            let content = (|| -> io::Result<String> {
+                if entry.hash.len() != 16 || !entry.hash.bytes().all(|c| c.is_ascii_hexdigit()) {
+                    return Err(io::Error::new(io::ErrorKind::InvalidData, "无效的版本标识"));
+                }
+                if !fs::symlink_metadata(&blob)?.file_type().is_file() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "版本内容不是普通文件",
+                    ));
+                }
+                fs::read_to_string(&blob)
+            })();
+            match content {
+                Ok(content) => {
+                    document.words = Some(count_words(&content));
+                    if let Some(previous) = &previous {
+                        let (added, removed) = word_changes(previous, &content);
+                        day.added += added;
+                        day.removed += removed;
+                    }
+                    previous = Some(content);
+                }
+                Err(error) => {
+                    warnings.push(format!("{} / {}: {error}", document.id, entry.hash));
+                    // A missing version is not an empty document. Do not invent
+                    // additions across a gap or report an older total as current.
+                    previous = None;
+                    document.words = None;
+                }
+            }
+            previous_hash = Some(&entry.hash);
+        }
+        Ok(document)
+    }
+
     /// Get total writing time for a file
     #[allow(dead_code)]
     pub fn get_total_time(&self, file_path: &Path) -> Result<u64, BackendError> {
@@ -443,6 +541,176 @@ mod tests {
 
     fn cleanup_test_dir(test_dir: &Path) {
         let _ = fs::remove_dir_all(test_dir);
+    }
+
+    fn statistics_entry(
+        backend: &EditorBackend,
+        text: &str,
+        timestamp: &str,
+        seconds: Option<u64>,
+        path: &str,
+    ) -> HistoryEntry {
+        let hash = EditorBackend::calculate_hash(text);
+        backend.save_blob(&hash, text).unwrap();
+        HistoryEntry {
+            hash,
+            timestamp: timestamp.parse().unwrap(),
+            file_path: Some(PathBuf::from(path)),
+            time_spent: seconds,
+        }
+    }
+
+    #[test]
+    fn writing_statistics_aggregate_versions_and_keep_document_identity() {
+        use crate::statistics::{StatisticsGrouping, StatisticsPeriod};
+        let (backend, root) = setup_test_backend();
+        let first = statistics_entry(
+            &backend,
+            "甲乙 hello",
+            "2026-11-01T12:00:00Z",
+            Some(30),
+            "old.md",
+        );
+        let second = statistics_entry(
+            &backend,
+            "甲丙 hello",
+            "2026-11-02T12:00:00Z",
+            Some(60),
+            "renamed.md",
+        );
+        let repeated = statistics_entry(
+            &backend,
+            "甲丙 hello",
+            "2026-11-02T12:01:00Z",
+            Some(10),
+            "renamed.md",
+        );
+        let last = statistics_entry(
+            &backend,
+            "甲",
+            "2026-11-03T12:00:00Z",
+            Some(40),
+            "renamed.md",
+        );
+        // Deliberately unordered: aggregation follows timestamps, not JSON order.
+        backend
+            .save_history("doc-a", &[last, first, repeated, second])
+            .unwrap();
+        let other = statistics_entry(
+            &backend,
+            "one two",
+            "2026-11-02T12:00:00Z",
+            Some(20),
+            "other.md",
+        );
+        backend.save_history("doc-b", &[other]).unwrap();
+        let stats = backend.load_writing_statistics().unwrap();
+        assert!(stats.warnings.is_empty());
+        assert_eq!(stats.documents.len(), 2);
+        assert_eq!(stats.total_words(), 3);
+        assert_eq!(
+            stats
+                .documents
+                .iter()
+                .find(|d| d.id == "doc-a")
+                .unwrap()
+                .path,
+            Some(PathBuf::from("renamed.md"))
+        );
+        let report = stats.report(
+            StatisticsPeriod::AllTime,
+            StatisticsGrouping::Day,
+            "2026-11-05".parse().unwrap(),
+        );
+        assert_eq!(report.activity.added, 6);
+        assert_eq!(report.activity.removed, 3);
+        assert_eq!(report.activity.seconds, 160);
+        assert_eq!(report.active_days, 3);
+        cleanup_test_dir(&root);
+    }
+
+    #[test]
+    fn writing_statistics_skip_corruption_without_inventing_words_across_gaps() {
+        use crate::statistics::{StatisticsGrouping, StatisticsPeriod};
+        let (backend, root) = setup_test_backend();
+        let first = statistics_entry(
+            &backend,
+            "甲乙丙",
+            "2026-11-01T12:00:00Z",
+            None,
+            "missing.md",
+        );
+        let mut missing = first.clone();
+        missing.hash = "0000000000000000".into();
+        missing.timestamp = "2026-11-02T12:00:00Z".parse().unwrap();
+        let after_gap = statistics_entry(
+            &backend,
+            "甲乙丙丁",
+            "2026-11-03T12:00:00Z",
+            Some(30),
+            "missing.md",
+        );
+        let mut missing_latest = missing.clone();
+        missing_latest.timestamp = "2026-11-04T12:00:00Z".parse().unwrap();
+        backend
+            .save_history("partial", &[first, missing, after_gap, missing_latest])
+            .unwrap();
+        let good = statistics_entry(
+            &backend,
+            "hello world",
+            "2026-11-01T12:00:00Z",
+            Some(10),
+            "good.md",
+        );
+        backend.save_history("good", &[good]).unwrap();
+        fs::write(backend.history_dir.join("broken.json"), "not JSON").unwrap();
+        fs::create_dir(backend.history_dir.join("directory.json")).unwrap();
+        let stats = backend.load_writing_statistics().unwrap();
+        assert_eq!(stats.warnings.len(), 3);
+        assert_eq!(stats.documents.len(), 2);
+        assert_eq!(stats.total_words(), 2);
+        assert_eq!(
+            stats
+                .documents
+                .iter()
+                .find(|d| d.id == "partial")
+                .unwrap()
+                .words,
+            None
+        );
+        let report = stats.report(
+            StatisticsPeriod::AllTime,
+            StatisticsGrouping::Day,
+            "2026-11-05".parse().unwrap(),
+        );
+        assert_eq!(report.activity.added, 5);
+        assert_eq!(report.activity.removed, 0);
+        assert_eq!(report.activity.seconds, 40);
+        cleanup_test_dir(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn writing_statistics_do_not_follow_symlinked_records_or_blobs() {
+        let (backend, root) = setup_test_backend();
+        let entry = statistics_entry(&backend, "甲乙", "2026-11-01T12:00:00Z", None, "file.md");
+        backend
+            .save_history("real", std::slice::from_ref(&entry))
+            .unwrap();
+        std::os::unix::fs::symlink(
+            backend.history_dir.join("real.json"),
+            backend.history_dir.join("link.json"),
+        )
+        .unwrap();
+        fs::remove_file(backend.blobs_dir.join(&entry.hash)).unwrap();
+        let target = root.join("elsewhere.txt");
+        fs::write(&target, "甲乙").unwrap();
+        std::os::unix::fs::symlink(&target, backend.blobs_dir.join(&entry.hash)).unwrap();
+        let stats = backend.load_writing_statistics().unwrap();
+        assert_eq!(stats.documents.len(), 1);
+        assert_eq!(stats.warnings.len(), 1);
+        assert_eq!(stats.total_words(), 0);
+        cleanup_test_dir(&root);
     }
 
     #[test]

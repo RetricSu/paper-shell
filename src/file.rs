@@ -9,4 +9,5 @@ pub struct FileData {
     pub content: String,
     pub comments: Vec<crate::comments::TextComment>,
     pub comments_error: Option<String>,
+    pub current_version_id: Option<String>,
 }

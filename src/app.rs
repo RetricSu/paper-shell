@@ -58,6 +58,8 @@ pub struct PaperShellApp {
     sidebar: crate::ui::sidebar::Sidebar,
     draft_directory: Option<PathBuf>,
     draft_doc_id: String,
+    current_version_id: Option<String>,
+    document_uuid: Option<String>,
     saved_content: String,
     saved_comments: Vec<crate::comments::TextComment>,
     file_error: Option<String>,
@@ -118,6 +120,8 @@ impl Default for PaperShellApp {
             sidebar,
             draft_directory: None,
             draft_doc_id: uuid::Uuid::new_v4().to_string(),
+            current_version_id: None,
+            document_uuid: None,
             saved_content: String::new(),
             saved_comments: Vec::new(),
             file_error: None,
@@ -216,6 +220,9 @@ impl PaperShellApp {
             uuid,
             path: path.to_path_buf(),
             total_time,
+            current_version_id: self
+                .editor_backend
+                .resolve_current_version_id(path, &content),
             content,
             comments,
             comments_error,
@@ -227,10 +234,17 @@ impl PaperShellApp {
         if let Some(path) = current_file {
             let backend = Arc::clone(&self.editor_backend);
             let sender = self.response_sender.clone();
+            self.history_window
+                .set_current_version_id(self.current_version_id.clone());
+            let current_version_id = self.current_version_id.clone();
 
             std::thread::spawn(move || {
                 let result = backend.load_history(&path).map_err(|e| e.to_string());
-                let _ = sender.send(ResponseMessage::HistoryLoaded(result));
+                let _ = sender.send(ResponseMessage::HistoryLoaded {
+                    path,
+                    current_version_id,
+                    result,
+                });
             });
 
             self.history_window.open();
@@ -270,7 +284,10 @@ impl PaperShellApp {
         self.editor.line_spacing = line_spacing;
         self.editor.set_vim_mode(self.config.settings.vim_mode);
         self.editor.set_content(String::new());
+        self.history_window.close();
         self.draft_doc_id = uuid::Uuid::new_v4().to_string();
+        self.current_version_id = None;
+        self.document_uuid = None;
         self.saved_content.clear();
         self.saved_comments.clear();
         self.time_backend.get_and_reset_writing_time();
@@ -386,15 +403,22 @@ impl PaperShellApp {
             self.file_error = Some(format!("无法保存 {}: {}", path.display(), error));
             return false;
         }
-        match self
-            .editor_backend
-            .save(&path, &content, self.time_backend.get_writing_time())
-        {
-            Ok((uuid, total_time)) => {
+        match self.editor_backend.save_with_identity(
+            &path,
+            &content,
+            self.time_backend.get_writing_time(),
+            self.current_version_id.clone(),
+            self.document_uuid.as_deref(),
+        ) {
+            Ok((uuid, total_time, version_id)) => {
                 self.statistics_window.invalidate();
                 // The body/history save has consumed this interval even if comment
                 // persistence fails and needs to be retried.
                 self.time_backend.get_and_reset_writing_time();
+                // The version already exists even if only comment persistence
+                // fails; a retry must be parented to this save, not its parent.
+                self.current_version_id = Some(version_id);
+                self.document_uuid = Some(uuid.clone());
                 if let Err(error) = self
                     .editor_backend
                     .save_comments(&uuid, self.editor.comments())
@@ -409,6 +433,9 @@ impl PaperShellApp {
                 self.saved_comments = self.editor.comments().to_vec();
                 self.config.add_recent_file(path);
                 self.sidebar.refresh();
+                if self.history_window.is_open() {
+                    self.try_load_history();
+                }
                 true
             }
             Err(error) => {
@@ -420,6 +447,9 @@ impl PaperShellApp {
 
     fn apply_load_file_data(&mut self, data: FileData) {
         self.draft_directory = None;
+        self.history_window.close();
+        self.current_version_id = data.current_version_id;
+        self.document_uuid = Some(data.uuid.clone());
         self.saved_content = data.content.clone();
         self.editor.set_content(data.content);
         self.editor.set_current_file(Some(data.path.clone()));
@@ -445,21 +475,34 @@ impl PaperShellApp {
     fn check_response_messages(&mut self) {
         while let Ok(response) = self.response_receiver.try_recv() {
             match response {
-                ResponseMessage::HistoryLoaded(result) => match result {
-                    Ok(entries) => {
-                        if let Err(e) = self
-                            .history_window
-                            .set_history(entries, &self.editor_backend)
-                        {
-                            tracing::info!("Failed to set history: {}", e);
+                ResponseMessage::HistoryLoaded {
+                    path,
+                    current_version_id,
+                    result,
+                } => {
+                    if self.editor.get_current_file() != Some(&path)
+                        || self.current_version_id != current_version_id
+                    {
+                        continue;
+                    }
+                    self.history_window
+                        .set_current_version_id(current_version_id);
+                    match result {
+                        Ok(entries) => {
+                            if let Err(e) = self
+                                .history_window
+                                .set_history(entries, &self.editor_backend)
+                            {
+                                tracing::info!("Failed to set history: {}", e);
+                                self.history_window.set_error(e);
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to load history: {}", e);
                             self.history_window.set_error(e);
                         }
                     }
-                    Err(e) => {
-                        tracing::error!("Failed to load history: {}", e);
-                        self.history_window.set_error(e);
-                    }
-                },
+                }
                 ResponseMessage::OpenFile(path) => self.open_file(path),
                 ResponseMessage::OpenWorkspace(path) => self.add_workspace_folder(path),
                 ResponseMessage::PluginFinished { name, result } => {
@@ -487,12 +530,87 @@ impl PaperShellApp {
                     let _ = self.apply_rollback(&hash);
                 }
             }
+            HistoryAction::UpdateVersionLabel { version_id, label } => {
+                let Some(path) = self.editor.get_current_file().cloned() else {
+                    return;
+                };
+                match self
+                    .editor_backend
+                    .update_version_label(&path, &version_id, label)
+                {
+                    Ok(()) => self.try_load_history(),
+                    Err(error) => {
+                        self.file_error = Some(format!("无法保存版本备注: {error}"));
+                    }
+                }
+            }
+            HistoryAction::DeleteVersion {
+                version_id,
+                delete_branch,
+            } => {
+                let Some(path) = self.editor.get_current_file().cloned() else {
+                    return;
+                };
+                let mut deletes_current =
+                    self.current_version_id.as_deref() == Some(version_id.as_str());
+                if delete_branch
+                    && !deletes_current
+                    && let Ok(entries) = self.editor_backend.load_history(&path)
+                {
+                    let mut ancestor = self.current_version_id.clone();
+                    while let Some(id) = ancestor {
+                        if id == version_id {
+                            deletes_current = true;
+                            break;
+                        }
+                        ancestor = entries
+                            .iter()
+                            .find(|entry| entry.id.as_deref() == Some(id.as_str()))
+                            .and_then(|entry| entry.parent_id.clone());
+                    }
+                }
+                if deletes_current {
+                    self.file_error =
+                        Some("当前编辑基准所在分叉不能删除，请先回滚到其他版本".into());
+                    return;
+                }
+                match self
+                    .editor_backend
+                    .delete_version(&path, &version_id, delete_branch)
+                {
+                    Ok(()) => self.try_load_history(),
+                    Err(error) => {
+                        self.file_error = Some(format!("无法删除历史版本: {error}"));
+                    }
+                }
+            }
         }
     }
 
     fn apply_rollback(&mut self, hash: &str) -> bool {
-        match self.editor_backend.restore_version(hash) {
+        let Some(path) = self.editor.get_current_file().cloned() else {
+            self.file_error = Some(format!("无法回滚到版本 {hash}: 当前文档尚未保存"));
+            return false;
+        };
+        let version = self
+            .editor_backend
+            .load_history(&path)
+            .ok()
+            .and_then(|entries| {
+                entries
+                    .iter()
+                    .find(|entry| entry.id.as_deref() == Some(hash))
+                    .or_else(|| entries.iter().rev().find(|entry| entry.hash == hash))
+                    .cloned()
+            });
+        let Some(version) = version else {
+            let message = format!("无法回滚到版本 {hash}: 版本记录不存在");
+            self.file_error = Some(message);
+            return false;
+        };
+        match self.editor_backend.restore_version(&version.hash) {
             Ok(content) => {
+                self.current_version_id = version.id;
                 self.editor.restore_content(content);
                 tracing::info!("Rolled back to version: {}", hash);
                 true
@@ -1120,8 +1238,11 @@ impl eframe::App for PaperShellApp {
                             self.editor.font_size = font_size;
                             self.editor.line_spacing = line_spacing;
                             self.editor.set_content(content);
+                            self.history_window.close();
                             self.draft_directory = Some(directory);
                             self.draft_doc_id = uuid::Uuid::new_v4().to_string();
+                            self.current_version_id = None;
+                            self.document_uuid = None;
                             self.saved_content.clear();
                             self.time_backend.get_and_reset_writing_time();
                             self.cloud_backup_dialog.set_status(

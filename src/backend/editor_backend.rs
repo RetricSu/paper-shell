@@ -1,6 +1,7 @@
 use crate::config::Config;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -48,6 +49,15 @@ pub struct HistoryEntry {
     pub file_path: Option<PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub time_spent: Option<u64>,
+    /// Stable version identity. Legacy saves have no identity until normalized.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    /// The version this save was based on. None means a root version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
+    /// Optional user annotation, used as a version or branch label.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
 }
 
 /// Main backend interface for content-addressable storage
@@ -117,6 +127,13 @@ impl EditorBackend {
             return Ok(uuid);
         }
 
+        // The article may have changed outside the editor. Its recorded path is
+        // still a better identity match than silently starting a new history.
+        if let Ok(uuid) = self.find_uuid_by_file_path(file_path) {
+            let _ = set_file_id_wrapper(file_path, &uuid);
+            return Ok(uuid);
+        }
+
         // Generate new UUID
         let new_uuid = Uuid::new_v4().to_string();
 
@@ -153,6 +170,31 @@ impl EditorBackend {
             .ok_or_else(|| BackendError::InvalidHash("No matching history found".to_string()))
     }
 
+    /// Recover identity when both xattr and the current content hash changed.
+    fn find_uuid_by_file_path(&self, file_path: &Path) -> Result<String, BackendError> {
+        let mut candidates: Vec<(String, DateTime<Utc>)> = Vec::new();
+        for entry in fs::read_dir(&self.history_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) == Some("json")
+                && let Ok(content) = fs::read_to_string(&path)
+                && let Ok(entries) = serde_json::from_str::<Vec<HistoryEntry>>(&content)
+                && let Some(matching_entry) = entries
+                    .iter()
+                    .filter(|entry| entry.file_path.as_deref() == Some(file_path))
+                    .max_by_key(|entry| entry.timestamp)
+                && let Some(uuid) = path.file_stem().and_then(|s| s.to_str())
+            {
+                candidates.push((uuid.to_string(), matching_entry.timestamp));
+            }
+        }
+        candidates.sort_by_key(|(_, timestamp)| *timestamp);
+        candidates
+            .last()
+            .map(|(uuid, _)| uuid.clone())
+            .ok_or_else(|| BackendError::InvalidHash("No matching history found".to_string()))
+    }
+
     /// Load history for a UUID
     fn load_history_by_uuid(&self, uuid: &str) -> Result<Vec<HistoryEntry>, BackendError> {
         let history_path = self.history_dir.join(format!("{}.json", uuid));
@@ -163,15 +205,26 @@ impl EditorBackend {
 
         let content = fs::read_to_string(history_path)?;
         let entries = serde_json::from_str(&content)?;
-        Ok(entries)
+        Ok(normalize_history_entries(entries))
     }
 
-    /// Save history for a UUID
+    /// Atomically save history so a failed write cannot truncate the whole tree.
     fn save_history(&self, uuid: &str, entries: &[HistoryEntry]) -> Result<(), BackendError> {
         let history_path = self.history_dir.join(format!("{}.json", uuid));
-        let content = serde_json::to_string_pretty(entries)?;
-        fs::write(history_path, content)?;
-        Ok(())
+        let temp_path = self
+            .history_dir
+            .join(format!(".{uuid}.{}.tmp", Uuid::new_v4()));
+        let result = (|| -> Result<(), BackendError> {
+            let mut file = fs::File::create(&temp_path)?;
+            serde_json::to_writer_pretty(&mut file, entries)?;
+            file.sync_all()?;
+            fs::rename(&temp_path, &history_path)?;
+            Ok(())
+        })();
+        if result.is_err() {
+            let _ = fs::remove_file(&temp_path);
+        }
+        result
     }
 
     /// Main save method: save file with CAS and xattr tracking
@@ -185,37 +238,197 @@ impl EditorBackend {
         // 1. Calculate hash
         let hash = Self::calculate_hash(content);
 
-        // 2. Save blob (with deduplication)
-        self.save_blob(&hash, content)?;
-
-        // 3. Get or create UUID
+        // 2. Get or create UUID
         let uuid = self.get_or_create_file_id(file_path, &hash)?;
 
-        // 4. Update total time
+        // 3. Preserve the legacy linear API: its parent is always the latest save.
+        let history = self.load_history_by_uuid(&uuid)?;
+        let base_id = history.last().and_then(|entry| entry.id.clone());
+        self.save_with_parent(file_path, content, time_spent, base_id)
+            .map(|(uuid, total_time, _)| (uuid, total_time))
+    }
+
+    /// Save a new version based on the version currently shown in the editor.
+    /// Saving from an older version creates a child without deleting any siblings.
+    pub fn save_with_parent(
+        &self,
+        file_path: &Path,
+        content: &str,
+        time_spent: u64,
+        parent_id: Option<String>,
+    ) -> Result<(String, u64, String), BackendError> {
+        self.save_with_identity(file_path, content, time_spent, parent_id, None)
+    }
+
+    /// Save using the document identity held by the editor session. Supplying
+    /// the UUID prevents a lost extended attribute from starting a new history.
+    pub fn save_with_identity(
+        &self,
+        file_path: &Path,
+        content: &str,
+        time_spent: u64,
+        parent_id: Option<String>,
+        document_uuid: Option<&str>,
+    ) -> Result<(String, u64, String), BackendError> {
+        let hash = Self::calculate_hash(content);
+        self.save_blob(&hash, content)?;
+        let uuid = if let Some(uuid) = document_uuid {
+            let _ = set_file_id_wrapper(file_path, uuid);
+            uuid.to_string()
+        } else {
+            self.get_or_create_file_id(file_path, &hash)?
+        };
+
         let current_total = get_total_time_wrapper(file_path)?.unwrap_or(0);
         let new_total = current_total + time_spent;
-        let _ = set_total_time_wrapper(file_path, new_total); // Ignore errors on unsupported platforms
 
-        // 5. Update history
         let mut history = self.load_history_by_uuid(&uuid)?;
+        let entry_id = format!("v-{}", Uuid::new_v4());
+        if let Some(parent) = &parent_id
+            && !history
+                .iter()
+                .any(|entry| entry.id.as_deref() == Some(parent.as_str()))
+        {
+            return Err(BackendError::InvalidHash(format!(
+                "Parent version not found: {parent}"
+            )));
+        }
         history.push(HistoryEntry {
             hash,
             timestamp: Utc::now(),
             file_path: Some(file_path.to_path_buf()),
             time_spent: Some(time_spent),
+            id: Some(entry_id.clone()),
+            parent_id,
+            label: None,
         });
         self.save_history(&uuid, &history)?;
+        // Focus metadata is committed only after the version record is durable.
+        let _ = set_total_time_wrapper(file_path, new_total);
 
-        Ok((uuid, new_total))
+        Ok((uuid, new_total, entry_id))
     }
 
-    /// Load version history for a file
-    pub fn load_history(&self, file_path: &Path) -> Result<Vec<HistoryEntry>, BackendError> {
-        // Get UUID from xattr
-        let uuid = get_file_id_wrapper(file_path)?
-            .ok_or_else(|| BackendError::FileNotFound(file_path.to_path_buf()))?;
+    fn resolve_uuid_for_file(&self, file_path: &Path) -> Result<String, BackendError> {
+        if let Ok(Some(uuid)) = get_file_id_wrapper(file_path) {
+            return Ok(uuid);
+        }
+        // A rollback is not a save yet: the file on disk can still have the hash
+        // of a descendant, so use that hash to locate the original document.
+        let content = fs::read_to_string(file_path)?;
+        let hash = Self::calculate_hash(&content);
+        let uuid = self
+            .find_uuid_by_hash(&hash)
+            .or_else(|_| self.find_uuid_by_file_path(file_path))?;
+        let _ = set_file_id_wrapper(file_path, &uuid);
+        Ok(uuid)
+    }
 
-        self.load_history_by_uuid(&uuid)
+    fn history_for_file(
+        &self,
+        file_path: &Path,
+    ) -> Result<(String, Vec<HistoryEntry>), BackendError> {
+        let uuid = self.resolve_uuid_for_file(file_path)?;
+        let entries = self.load_history_by_uuid(&uuid)?;
+        Ok((uuid, entries))
+    }
+
+    /// Find the recorded version the file is currently based on. When the disk
+    /// file matches multiple versions, the latest save is the current head.
+    pub fn resolve_current_version_id(&self, file_path: &Path, content: &str) -> Option<String> {
+        let hash = Self::calculate_hash(content);
+        let (_, entries) = self.history_for_file(file_path).ok()?;
+        entries
+            .iter()
+            .rev()
+            .find(|entry| entry.hash == hash)
+            .or_else(|| entries.last())
+            .and_then(|entry| entry.id.clone())
+    }
+
+    /// Update only a version's annotation; article content and tree links stay intact.
+    pub fn update_version_label(
+        &self,
+        file_path: &Path,
+        version_id: &str,
+        label: Option<String>,
+    ) -> Result<(), BackendError> {
+        let (uuid, mut entries) = self.history_for_file(file_path)?;
+        let entry = entries
+            .iter_mut()
+            .find(|entry| entry.id.as_deref() == Some(version_id))
+            .ok_or_else(|| BackendError::InvalidHash(format!("Version not found: {version_id}")))?;
+        entry.label = label.filter(|label| !label.trim().is_empty());
+        self.save_history(&uuid, &entries)
+    }
+
+    /// Delete one visual version (including its folded identical saves), or its
+    /// whole branch. Children of a single deleted version move to its parent.
+    pub fn delete_version(
+        &self,
+        file_path: &Path,
+        version_id: &str,
+        delete_branch: bool,
+    ) -> Result<(), BackendError> {
+        let (uuid, mut entries) = self.history_for_file(file_path)?;
+        let target_index = entries
+            .iter()
+            .position(|entry| entry.id.as_deref() == Some(version_id))
+            .ok_or_else(|| BackendError::InvalidHash(format!("Version not found: {version_id}")))?;
+        let target_parent = entries[target_index].parent_id.clone();
+        let visual_ids = visual_representative_ids(&entries);
+        // Use exactly the same raw-ID folding map as the visual tree. This also
+        // handles identical saves interleaved with other branches.
+        let mut removed: HashSet<String> = visual_ids
+            .iter()
+            .filter(|(_, visible_id)| visible_id.as_str() == version_id)
+            .map(|(raw_id, _)| raw_id.clone())
+            .collect();
+        removed.insert(version_id.to_string());
+        if delete_branch {
+            loop {
+                let before = removed.len();
+                for entry in &entries {
+                    if entry
+                        .parent_id
+                        .as_ref()
+                        .is_some_and(|id| removed.contains(id))
+                        && let Some(id) = &entry.id
+                    {
+                        removed.insert(id.clone());
+                    }
+                }
+                if removed.len() == before {
+                    break;
+                }
+            }
+        }
+        if removed.len() == entries.len() {
+            return Err(BackendError::InvalidHash(
+                "Cannot delete every version of a document".into(),
+            ));
+        }
+        entries.retain(|entry| !entry.id.as_ref().is_some_and(|id| removed.contains(id)));
+        for entry in &mut entries {
+            if entry
+                .parent_id
+                .as_ref()
+                .is_some_and(|id| removed.contains(id))
+            {
+                entry.parent_id = if delete_branch {
+                    None
+                } else {
+                    target_parent.clone()
+                };
+            }
+        }
+        self.save_history(&uuid, &entries)
+    }
+
+    /// Load version history for a file, with stable IDs and parent links.
+    pub fn load_history(&self, file_path: &Path) -> Result<Vec<HistoryEntry>, BackendError> {
+        let (_, entries) = self.history_for_file(file_path)?;
+        Ok(entries)
     }
 
     /// Read all recorded documents once, off the UI thread. No source files or
@@ -258,6 +471,7 @@ impl EditorBackend {
 
         let mut entries: Vec<HistoryEntry> = serde_json::from_str(&fs::read_to_string(path)?)?;
         entries.sort_by_key(|entry| entry.timestamp);
+        let entries = normalize_history_entries(entries);
         let mut document = DocumentStatistics {
             id: path
                 .file_stem()
@@ -270,16 +484,13 @@ impl EditorBackend {
                 .find_map(|entry| entry.file_path.clone()),
             ..Default::default()
         };
-        let mut previous = Some(String::new());
-        let mut previous_hash = None;
+        // Load every blob first: a child can have an earlier timestamp than its
+        // parent after clock changes, and parent content must still be available.
+        let mut contents_by_id = HashMap::new();
+        let mut hashes_by_id = HashMap::new();
         for entry in &entries {
-            let date = entry.timestamp.with_timezone(&chrono::Local).date_naive();
-            let day = document.days.entry(date).or_default();
-            day.seconds += entry.time_spent.unwrap_or(0);
-            // Repeated saves can add focus time, but never add the same words again.
-            if previous.is_some() && previous_hash == Some(&entry.hash) {
-                continue;
-            }
+            let id = entry.id.clone().unwrap();
+            hashes_by_id.insert(id.clone(), entry.hash.clone());
             let blob = self.blobs_dir.join(&entry.hash);
             let content = (|| -> io::Result<String> {
                 if entry.hash.len() != 16 || !entry.hash.bytes().all(|c| c.is_ascii_hexdigit()) {
@@ -295,23 +506,48 @@ impl EditorBackend {
             })();
             match content {
                 Ok(content) => {
-                    document.words = Some(count_words(&content));
-                    if let Some(previous) = &previous {
-                        let (added, removed) = word_changes(previous, &content);
-                        day.added += added;
-                        day.removed += removed;
-                    }
-                    previous = Some(content);
+                    contents_by_id.insert(id, content);
                 }
                 Err(error) => {
                     warnings.push(format!("{} / {}: {error}", document.id, entry.hash));
-                    // A missing version is not an empty document. Do not invent
-                    // additions across a gap or report an older total as current.
-                    previous = None;
-                    document.words = None;
                 }
             }
-            previous_hash = Some(&entry.hash);
+        }
+        document.words = entries
+            .last()
+            .and_then(|entry| entry.id.as_ref())
+            .and_then(|id| contents_by_id.get(id))
+            .map(|content| count_words(content));
+
+        let empty = String::new();
+        for entry in &entries {
+            let date = entry.timestamp.with_timezone(&chrono::Local).date_naive();
+            let day = document.days.entry(date).or_default();
+            day.seconds += entry.time_spent.unwrap_or(0);
+            // Every normalized root starts from an empty document, not from the
+            // preceding save of an unrelated root or branch.
+            let parent_content = match entry.parent_id.as_deref() {
+                Some(parent) => contents_by_id.get(parent),
+                None => Some(&empty),
+            };
+            let parent_hash = entry
+                .parent_id
+                .as_deref()
+                .and_then(|parent| hashes_by_id.get(parent));
+            let Some(content) = entry.id.as_deref().and_then(|id| contents_by_id.get(id)) else {
+                // A missing version is not an empty document. Do not invent
+                // additions across a gap or report an older total as current.
+                continue;
+            };
+            // Repeated saves can add focus time, but never add the same words again.
+            if parent_hash.map(String::as_str) == Some(entry.hash.as_str()) {
+                continue;
+            }
+            if let Some(parent) = parent_content {
+                let (added, removed) = word_changes(parent, content);
+                day.added += added;
+                day.removed += removed;
+            }
         }
         Ok(document)
     }
@@ -402,6 +638,78 @@ impl Default for EditorBackend {
     fn default() -> Self {
         Self::new().expect("Failed to initialize EditorBackend")
     }
+}
+
+/// Upgrade the original linear JSON history in memory. Only legacy entries
+/// without an ID inherit the preceding save as their parent; explicit tree
+/// links are never replaced, even when they point to a deleted version.
+pub(crate) fn normalize_history_entries(entries: Vec<HistoryEntry>) -> Vec<HistoryEntry> {
+    let mut entries = entries;
+    let mut used_ids = HashSet::new();
+    let mut legacy = Vec::new();
+    for (index, entry) in entries.iter_mut().enumerate() {
+        if entry.id.is_none() {
+            let hash_prefix: String = entry.hash.chars().take(8).collect();
+            let mut id = format!(
+                "legacy-{index}-{}-{hash_prefix}",
+                entry.timestamp.timestamp()
+            );
+            let mut suffix = 1;
+            while used_ids.contains(&id) {
+                id = format!(
+                    "legacy-{index}-{}-{hash_prefix}-{suffix}",
+                    entry.timestamp.timestamp()
+                );
+                suffix += 1;
+            }
+            entry.id = Some(id.clone());
+            used_ids.insert(id);
+            legacy.push(index);
+        } else {
+            used_ids.insert(entry.id.clone().unwrap());
+        }
+    }
+    for index in legacy {
+        if index > 0 && entries[index].parent_id.is_none() {
+            entries[index].parent_id = entries[index - 1].id.clone();
+        }
+    }
+    entries
+}
+
+/// Map every raw save ID to its visible version ID. Exact duplicate children
+/// fold into their visible parent; labels always keep a save visible. Both the
+/// tree renderer and deletion logic use this function so they cannot diverge.
+pub(crate) fn visual_representative_ids(entries: &[HistoryEntry]) -> HashMap<String, String> {
+    let mut representatives = HashMap::new();
+    let mut visible_hashes = HashMap::new();
+    let mut labeled_visible = HashSet::new();
+    for entry in entries {
+        let raw_id = entry.id.clone().unwrap();
+        let parent_visible = entry.parent_id.as_ref().map(|parent| {
+            representatives
+                .get(parent)
+                .cloned()
+                .unwrap_or_else(|| parent.clone())
+        });
+        let fold = entry.label.is_none()
+            && parent_visible.as_ref().is_some_and(|parent| {
+                visible_hashes.get(parent) == Some(&entry.hash) && !labeled_visible.contains(parent)
+            });
+        let visible_id = if fold {
+            parent_visible.unwrap()
+        } else {
+            raw_id.clone()
+        };
+        representatives.insert(raw_id.clone(), visible_id.clone());
+        if visible_id == raw_id {
+            visible_hashes.insert(raw_id.clone(), entry.hash.clone());
+            if entry.label.is_some() {
+                labeled_visible.insert(raw_id);
+            }
+        }
+    }
+    representatives
 }
 
 // ============================================================================
@@ -557,6 +865,9 @@ mod tests {
             timestamp: timestamp.parse().unwrap(),
             file_path: Some(PathBuf::from(path)),
             time_spent: seconds,
+            id: None,
+            parent_id: None,
+            label: None,
         }
     }
 
@@ -780,12 +1091,18 @@ mod tests {
                 timestamp: Utc::now(),
                 file_path: Some(PathBuf::from("/test/file.txt")),
                 time_spent: None,
+                id: None,
+                parent_id: None,
+                label: None,
             },
             HistoryEntry {
                 hash: "def456".to_string(),
                 timestamp: Utc::now(),
                 file_path: Some(PathBuf::from("/test/file.txt")),
                 time_spent: None,
+                id: None,
+                parent_id: None,
+                label: None,
             },
         ];
 
@@ -812,7 +1129,11 @@ mod tests {
 
         // Save version 1
         let content1 = "Version 1 content";
-        backend.save(&test_file, content1, 0).unwrap();
+        let (_, total_time) = backend.save(&test_file, content1, 7).unwrap();
+        assert_eq!(
+            total_time, 7,
+            "legacy save must not double-count focus time"
+        );
 
         // Save version 2
         let content2 = "Version 2 content - updated";
@@ -845,12 +1166,366 @@ mod tests {
         };
 
         assert_eq!(history.len(), 3, "Should have 3 history entries");
+        assert_eq!(
+            history[2].parent_id, history[1].id,
+            "legacy save stays linear even when content matches an older version"
+        );
+        assert!(fs::read_dir(&backend.history_dir).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .ends_with(".tmp")
+        }));
 
         // Restore version 2
         let restored = backend.restore_version(&hash2).unwrap();
         assert_eq!(restored, content2, "Restored content should match");
 
         cleanup_test_dir(&test_dir);
+    }
+
+    #[test]
+    fn legacy_history_is_upgraded_without_losing_its_linear_lineage() {
+        let (backend, root) = setup_test_backend();
+        let file = root.join("legacy.md");
+        fs::write(&file, "second").unwrap();
+        set_file_id_wrapper(&file, "legacy").unwrap();
+        let first = statistics_entry(
+            &backend,
+            "first",
+            "2026-01-01T00:00:00Z",
+            Some(2),
+            "legacy.md",
+        );
+        let second = statistics_entry(
+            &backend,
+            "second",
+            "2026-01-02T00:00:00Z",
+            Some(3),
+            "legacy.md",
+        );
+        backend.save_history("legacy", &[first, second]).unwrap();
+
+        let loaded = backend.load_history(&file).unwrap();
+        let first_id = loaded[0].id.clone().unwrap();
+        assert_eq!(loaded[0].parent_id, None);
+        assert_eq!(loaded[1].parent_id.as_deref(), Some(first_id.as_str()));
+        let raw_before_save: Vec<HistoryEntry> = serde_json::from_str(
+            &fs::read_to_string(backend.history_dir.join("legacy.json")).unwrap(),
+        )
+        .unwrap();
+        assert!(raw_before_save.iter().all(|entry| entry.id.is_none()));
+
+        backend
+            .save_with_parent(&file, "alternate", 4, Some(first_id.clone()))
+            .unwrap();
+        let upgraded = backend.load_history(&file).unwrap();
+        assert_eq!(upgraded.len(), 3);
+        assert_eq!(upgraded[0].id.as_deref(), Some(first_id.as_str()));
+        assert_eq!(upgraded[1].parent_id.as_deref(), Some(first_id.as_str()));
+        assert_eq!(upgraded[2].parent_id.as_deref(), Some(first_id.as_str()));
+        let raw_after_save: Vec<HistoryEntry> = serde_json::from_str(
+            &fs::read_to_string(backend.history_dir.join("legacy.json")).unwrap(),
+        )
+        .unwrap();
+        assert!(raw_after_save.iter().all(|entry| entry.id.is_some()));
+        cleanup_test_dir(&root);
+    }
+
+    #[test]
+    fn saving_from_an_older_version_creates_a_sibling_branch() {
+        let (backend, root) = setup_test_backend();
+        let file = root.join("branched.md");
+        fs::write(&file, "root").unwrap();
+        let (_, _, first) = backend.save_with_parent(&file, "root", 0, None).unwrap();
+        fs::write(&file, "main").unwrap();
+        let (_, _, main) = backend
+            .save_with_parent(&file, "main", 0, Some(first.clone()))
+            .unwrap();
+        fs::write(&file, "side").unwrap();
+        let (_, _, side) = backend
+            .save_with_parent(&file, "side", 0, Some(first.clone()))
+            .unwrap();
+
+        let history = backend.load_history(&file).unwrap();
+        assert_eq!(history.len(), 3);
+        assert_eq!(history[1].id.as_deref(), Some(main.as_str()));
+        assert_eq!(history[1].parent_id.as_deref(), Some(first.as_str()));
+        assert_eq!(history[2].id.as_deref(), Some(side.as_str()));
+        assert_eq!(history[2].parent_id.as_deref(), Some(first.as_str()));
+        assert_eq!(backend.restore_version(&history[1].hash).unwrap(), "main");
+
+        let tree =
+            crate::ui::history::tree::build_version_tree(history, &backend, Some(&side)).unwrap();
+        assert_eq!(tree.nodes.len(), 3);
+        assert_eq!(tree.branches.len(), 2);
+        let root_node = tree.nodes.iter().find(|node| node.id == first).unwrap();
+        assert_eq!(root_node.children_ids.len(), 2);
+        assert!(root_node.is_fork_point);
+        let side_node = tree.nodes.iter().find(|node| node.id == side).unwrap();
+        assert!(side_node.is_current);
+        assert_eq!(side_node.branch_id, 0);
+        let main_node = tree.nodes.iter().find(|node| node.id == main).unwrap();
+        assert_ne!(main_node.branch_id, 0);
+        assert!(side_node.diff_lines.iter().any(|line| {
+            line.line_type == crate::ui::history::DiffLineType::Removed && line.content == "root"
+        }));
+        assert!(
+            !side_node
+                .diff_lines
+                .iter()
+                .any(|line| line.content == "main")
+        );
+        cleanup_test_dir(&root);
+    }
+
+    #[test]
+    fn version_labels_and_deletion_preserve_the_remaining_tree() {
+        let (backend, root) = setup_test_backend();
+        let file = root.join("managed.md");
+        fs::write(&file, "root").unwrap();
+        let first = backend.save_with_parent(&file, "root", 0, None).unwrap().2;
+        let second = backend
+            .save_with_parent(&file, "second", 0, Some(first.clone()))
+            .unwrap()
+            .2;
+        let third = backend
+            .save_with_parent(&file, "third", 0, Some(second.clone()))
+            .unwrap()
+            .2;
+        let side = backend
+            .save_with_parent(&file, "side", 0, Some(first.clone()))
+            .unwrap()
+            .2;
+        backend
+            .update_version_label(&file, &side, Some("人物线".into()))
+            .unwrap();
+        assert_eq!(
+            backend
+                .load_history(&file)
+                .unwrap()
+                .iter()
+                .find(|entry| entry.id.as_deref() == Some(side.as_str()))
+                .unwrap()
+                .label
+                .as_deref(),
+            Some("人物线")
+        );
+
+        backend.delete_version(&file, &second, false).unwrap();
+        let after_single = backend.load_history(&file).unwrap();
+        assert_eq!(after_single.len(), 3);
+        assert!(
+            !after_single
+                .iter()
+                .any(|entry| entry.id.as_deref() == Some(second.as_str()))
+        );
+        assert_eq!(
+            after_single
+                .iter()
+                .find(|entry| entry.id.as_deref() == Some(third.as_str()))
+                .unwrap()
+                .parent_id
+                .as_deref(),
+            Some(first.as_str())
+        );
+        assert!(
+            after_single
+                .iter()
+                .any(|entry| entry.id.as_deref() == Some(side.as_str()))
+        );
+
+        backend.delete_version(&file, &side, true).unwrap();
+        let after_branch = backend.load_history(&file).unwrap();
+        assert_eq!(after_branch.len(), 2);
+        assert!(
+            after_branch
+                .iter()
+                .all(|entry| entry.id.as_deref() != Some(side.as_str()))
+        );
+        assert!(backend.delete_version(&file, &first, true).is_err());
+        assert_eq!(backend.load_history(&file).unwrap().len(), 2);
+        cleanup_test_dir(&root);
+    }
+
+    #[test]
+    fn branched_statistics_compare_each_save_with_its_real_parent() {
+        use crate::statistics::{StatisticsGrouping, StatisticsPeriod};
+        let (backend, root) = setup_test_backend();
+        let mut first = statistics_entry(&backend, "甲", "2026-02-01T00:00:00Z", None, "branch.md");
+        first.id = Some("first".into());
+        let mut second = statistics_entry(
+            &backend,
+            "甲乙丙",
+            "2026-02-02T00:00:00Z",
+            None,
+            "branch.md",
+        );
+        second.id = Some("second".into());
+        second.parent_id = Some("first".into());
+        let mut side =
+            statistics_entry(&backend, "甲丁", "2026-02-03T00:00:00Z", None, "branch.md");
+        side.id = Some("side".into());
+        side.parent_id = Some("first".into());
+        backend
+            .save_history("branched", &[first, second, side])
+            .unwrap();
+        let stats = backend.load_writing_statistics().unwrap();
+        assert!(stats.warnings.is_empty());
+        assert_eq!(stats.total_words(), 2);
+        let report = stats.report(
+            StatisticsPeriod::AllTime,
+            StatisticsGrouping::Day,
+            "2026-02-04".parse().unwrap(),
+        );
+        assert_eq!(report.activity.added, 4);
+        assert_eq!(report.activity.removed, 0);
+        cleanup_test_dir(&root);
+    }
+
+    #[test]
+    fn identical_saves_fold_visually_but_keep_raw_links_and_focus_time() {
+        let (backend, root) = setup_test_backend();
+        let file = root.join("duplicates.md");
+        fs::write(&file, "same").unwrap();
+        let first = backend.save_with_parent(&file, "same", 5, None).unwrap().2;
+        let duplicate = backend
+            .save_with_parent(&file, "same", 7, Some(first.clone()))
+            .unwrap()
+            .2;
+        let child = backend
+            .save_with_parent(&file, "changed", 3, Some(duplicate.clone()))
+            .unwrap()
+            .2;
+        let history = backend.load_history(&file).unwrap();
+        let tree =
+            crate::ui::history::tree::build_version_tree(history, &backend, Some(&child)).unwrap();
+        assert_eq!(tree.nodes.len(), 2);
+        let first_node = tree.nodes.iter().find(|node| node.id == first).unwrap();
+        assert_eq!(first_node.merged_ids, vec![duplicate.clone()]);
+        assert_eq!(first_node.entry.time_spent, Some(12));
+        let child_node = tree.nodes.iter().find(|node| node.id == child).unwrap();
+        assert_eq!(child_node.parent_id.as_deref(), Some(first.as_str()));
+
+        backend.delete_version(&file, &first, false).unwrap();
+        let remaining = backend.load_history(&file).unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].id.as_deref(), Some(child.as_str()));
+        assert_eq!(remaining[0].parent_id, None);
+        cleanup_test_dir(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn session_identity_survives_lost_xattr_and_invalid_parent_is_rejected() {
+        let (backend, root) = setup_test_backend();
+        let file = root.join("identity.md");
+        fs::write(&file, "first").unwrap();
+        let (uuid, total, first) = backend.save_with_parent(&file, "first", 5, None).unwrap();
+        assert_eq!(total, 5);
+        xattr::remove(&file, METADATA_KEY).unwrap();
+        fs::write(&file, "second").unwrap();
+        let (saved_uuid, _, second) = backend
+            .save_with_identity(&file, "second", 7, Some(first.clone()), Some(&uuid))
+            .unwrap();
+        assert_eq!(saved_uuid, uuid);
+        assert_eq!(backend.load_history(&file).unwrap().len(), 2);
+        let history = backend.load_history(&file).unwrap();
+        assert_eq!(history[1].id.as_deref(), Some(second.as_str()));
+        assert_eq!(history[1].parent_id.as_deref(), Some(first.as_str()));
+        assert_eq!(fs::read_dir(&backend.history_dir).unwrap().count(), 1);
+
+        assert!(
+            backend
+                .save_with_identity(
+                    &file,
+                    "orphan",
+                    100,
+                    Some("missing-parent".into()),
+                    Some(&uuid),
+                )
+                .is_err()
+        );
+        assert_eq!(backend.load_history(&file).unwrap().len(), 2);
+        assert_eq!(get_total_time_wrapper(&file).unwrap(), Some(12));
+
+        xattr::remove(&file, METADATA_KEY).unwrap();
+        fs::write(&file, "externally changed").unwrap();
+        let (recovered_uuid, _) = backend
+            .get_file_metadata(&file, "externally changed")
+            .unwrap();
+        assert_eq!(recovered_uuid, uuid);
+        assert_eq!(backend.load_history(&file).unwrap().len(), 2);
+        cleanup_test_dir(&root);
+    }
+
+    #[test]
+    fn interleaved_duplicate_saves_are_deleted_with_their_visual_node() {
+        let (backend, root) = setup_test_backend();
+        let file = root.join("interleaved.md");
+        fs::write(&file, "root").unwrap();
+        let first = backend.save_with_parent(&file, "root", 1, None).unwrap().2;
+        let duplicate = backend
+            .save_with_parent(&file, "root", 1, Some(first.clone()))
+            .unwrap()
+            .2;
+        let other = backend
+            .save_with_parent(&file, "other", 1, Some(first.clone()))
+            .unwrap()
+            .2;
+        let late_duplicate = backend
+            .save_with_parent(&file, "root", 1, Some(duplicate.clone()))
+            .unwrap()
+            .2;
+        let tree = crate::ui::history::tree::build_version_tree(
+            backend.load_history(&file).unwrap(),
+            &backend,
+            Some(&other),
+        )
+        .unwrap();
+        let first_node = tree.nodes.iter().find(|node| node.id == first).unwrap();
+        assert_eq!(
+            first_node.merged_ids,
+            vec![duplicate.clone(), late_duplicate.clone()]
+        );
+        assert_eq!(tree.nodes.len(), 2);
+
+        backend.delete_version(&file, &first, false).unwrap();
+        let remaining = backend.load_history(&file).unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].id.as_deref(), Some(other.as_str()));
+        assert_eq!(remaining[0].parent_id, None);
+        cleanup_test_dir(&root);
+    }
+
+    #[test]
+    fn statistics_support_multiple_roots_and_reverse_timestamp_parent_links() {
+        use crate::statistics::{StatisticsGrouping, StatisticsPeriod};
+        let (backend, root) = setup_test_backend();
+        let mut first = statistics_entry(&backend, "甲", "2026-03-03T00:00:00Z", None, "roots.md");
+        first.id = Some("first-root".into());
+        let mut second_root =
+            statistics_entry(&backend, "乙", "2026-03-02T00:00:00Z", None, "roots.md");
+        second_root.id = Some("second-root".into());
+        let mut early_child =
+            statistics_entry(&backend, "甲丙", "2026-03-01T00:00:00Z", None, "roots.md");
+        early_child.id = Some("early-child".into());
+        early_child.parent_id = Some("first-root".into());
+        backend
+            .save_history("roots", &[first, second_root, early_child])
+            .unwrap();
+        let stats = backend.load_writing_statistics().unwrap();
+        assert!(stats.warnings.is_empty());
+        assert_eq!(stats.total_words(), 1);
+        let report = stats.report(
+            StatisticsPeriod::AllTime,
+            StatisticsGrouping::Day,
+            "2026-03-04".parse().unwrap(),
+        );
+        assert_eq!(report.activity.added, 3);
+        assert_eq!(report.activity.removed, 0);
+        cleanup_test_dir(&root);
     }
 
     #[test]

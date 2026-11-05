@@ -73,14 +73,6 @@ pub fn group_into_rows(diff_lines: &[DiffLine]) -> Vec<DiffRow> {
     rows
 }
 
-/// Check if diff lines contain meaningful changes (non-empty added or removed content)
-pub fn has_meaningful_changes(diff_lines: &[DiffLine]) -> bool {
-    diff_lines.iter().any(|line| {
-        matches!(line.line_type, DiffLineType::Added | DiffLineType::Removed)
-            && !line.content.trim().is_empty()
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

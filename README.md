@@ -101,6 +101,29 @@ unsupported files, and symbolic links are ignored. Use the blank-space context m
 articles or closing the window offers save, discard, or cancel for unsaved changes.
 Saving an empty article is supported.
 
+## Version history
+
+Open **文件 → 版本历史…** to inspect saved versions as a branching tree. The current
+version has a filled marker and a text badge; fork points and branch tips use distinct
+markers, and each branch has its own lane and color. Filter the full graph to the
+current line or one branch, then select a version to see its timestamp, focus time,
+word changes, parent/children, and content diff. Diffs can compare against the real
+parent, the current version, or any pinned base version.
+
+Rolling back replaces the editor content after confirmation but does not delete later
+saves. The next save uses the restored version as its parent, so continuing from an
+older version creates a sibling branch. Existing linear history files are upgraded
+with stable IDs and parent links when the document is next saved. Consecutive saves
+with identical content are folded into one visual node without losing their saved
+focus time.
+
+Versions can be given short labels for branch identification. Right-click a tree node
+or use the detail actions to roll back, label, pin a comparison base, or delete.
+Deleting one version reconnects its children to its parent; deleting a side branch
+removes its descendants only. The current version and any branch containing it cannot
+be deleted, and destructive actions require confirmation. Article files and content
+blobs are not deleted by history management.
+
 ## Plugins
 
 Open **插件 → 管理插件…** to see every built-in and external plugin, its source,

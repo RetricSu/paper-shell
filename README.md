@@ -26,6 +26,34 @@ other platforms may need native GUI build dependencies. The first run downloads
 dependencies and compiles the app, so allow extra time and network access.
 These automated checks do not cover interactive desktop UI acceptance.
 
+## Writing statistics
+
+Open **文件 → 写作统计…**, or click the word count in the title bar, to open a
+separate, resizable statistics window. It shows the latest saved word total across
+all recorded documents, cumulative additions and deletions, saved focus time, and
+active days. Compare the last 7 days, last 30 days, this year, or all history, grouped
+by day, week (starting Monday), or calendar month. The chart shows the latest 60
+periods; **时间明细** contains the full selected range, including inactive periods.
+The document list shows each document's latest saved count.
+The window opens immediately with a loading spinner while statistics are computed.
+Refreshing keeps the previous results visible with an updating indicator.
+
+Statistics use the same counting rules as the editor: one per Han character and
+one per other non-whitespace run. Additions/deletions compare consecutive saved
+versions by word, including equal-length rewrites. The first saved version counts
+in full as additions; imports, pasted text, and restored versions also count, so
+this is not a keystroke counter. Unsaved drafts and never-saved workspace files are
+excluded. Documents with retained history remain included after moving or deleting
+their source files; historical versions are not summed into the latest total.
+Dates use the current local time zone, and changes/focus time belong to their save
+date. Time is the existing editor focus timer, not a measure of active typing.
+
+Saving updates an open statistics window automatically. Use **刷新** to read saves
+from other windows. Missing/corrupt records are reported, and changes across a
+missing version are omitted rather than treated as new writing. Older readable
+versions are not substituted for an unreadable latest total. Loading happens in
+the background and does not modify articles or migrate history.
+
 ## Inline comments
 
 Select any non-empty text range and release the mouse to use the floating selection

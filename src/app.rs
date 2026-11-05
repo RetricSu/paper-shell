@@ -40,6 +40,7 @@ pub struct PaperShellApp {
     response_receiver: Receiver<ResponseMessage>,
 
     history_window: HistoryWindow,
+    statistics_window: crate::ui::statistics::StatisticsWindow,
 
     current_font: String,
     available_fonts: Vec<String>,
@@ -116,6 +117,7 @@ impl Default for PaperShellApp {
             response_receiver: receiver,
             response_sender: sender,
             history_window: HistoryWindow::new(),
+            statistics_window: crate::ui::statistics::StatisticsWindow::default(),
             available_fonts,
             current_font,
             last_focus_state: false,
@@ -379,6 +381,7 @@ impl PaperShellApp {
             .save(&path, &content, self.time_backend.get_writing_time())
         {
             Ok((uuid, total_time)) => {
+                self.statistics_window.invalidate();
                 // The body/history save has consumed this interval even if comment
                 // persistence fails and needs to be retried.
                 self.time_backend.get_and_reset_writing_time();
@@ -807,6 +810,9 @@ impl eframe::App for PaperShellApp {
                     crate::ui::title_bar::TitleBarAction::OpenFile(path) => self.open_file(path),
                     crate::ui::title_bar::TitleBarAction::Format => self.editor.format(),
                     crate::ui::title_bar::TitleBarAction::History => self.try_load_history(),
+                    crate::ui::title_bar::TitleBarAction::Statistics => {
+                        self.statistics_window.open(ctx)
+                    }
                     crate::ui::title_bar::TitleBarAction::SearchReplace => {
                         self.editor.open_search_replace();
                     }
@@ -958,6 +964,7 @@ impl eframe::App for PaperShellApp {
 
         // History Window
         self.history_window.show(ctx);
+        self.statistics_window.show(ctx, &self.editor_backend);
         if let Some(action) = self.history_window.take_pending_action() {
             self.handle_history_action(action);
         }

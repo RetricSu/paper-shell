@@ -721,20 +721,7 @@ impl Editor {
     }
 
     fn count_words(text: &str) -> usize {
-        let mut count = 0;
-        let mut in_word = false;
-        for c in text.chars() {
-            if c.is_whitespace() {
-                in_word = false;
-            } else if is_cjk(c) {
-                count += 1;
-                in_word = false;
-            } else if !in_word {
-                count += 1;
-                in_word = true;
-            }
-        }
-        count
+        crate::statistics::count_words(text)
     }
 
     pub fn get_cursor_word_count(&self) -> Option<usize> {
@@ -1879,14 +1866,6 @@ impl Editor {
         self.search_replace.match_index = 0;
         self.cached_word_count = None; // Invalidate cache
     }
-}
-
-fn is_cjk(c: char) -> bool {
-    ('\u{4E00}'..='\u{9FFF}').contains(&c)
-        || ('\u{3400}'..='\u{4DBF}').contains(&c)
-        || ('\u{20000}'..='\u{2A6DF}').contains(&c)
-        || ('\u{F900}'..='\u{FAFF}').contains(&c)
-        || ('\u{2F800}'..='\u{2FA1F}').contains(&c)
 }
 
 #[cfg(test)]

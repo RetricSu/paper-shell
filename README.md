@@ -103,11 +103,12 @@ Saving an empty article is supported.
 
 ## Plugins
 
-Open **插件 → 管理插件…** to see every built-in and external plugin, its source,
-version, author, enabled state, and any discovery errors. Print, Cloud Backup, and
-GitHub Publish are built in. Cloud Backup and GitHub Publish have dedicated settings.
-macOS Print uses the native system print panel; other platforms choose a printer and
-margins for each print run.
+Open **插件 → 管理插件…** to open a separate, resizable plugin manager window
+showing every built-in and external plugin, its source, version, author, enabled
+state, and any discovery errors. Print, Cloud Backup, and GitHub Publish are built
+in. Cloud Backup and GitHub Publish have dedicated settings. macOS Print uses the
+native system print panel; other platforms choose a printer and margins for each
+print run.
 
 To install an external plugin:
 

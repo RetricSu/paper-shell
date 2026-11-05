@@ -168,15 +168,29 @@ impl VimState {
         self.count = None;
     }
 
-    /// Process an explicit Escape event intercepted by `App::raw_input_hook`.
-    pub fn on_escape(&mut self) {
+    /// Process an explicit Escape event.
+    ///
+    /// Repeated Escape presses toggle between `Insert` and `Normal` modes
+    /// (and exit `Visual` mode back to `Normal`).
+    pub fn on_escape(&mut self) -> VimAction {
         if !self.enabled {
-            return;
-        }
-        if self.mode != VimMode::Normal {
-            self.mode = VimMode::Normal;
+            return VimAction::None;
         }
         self.reset_transient();
+        match self.mode {
+            VimMode::Insert => {
+                self.mode = VimMode::Normal;
+                VimAction::ModeChanged
+            }
+            VimMode::Normal => {
+                self.mode = VimMode::Insert;
+                VimAction::ModeChanged
+            }
+            VimMode::Visual => {
+                self.mode = VimMode::Normal;
+                VimAction::ClearSelection
+            }
+        }
     }
 
     /// Yank register contents (empty when nothing was yanked this session).
@@ -341,11 +355,12 @@ impl VimState {
                     Event::Key {
                         key: Key::Escape,
                         pressed: true,
+                        repeat,
                         ..
                     } => {
-                        self.mode = VimMode::Normal;
-                        self.reset_transient();
-                        overall_action = VimAction::ModeChanged;
+                        if !repeat {
+                            overall_action = self.on_escape();
+                        }
                     }
                     _ => out_events.push(event),
                 }
@@ -356,10 +371,12 @@ impl VimState {
                 Event::Key {
                     key: Key::Escape,
                     pressed: true,
+                    repeat,
                     ..
                 } => {
-                    self.on_escape();
-                    overall_action = VimAction::ClearSelection;
+                    if !repeat {
+                        overall_action = self.on_escape();
+                    }
                 }
                 Event::Key {
                     key: Key::R,
@@ -935,8 +952,13 @@ mod tests {
             matches!(&events[0], Event::Key { key: Key::C, modifiers, .. } if modifiers.command)
         );
         assert_eq!(action, VimAction::ClearSelection);
+        assert_eq!(vim.mode, VimMode::Normal);
+
+        feed(&mut vim, "v", "hello", 0);
+        assert_eq!(vim.mode, VimMode::Visual);
         let mut events = vec![esc_event()];
-        vim.process_events(&mut events, true, "hello", 0);
+        let action = vim.process_events(&mut events, true, "hello", 0);
+        assert_eq!(action, VimAction::ClearSelection);
         assert_eq!(vim.mode, VimMode::Normal);
     }
 
@@ -969,13 +991,63 @@ mod tests {
     }
 
     #[test]
-    fn normal_esc_clears_selection_and_pending() {
+    fn normal_esc_switches_to_insert_and_clears_pending() {
         let mut vim = normal_state();
         vim.pending = Some('d');
         let mut events = vec![esc_event()];
         let action = vim.process_events(&mut events, true, "abc", 0);
-        assert_eq!(action, VimAction::ClearSelection);
+        assert_eq!(vim.mode, VimMode::Insert);
+        assert_eq!(action, VimAction::ModeChanged);
         assert_eq!(vim.pending, None);
+    }
+
+    #[test]
+    fn repeated_esc_toggles_between_modes() {
+        let mut vim = VimState::new(true);
+        assert_eq!(vim.mode, VimMode::Insert);
+
+        // 1st Esc: Insert -> Normal
+        let mut events = vec![esc_event()];
+        assert_eq!(
+            vim.process_events(&mut events, true, "abc", 0),
+            VimAction::ModeChanged
+        );
+        assert_eq!(vim.mode, VimMode::Normal);
+
+        // 2nd Esc: Normal -> Insert
+        let mut events = vec![esc_event()];
+        assert_eq!(
+            vim.process_events(&mut events, true, "abc", 0),
+            VimAction::ModeChanged
+        );
+        assert_eq!(vim.mode, VimMode::Insert);
+
+        // 3rd Esc: Insert -> Normal
+        let mut events = vec![esc_event()];
+        assert_eq!(
+            vim.process_events(&mut events, true, "abc", 0),
+            VimAction::ModeChanged
+        );
+        assert_eq!(vim.mode, VimMode::Normal);
+
+        // Enter Visual mode ('v'), then Esc -> Normal, then Esc -> Insert
+        let (_, action) = feed(&mut vim, "v", "abc", 0);
+        assert_eq!(action, VimAction::ModeChanged);
+        assert_eq!(vim.mode, VimMode::Visual);
+
+        let mut events = vec![esc_event()];
+        assert_eq!(
+            vim.process_events(&mut events, true, "abc", 0),
+            VimAction::ClearSelection
+        );
+        assert_eq!(vim.mode, VimMode::Normal);
+
+        let mut events = vec![esc_event()];
+        assert_eq!(
+            vim.process_events(&mut events, true, "abc", 0),
+            VimAction::ModeChanged
+        );
+        assert_eq!(vim.mode, VimMode::Insert);
     }
 
     #[test]

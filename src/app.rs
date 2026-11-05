@@ -34,6 +34,12 @@ fn write_cloud_recovery_snapshot(data_dir: &Path, content: &str) -> std::io::Res
     Ok(path)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EscapeSource {
+    Monitor,
+    RawInput,
+}
+
 pub struct PaperShellApp {
     editor: Editor,
     pub response_sender: Sender<ResponseMessage>,
@@ -70,6 +76,7 @@ pub struct PaperShellApp {
     #[cfg(not(target_os = "macos"))]
     print_dialog: PrintDialog,
     vim_pending_escape: bool,
+    last_vim_escape: Option<(EscapeSource, std::time::Instant)>,
     #[cfg(target_os = "macos")]
     print_requested: bool,
 }
@@ -135,6 +142,7 @@ impl Default for PaperShellApp {
             #[cfg(not(target_os = "macos"))]
             print_dialog: PrintDialog::new(),
             vim_pending_escape: false,
+            last_vim_escape: None,
             #[cfg(target_os = "macos")]
             print_requested: false,
         }
@@ -461,9 +469,7 @@ impl PaperShellApp {
                     self.plugin_output.finish(name, result);
                 }
                 ResponseMessage::VimEscape => {
-                    if self.config.settings.vim_mode {
-                        self.vim_pending_escape = true;
-                    }
+                    self.record_vim_escape(EscapeSource::Monitor);
                 }
             }
         }
@@ -704,33 +710,53 @@ impl PaperShellApp {
             }
         }
     }
+
+    fn record_vim_escape(&mut self, source: EscapeSource) {
+        if !self.config.settings.vim_mode
+            || self.editor.is_search_dialog_open()
+            || self.unsaved_dialog.is_open()
+        {
+            return;
+        }
+        let now = std::time::Instant::now();
+        if let Some((prev_source, prev_time)) = self.last_vim_escape
+            && prev_source != source
+            && now.duration_since(prev_time) < std::time::Duration::from_millis(50)
+        {
+            return;
+        }
+        self.last_vim_escape = Some((source, now));
+        self.vim_pending_escape = true;
+    }
 }
 
 impl eframe::App for PaperShellApp {
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
-        if self.config.settings.vim_mode && !self.editor.is_search_dialog_open() {
-            let had_escape = raw_input.events.iter().any(|event| {
-                matches!(
-                    event,
-                    egui::Event::Key {
-                        key: egui::Key::Escape,
-                        pressed: true,
-                        ..
+        if self.config.settings.vim_mode
+            && !self.editor.is_search_dialog_open()
+            && !self.unsaved_dialog.is_open()
+        {
+            let mut had_escape = false;
+            let mut had_non_repeat_escape = false;
+            raw_input.events.retain(|event| {
+                if let egui::Event::Key {
+                    key: egui::Key::Escape,
+                    pressed: true,
+                    repeat,
+                    ..
+                } = event
+                {
+                    had_escape = true;
+                    if !*repeat {
+                        had_non_repeat_escape = true;
                     }
-                )
+                    false
+                } else {
+                    true
+                }
             });
-            if had_escape {
-                raw_input.events.retain(|event| {
-                    !matches!(
-                        event,
-                        egui::Event::Key {
-                            key: egui::Key::Escape,
-                            pressed: true,
-                            ..
-                        }
-                    )
-                });
-                self.vim_pending_escape = true;
+            if had_escape && had_non_repeat_escape {
+                self.record_vim_escape(EscapeSource::RawInput);
             }
         }
     }
@@ -1445,5 +1471,61 @@ mod final_integration_tests {
             },
         );
         assert_eq!(app.editor.get_vim_mode_label(), Some("插入"));
+
+        // F7: consecutive Esc presses toggle Insert -> Normal -> Insert -> Normal
+        for expected in ["普通", "插入", "普通", "插入"] {
+            let mut raw_input = egui::RawInput {
+                focused: true,
+                events: vec![egui::Event::Key {
+                    key: egui::Key::Escape,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+                ..Default::default()
+            };
+            eframe::App::raw_input_hook(&mut app, &ctx, &mut raw_input);
+            let _ = ctx.run(raw_input, |ctx| {
+                eframe::App::update(&mut app, ctx, &mut frame);
+            });
+            assert_eq!(app.editor.get_vim_mode_label(), Some(expected));
+            assert!(
+                ctx.memory(|m| m.focused()).is_some(),
+                "Editor MUST retain focus after repeated Escape!"
+            );
+        }
+
+        // F8: simultaneous Monitor + RawInput Escape for a single physical press only toggles once
+        let _ = app.response_sender.send(ResponseMessage::VimEscape);
+        let mut raw_input = egui::RawInput {
+            focused: true,
+            events: vec![egui::Event::Key {
+                key: egui::Key::Escape,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            ..Default::default()
+        };
+        eframe::App::raw_input_hook(&mut app, &ctx, &mut raw_input);
+        let _ = ctx.run(raw_input, |ctx| {
+            eframe::App::update(&mut app, ctx, &mut frame);
+        });
+        assert_eq!(app.editor.get_vim_mode_label(), Some("普通"));
+
+        // Even if the Monitor message arrives on the next frame, cross-source deduplication prevents double toggle
+        let _ = app.response_sender.send(ResponseMessage::VimEscape);
+        let _ = ctx.run(
+            egui::RawInput {
+                focused: true,
+                ..Default::default()
+            },
+            |ctx| {
+                eframe::App::update(&mut app, ctx, &mut frame);
+            },
+        );
+        assert_eq!(app.editor.get_vim_mode_label(), Some("普通"));
     }
 }

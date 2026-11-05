@@ -35,6 +35,8 @@ active days. Compare the last 7 days, last 30 days, this year, or all history, g
 by day, week (starting Monday), or calendar month. The chart shows the latest 60
 periods; **时间明细** contains the full selected range, including inactive periods.
 The document list shows each document's latest saved count.
+The window opens immediately with a loading spinner while statistics are computed.
+Refreshing keeps the previous results visible with an updating indicator.
 
 Statistics use the same counting rules as the editor: one per Han character and
 one per other non-whitespace run. Additions/deletions compare consecutive saved

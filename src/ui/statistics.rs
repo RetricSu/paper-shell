@@ -104,9 +104,9 @@ impl StatisticsWindow {
                     self.invalidate();
                     ui.ctx().request_repaint();
                 }
-                if self.receiver.is_some() {
+                if self.receiver.is_some() && self.data.is_some() {
                     ui.spinner();
-                    ui.label("正在汇总…");
+                    ui.label("更新中 · 显示上次结果");
                 }
             });
         });
@@ -121,12 +121,22 @@ impl StatisticsWindow {
             }
         }
         let Some(data) = &self.data else {
-            ui.add_space(24.0);
-            ui.label(if self.receiver.is_some() {
-                "正在读取保存历史，文档内容较多时可能需要一些时间。"
+            if self.receiver.is_some() {
+                ui.add_space(80.0);
+                ui.vertical_centered(|ui| {
+                    ui.add(egui::Spinner::new().size(28.0));
+                    ui.add_space(8.0);
+                    ui.label(RichText::new("正在加载写作统计…").strong());
+                    ui.label(
+                        RichText::new("可能需要几秒钟，完成后自动显示。")
+                            .small()
+                            .weak(),
+                    );
+                });
             } else {
-                "点击刷新重试。"
-            });
+                ui.add_space(24.0);
+                ui.label("点击刷新重试。");
+            }
             return;
         };
         ui.add_space(16.0);

@@ -128,9 +128,18 @@ impl Editor {
     /// switching and focus retention even when the OS/IME consumes Escape.
     pub fn process_pending_vim_escape(&mut self, ui: &mut Ui) {
         let id = ui.make_persistent_id("main_editor");
-        // Re-anchor focus on the editor so Normal mode commands always have a target.
+        // Re-anchor focus on the editor so Vim mode commands always have a target.
         ui.memory_mut(|m| m.request_focus(id));
-        self.vim.on_escape();
+        if self.vim.on_escape() == VimAction::ClearSelection
+            && let Some(mut edit_state) = egui::text_edit::TextEditState::load(ui.ctx(), id)
+            && let Some(range) = edit_state.cursor.char_range()
+        {
+            edit_state
+                .cursor
+                .set_char_range(Some(egui::text::CCursorRange::one(range.primary)));
+            edit_state.store(ui.ctx(), id);
+        }
+        ui.ctx().request_repaint();
     }
 
     pub fn show(&mut self, ui: &mut Ui) {
@@ -221,6 +230,7 @@ impl Editor {
                             .set_char_range(Some(egui::text::CCursorRange::one(range.primary)));
                         edit_state.store(ui.ctx(), id);
                     }
+                    ui.ctx().request_repaint();
                 }
                 VimAction::SetCursor(pos) => {
                     let mut edit_state =
@@ -253,7 +263,10 @@ impl Editor {
                 VimAction::OpenSearch => {
                     self.open_search_replace();
                 }
-                VimAction::ModeChanged | VimAction::None => {}
+                VimAction::ModeChanged => {
+                    ui.ctx().request_repaint();
+                }
+                VimAction::None => {}
             }
         }
 
@@ -303,11 +316,9 @@ impl Editor {
                 .show(ui);
 
             if self.vim.enabled {
+                let response_focused = output.response.has_focus();
                 ui.memory_mut(|m| {
-                    if self.vim.mode == VimMode::Normal
-                        && (focused || output.response.has_focus())
-                        && !m.has_focus(id)
-                    {
+                    if (focused || response_focused) && !m.has_focus(id) {
                         m.request_focus(id);
                     }
                     m.set_focus_lock_filter(

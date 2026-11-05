@@ -33,6 +33,7 @@ pub fn install_escape_monitor() {
             let event = event.as_ref();
             if event.r#type() == NSEventType::KeyDown
                 && event.keyCode() == 53
+                && !event.isARepeat()
                 && let Ok(s) = ESCAPE_SENDER.lock()
                 && let Some(sender) = &*s
             {

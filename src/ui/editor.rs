@@ -334,9 +334,10 @@ impl Editor {
             }
             self.draw_underline_decoration_at_focus_line(&output, ui);
             let context_edit = self.add_context_menu(&output, &mut content);
+            let selection_edit = self.show_selection_comment_button(&output, ui, &mut content);
 
             if content != previous_content {
-                let edit = context_edit.or_else(|| {
+                let edit = context_edit.or(selection_edit).or_else(|| {
                     Self::edit_operation_from_events(
                         ui,
                         &previous_content,
@@ -357,7 +358,6 @@ impl Editor {
             self.highlight_matches(&output, ui, &content);
             self.highlight_search_matches(&output, ui, &content);
             self.highlight_comments(&output, ui);
-            self.show_selection_comment_button(&output, ui);
 
             if show_dots {
                 Self::draw_paragraph_dots(ui, &output, &content, gutter_origin);
@@ -666,7 +666,7 @@ impl Editor {
         true
     }
 
-    fn char_slice(content: &str, start: usize, end: usize) -> &str {
+    fn char_byte_range(content: &str, start: usize, end: usize) -> std::ops::Range<usize> {
         let start_byte = content
             .char_indices()
             .nth(start)
@@ -677,7 +677,37 @@ impl Editor {
             .nth(end)
             .map(|(index, _)| index)
             .unwrap_or(content.len());
-        &content[start_byte..end_byte]
+        start_byte..end_byte
+    }
+
+    fn char_slice(content: &str, start: usize, end: usize) -> &str {
+        let range = Self::char_byte_range(content, start, end);
+        &content[range]
+    }
+
+    fn delete_selection(
+        ctx: &egui::Context,
+        editor_id: egui::Id,
+        content: &mut String,
+        start: usize,
+        end: usize,
+    ) -> EditOperation {
+        let byte_range = Self::char_byte_range(content, start, end);
+        content.replace_range(byte_range, "");
+        if let Some(mut state) = egui::text_edit::TextEditState::load(ctx, editor_id) {
+            state
+                .cursor
+                .set_char_range(Some(egui::text::CCursorRange::one(
+                    egui::text::CCursor::new(start),
+                )));
+            state.store(ctx, editor_id);
+        }
+        ctx.memory_mut(|memory| memory.request_focus(editor_id));
+        EditOperation {
+            start,
+            end,
+            inserted_len: 0,
+        }
     }
 
     pub fn get_word_count(&mut self) -> usize {
@@ -1175,10 +1205,9 @@ impl Editor {
         &mut self,
         output: &egui::text_edit::TextEditOutput,
         ui: &mut Ui,
-    ) {
-        let Some((start, end)) = Self::selected_range(output) else {
-            return;
-        };
+        content: &mut String,
+    ) -> Option<EditOperation> {
+        let (start, end) = Self::selected_range(output)?;
         // IME preedit text uses a non-empty cursor range too. Keep the tool hidden
         // throughout composition, including repaint frames with no input events.
         if (!output.response.has_focus() && !output.response.lost_focus())
@@ -1187,30 +1216,76 @@ impl Editor {
             || output.response.changed()
             || output.response.is_pointer_button_down_on()
         {
-            return;
+            return None;
         }
 
         let screen_rect = ui.ctx().content_rect();
         let mut position = Self::comment_popup_position(output, end);
-        position.x = position
-            .x
-            .clamp(screen_rect.min.x, screen_rect.max.x - 96.0);
-        position.y = position
-            .y
-            .clamp(screen_rect.min.y, screen_rect.max.y - 38.0);
+        position.x = position.x.clamp(
+            screen_rect.min.x,
+            (screen_rect.max.x - 240.0).max(screen_rect.min.x),
+        );
+        position.y = position.y.clamp(
+            screen_rect.min.y,
+            (screen_rect.max.y - 38.0).max(screen_rect.min.y),
+        );
+        let mut edit = None;
         egui::Area::new(ui.make_persistent_id("selection_comment_tool"))
             .order(egui::Order::Foreground)
             .fixed_pos(position)
             .show(ui.ctx(), |ui| {
-                egui::Frame::popup(ui.style()).show(ui, |ui| {
-                    let button = ui
-                        .button(format!("{} 评论", egui_phosphor::regular::CHAT_TEXT))
-                        .on_hover_text("为选中文字添加评论 / 备注");
-                    if button.clicked() {
-                        self.begin_comment(output, start, end);
-                    }
-                });
+                egui::Frame::popup(ui.style())
+                    .inner_margin(egui::Margin::symmetric(4, 3))
+                    .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing = egui::vec2(2.0, 0.0);
+                        ui.visuals_mut().widgets.inactive.bg_stroke = egui::Stroke::NONE;
+                        ui.visuals_mut().widgets.hovered.bg_stroke = egui::Stroke::NONE;
+                        ui.visuals_mut().widgets.active.bg_stroke = egui::Stroke::NONE;
+                        ui.horizontal(|ui| {
+                            if ui
+                                .button(format!("{} 评论", egui_phosphor::regular::CHAT_TEXT))
+                                .clicked()
+                            {
+                                self.begin_comment(output, start, end);
+                            }
+                            if ui
+                                .button(format!("{} 复制", egui_phosphor::regular::COPY))
+                                .clicked()
+                            {
+                                ui.ctx()
+                                    .copy_text(Self::char_slice(content, start, end).to_string());
+                                output.response.request_focus();
+                            }
+                            if ui
+                                .button(format!("{} 剪切", egui_phosphor::regular::SCISSORS))
+                                .clicked()
+                            {
+                                ui.ctx()
+                                    .copy_text(Self::char_slice(content, start, end).to_string());
+                                edit = Some(Self::delete_selection(
+                                    ui.ctx(),
+                                    output.response.id,
+                                    content,
+                                    start,
+                                    end,
+                                ));
+                            }
+                            if ui
+                                .button(format!("{} 删除", egui_phosphor::regular::TRASH))
+                                .clicked()
+                            {
+                                edit = Some(Self::delete_selection(
+                                    ui.ctx(),
+                                    output.response.id,
+                                    content,
+                                    start,
+                                    end,
+                                ));
+                            }
+                        });
+                    });
             });
+        edit
     }
 
     fn highlight_comments(&mut self, output: &egui::text_edit::TextEditOutput, ui: &mut Ui) {
@@ -1994,6 +2069,86 @@ mod tests {
         assert!(editor.comment_composer.is_some());
         let comment = &editor.comment_composer.as_ref().unwrap().comment;
         assert_eq!((comment.start, comment.end), (0, 5));
+    }
+
+    #[test]
+    fn selection_toolbar_offers_actions_without_tooltip_and_deletes_selection() {
+        use egui::{Event, Modifiers, PointerButton};
+
+        let ctx = egui::Context::default();
+        crate::style::configure_style(&ctx);
+        let mut editor = Editor::default();
+        editor.set_content("hello world".into());
+        assert!(editor.add_comment(6, 11, "keep world".into()));
+        editor.focus();
+
+        render_editor(&ctx, &mut editor, vec![], None);
+        render_editor(&ctx, &mut editor, vec![], Some((0, 6)));
+        let output = render_editor(&ctx, &mut editor, vec![], None);
+        for suffix in [" 评论", " 复制", " 剪切", " 删除"] {
+            assert!(
+                output.shapes.iter().any(|shape| {
+                    matches!(&shape.shape, egui::Shape::Text(text) if text.galley.text().ends_with(suffix))
+                }),
+                "missing toolbar action {suffix}"
+            );
+        }
+
+        let comment_button = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.text().ends_with(" 评论") => {
+                    Some(text.pos + text.galley.rect.center().to_vec2())
+                }
+                _ => None,
+            })
+            .expect("comment button rendered");
+        let hovered = render_editor(
+            &ctx,
+            &mut editor,
+            vec![Event::PointerMoved(comment_button)],
+            None,
+        );
+        assert!(
+            !hovered.shapes.iter().any(|shape| {
+                matches!(&shape.shape, egui::Shape::Text(text) if text.galley.text().contains("为选中文字添加评论"))
+            }),
+            "selection toolbar should not show hover tooltip"
+        );
+
+        let delete_button = hovered
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.text().ends_with(" 删除") => {
+                    Some(text.pos + text.galley.rect.center().to_vec2())
+                }
+                _ => None,
+            })
+            .expect("delete button rendered");
+        let pointer = |pos, pressed| Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        };
+        render_editor(
+            &ctx,
+            &mut editor,
+            vec![
+                Event::PointerMoved(delete_button),
+                pointer(delete_button, true),
+            ],
+            None,
+        );
+        render_editor(&ctx, &mut editor, vec![pointer(delete_button, false)], None);
+        assert_eq!(editor.get_content(), "world");
+        assert_eq!(
+            (editor.comments()[0].start, editor.comments()[0].end),
+            (0, 5)
+        );
+        assert!(!render_comment_tool(&ctx, &mut editor, vec![], None));
     }
 
     fn gutter_circles(output: &egui::FullOutput) -> Vec<egui::epaint::CircleShape> {

@@ -77,6 +77,7 @@ pub struct PaperShellApp {
     print_dialog: PrintDialog,
     vim_pending_escape: bool,
     last_vim_escape: Option<(EscapeSource, std::time::Instant)>,
+    root_viewport_focused: bool,
     #[cfg(target_os = "macos")]
     print_requested: bool,
 }
@@ -143,6 +144,7 @@ impl Default for PaperShellApp {
             print_dialog: PrintDialog::new(),
             vim_pending_escape: false,
             last_vim_escape: None,
+            root_viewport_focused: true,
             #[cfg(target_os = "macos")]
             print_requested: false,
         }
@@ -588,7 +590,7 @@ impl PaperShellApp {
         }
     }
 
-    fn handle_plugin_manager_action(&mut self, action: PluginManagerAction) {
+    fn handle_plugin_manager_action(&mut self, ctx: &egui::Context, action: PluginManagerAction) {
         match action {
             PluginManagerAction::SetEnabled { id, enabled } => {
                 let previous = self.config.settings.is_plugin_enabled(&id);
@@ -621,12 +623,16 @@ impl PaperShellApp {
             }
             PluginManagerAction::OpenPluginsFolder => self.open_plugins_folder_with_feedback(),
             PluginManagerAction::Configure(id) => match id.as_str() {
-                "cloud_backup" => self
-                    .cloud_backup_dialog
-                    .open(&self.config.settings.cloud_backup),
-                "github_publish" => self
-                    .plugin_config_window
-                    .open(&self.config.settings.github_publish, false),
+                "cloud_backup" => {
+                    self.cloud_backup_dialog
+                        .open(&self.config.settings.cloud_backup);
+                    ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Focus);
+                }
+                "github_publish" => {
+                    self.plugin_config_window
+                        .open(&self.config.settings.github_publish, false);
+                    ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Focus);
+                }
                 _ => {
                     let Some(plugin) = self.plugin_manager.find_any(&id) else {
                         self.plugin_manager_window
@@ -638,6 +644,7 @@ impl PaperShellApp {
                     let saved = self.plugin_manager.external_settings_for(&id);
                     self.external_plugin_config_window
                         .open(&metadata, definitions, &saved);
+                    ctx.request_repaint_of(self.plugin_manager_window.viewport_id());
                 }
             },
             PluginManagerAction::Uninstall(id) => {
@@ -713,6 +720,7 @@ impl PaperShellApp {
 
     fn record_vim_escape(&mut self, source: EscapeSource) {
         if !self.config.settings.vim_mode
+            || !self.root_viewport_focused
             || self.editor.is_search_dialog_open()
             || self.unsaved_dialog.is_open()
         {
@@ -732,6 +740,15 @@ impl PaperShellApp {
 
 impl eframe::App for PaperShellApp {
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        if raw_input.viewport_id == egui::ViewportId::ROOT {
+            self.root_viewport_focused = raw_input.focused;
+        } else {
+            if raw_input.focused {
+                self.root_viewport_focused = false;
+            }
+            return;
+        }
+
         if self.config.settings.vim_mode
             && !self.editor.is_search_dialog_open()
             && !self.unsaved_dialog.is_open()
@@ -926,7 +943,7 @@ impl eframe::App for PaperShellApp {
                         self.open_plugins_folder_with_feedback();
                     }
                     crate::ui::title_bar::TitleBarAction::ManagePlugins => {
-                        self.plugin_manager_window.open();
+                        self.plugin_manager_window.open(ctx);
                     }
                     crate::ui::title_bar::TitleBarAction::ConfigurePlugin(id) => {
                         if id == "cloud_backup" {
@@ -998,13 +1015,16 @@ impl eframe::App for PaperShellApp {
         // Plugin output and management windows
         self.plugin_output.show(ctx);
         let all_plugins = self.plugin_manager.all_metadata();
-        if let Some(action) =
-            self.plugin_manager_window
-                .show(ctx, &all_plugins, self.plugin_manager.load_errors())
-        {
-            self.handle_plugin_manager_action(action);
+        let (manager_action, external_settings) = self.plugin_manager_window.show(
+            ctx,
+            &all_plugins,
+            self.plugin_manager.load_errors(),
+            &mut self.external_plugin_config_window,
+        );
+        if let Some(action) = manager_action {
+            self.handle_plugin_manager_action(ctx, action);
         }
-        if let Some(new_settings) = self.external_plugin_config_window.show(ctx) {
+        if let Some(new_settings) = external_settings {
             let plugin_exists =
                 self.plugin_manager
                     .find_any(&new_settings.id)
@@ -1036,6 +1056,7 @@ impl eframe::App for PaperShellApp {
                     }
                 }
             }
+            ctx.request_repaint_of(self.plugin_manager_window.viewport_id());
         }
 
         let identity = self.cloud_document_identity();
@@ -1527,5 +1548,39 @@ mod final_integration_tests {
             },
         );
         assert_eq!(app.editor.get_vim_mode_label(), Some("普通"));
+    }
+
+    #[test]
+    fn secondary_viewport_escape_is_preserved_when_vim_mode_is_enabled() {
+        let mut app = PaperShellApp::default();
+        app.config.settings.vim_mode = true;
+        app.editor.set_vim_mode(true);
+
+        let ctx = egui::Context::default();
+        let manager_viewport = app.plugin_manager_window.viewport_id();
+        let mut child_input = egui::RawInput {
+            viewport_id: manager_viewport,
+            focused: true,
+            events: vec![egui::Event::Key {
+                key: egui::Key::Escape,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            ..Default::default()
+        };
+
+        eframe::App::raw_input_hook(&mut app, &ctx, &mut child_input);
+        assert_eq!(
+            child_input.events.len(),
+            1,
+            "secondary windows must retain Escape events instead of losing them to Vim mode"
+        );
+        assert!(!app.vim_pending_escape);
+
+        // macOS global Escape monitor events while a secondary viewport is focused must also not toggle Vim mode.
+        app.record_vim_escape(EscapeSource::Monitor);
+        assert!(!app.vim_pending_escape);
     }
 }

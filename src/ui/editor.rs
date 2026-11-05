@@ -160,6 +160,7 @@ impl Editor {
 
         let focused = ui.memory(|m| m.has_focus(id));
         if focused {
+            ui.memory_mut(|m| m.move_focus(egui::FocusDirection::None));
             ui.input(|input| {
                 for event in &input.events {
                     match event {
@@ -298,23 +299,26 @@ impl Editor {
                 .desired_rows(30)
                 .font(font_id.clone())
                 .layouter(&mut layouter)
+                .lock_focus(true)
                 .show(ui);
 
             if self.vim.enabled {
                 ui.memory_mut(|m| {
+                    if self.vim.mode == VimMode::Normal
+                        && (focused || output.response.has_focus())
+                        && !m.has_focus(id)
+                    {
+                        m.request_focus(id);
+                    }
                     m.set_focus_lock_filter(
                         id,
                         egui::EventFilter {
                             horizontal_arrows: true,
                             vertical_arrows: true,
-                            tab: false,
+                            tab: true,
                             escape: true,
                         },
                     );
-                    if self.vim.mode == VimMode::Normal && (focused || output.response.has_focus())
-                    {
-                        m.request_focus(id);
-                    }
                 });
             }
 
@@ -366,7 +370,7 @@ impl Editor {
             self.content = content;
 
             let editor_response = &output.response;
-            if editor_response.clicked() {
+            if editor_response.clicked() && !editor_response.has_focus() {
                 editor_response.request_focus();
             }
         });
@@ -603,6 +607,12 @@ impl Editor {
                     pressed: true,
                     ..
                 } => insertion = true,
+                egui::Event::Key {
+                    key: egui::Key::Tab,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } if !modifiers.shift => insertion = true,
                 _ => {}
             }
         }
@@ -2590,5 +2600,117 @@ mod tests {
         assert!(galley2.size().y > galley1.size().y);
         // 20pt * 1.5 should be taller than 14pt * 1.0
         assert!(galley3.size().y > galley1.size().y);
+    }
+
+    #[test]
+    fn tab_key_keeps_editor_focused_and_inserts_tab() {
+        use egui::{Event, Key, Modifiers};
+
+        let ctx = egui::Context::default();
+        let mut editor = Editor::default();
+        editor.set_content("hello".into());
+        assert!(editor.add_comment(0, 5, "greeting".into()));
+        editor.focus();
+
+        let run_frame = |ctx: &egui::Context, editor: &mut Editor, events: Vec<Event>| {
+            let _ = ctx.run(
+                egui::RawInput {
+                    focused: true,
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        let _ = ui.button("before");
+                        editor.show(ui);
+                        let _ = ui.button("after");
+                    });
+                },
+            );
+        };
+
+        // Frame 1: initialize editor and place cursor at start (index 0).
+        run_frame(&ctx, &mut editor, vec![]);
+        let _ = ctx.run(
+            egui::RawInput {
+                focused: true,
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let _ = ui.button("before");
+                    let id = ui.make_persistent_id("main_editor");
+                    let mut state =
+                        egui::text_edit::TextEditState::load(ctx, id).unwrap_or_default();
+                    state
+                        .cursor
+                        .set_char_range(Some(egui::text::CCursorRange::one(
+                            egui::text::CCursor::new(0),
+                        )));
+                    state.store(ctx, id);
+                    editor.show(ui);
+                    let _ = ui.button("after");
+                });
+            },
+        );
+        assert!(editor.is_focused());
+
+        // Frame 2: press Tab immediately on the next frame; editor must keep focus and insert '\t'.
+        let tab_event = |shift: bool| Event::Key {
+            key: Key::Tab,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: if shift {
+                Modifiers::SHIFT
+            } else {
+                Modifiers::NONE
+            },
+        };
+        run_frame(&ctx, &mut editor, vec![tab_event(false)]);
+        assert!(editor.is_focused(), "editor lost focus after first Tab");
+        assert_eq!(editor.get_content(), "\thello");
+        assert_eq!(
+            (editor.comments()[0].start, editor.comments()[0].end),
+            (1, 6)
+        );
+
+        // Frame 3: continue typing after Tab without re-focusing.
+        run_frame(&ctx, &mut editor, vec![Event::Text("world ".into())]);
+        assert!(editor.is_focused());
+        assert_eq!(editor.get_content(), "\tworld hello");
+
+        // Frame 4: Shift+Tab decreases indentation and still keeps focus.
+        run_frame(&ctx, &mut editor, vec![tab_event(true)]);
+        assert!(editor.is_focused(), "editor lost focus after Shift+Tab");
+        assert_eq!(editor.get_content(), "world hello");
+
+        // Frame 5: Vim mode Insert and Normal also retain focus on Tab.
+        editor.set_vim_mode(true);
+        run_frame(&ctx, &mut editor, vec![tab_event(false)]);
+        assert!(
+            editor.is_focused(),
+            "editor lost focus on Tab in Vim Insert mode"
+        );
+        assert_eq!(editor.get_content(), "world \thello");
+
+        run_frame(
+            &ctx,
+            &mut editor,
+            vec![Event::Key {
+                key: Key::Escape,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::NONE,
+            }],
+        );
+        assert_eq!(editor.get_vim_mode_label(), Some("普通"));
+        run_frame(&ctx, &mut editor, vec![tab_event(false)]);
+        assert!(
+            editor.is_focused(),
+            "editor lost focus on Tab in Vim Normal mode"
+        );
+        assert_eq!(editor.get_content(), "world \thello");
     }
 }

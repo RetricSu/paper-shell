@@ -34,7 +34,9 @@ all recorded documents, cumulative additions and deletions, saved focus time, an
 active days. Compare the last 7 days, last 30 days, this year, or all history, grouped
 by day, week (starting Monday), or calendar month. The chart shows the latest 60
 periods; **时间明细** contains the full selected range, including inactive periods.
-The document list shows each document's latest saved count.
+The **趋势总览**, **时间明细**, and **文档统计** tabs give each view its own space,
+without nested scrolling sections. The document tab provides a full-width, aligned
+list with filename and path search. It shows each document's latest saved count.
 The window opens immediately with a loading spinner while statistics are computed.
 Refreshing keeps the previous results visible with an updating indicator.
 

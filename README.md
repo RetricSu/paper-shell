@@ -1,249 +1,140 @@
-# Paper Shell
+<div align="center">
+  <img src="assets/app-icon.png" alt="Paper Shell app icon" width="112" />
+  <h1>Paper Shell</h1>
+  <p><strong>A quiet place to think, write, and revise.</strong></p>
+  <p>
+    A simple, compact, and informative desktop editor for everyday and long-form writing.
+  </p>
+  <p>
+    <a href="https://github.com/RetricSu/paper-shell/releases/latest"><strong>Download</strong></a>
+    ·
+    <a href="#features">Features</a>
+    ·
+    <a href="#getting-started">Getting started</a>
+    ·
+    <a href="docs/development.md">Development</a>
+  </p>
+  <p>
+    <a href="https://github.com/RetricSu/paper-shell/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/RetricSu/paper-shell?display_name=tag" /></a>
+    <a href="https://github.com/RetricSu/paper-shell/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/RetricSu/paper-shell/actions/workflows/ci.yml/badge.svg" /></a>
+  </p>
+</div>
 
-Working in progress: A simple, compact and informative text editor for everyday writing.
+Paper Shell keeps the document at the center of the workspace. It combines plain-text
+editing with practical tools for organizing files, annotating passages, exploring version
+history, and understanding your writing habits—without turning the editor into a dashboard.
 
-## Build
+> Paper Shell is under active development. Download a packaged release below, or
+> [build from source](docs/development.md#build-from-source).
 
-```bash
-cargo build --release
-```
+## Download
 
-## Acceptance check
+Prebuilt packages are available for macOS, Linux, and Windows.
 
-In ctx, set the acceptance command to run from the task worktree:
+| Platform | Package | Notes |
+| --- | --- | --- |
+| macOS — Universal | [DMG](https://github.com/RetricSu/paper-shell/releases/latest/download/Paper-Shell-macOS-universal.dmg) · [ZIP](https://github.com/RetricSu/paper-shell/releases/latest/download/Paper-Shell-macOS-universal.zip) | Apple Silicon and Intel |
+| macOS — Apple Silicon | [DMG](https://github.com/RetricSu/paper-shell/releases/latest/download/Paper-Shell-macOS-aarch64.dmg) · [ZIP](https://github.com/RetricSu/paper-shell/releases/latest/download/Paper-Shell-macOS-aarch64.zip) | `aarch64` |
+| macOS — Intel | [DMG](https://github.com/RetricSu/paper-shell/releases/latest/download/Paper-Shell-macOS-x86_64.dmg) · [ZIP](https://github.com/RetricSu/paper-shell/releases/latest/download/Paper-Shell-macOS-x86_64.zip) | `x86_64` |
+| Linux | [tar.gz](https://github.com/RetricSu/paper-shell/releases/latest/download/Paper-Shell-Linux-x86_64.tar.gz) | `x86_64` |
+| Windows | [ZIP](https://github.com/RetricSu/paper-shell/releases/latest/download/Paper-Shell-Windows-x86_64.zip) | `x86_64` |
 
-```bash
-bash scripts/acceptance-check.sh
-```
+On macOS, open the DMG and drag **Paper Shell** into **Applications**. On Linux and
+Windows, extract the archive and run the included executable. The current macOS packages
+are ad-hoc signed rather than notarized, so macOS may display a Gatekeeper warning.
 
-This runs the same formatting, Clippy (warnings are errors), and test checks as CI.
-It stops on the first failure with a nonzero exit code and prints a success message
-only when all checks pass. Cargo uses `Cargo.lock` without updating it.
+Every release includes [SHA-256 checksums](https://github.com/RetricSu/paper-shell/releases/latest/download/SHA256SUMS.txt).
+See the [release page](https://github.com/RetricSu/paper-shell/releases/latest) for all
+packages and release notes.
 
-Requires Rust/Cargo with the `rustfmt` and `clippy` components installed
-(`rustup component add rustfmt clippy`). macOS matches the CI environment;
-other platforms may need native GUI build dependencies. The first run downloads
-dependencies and compiles the app, so allow extra time and network access.
-These automated checks do not cover interactive desktop UI acceptance.
+## Getting started
 
-## About
+1. Open an existing document with **文件 → 打开文件…** (`Cmd/Ctrl+O`), or use the default
+   workspace.
+2. Press `Cmd/Ctrl+Shift+E`, or click the **纸壳** title, to show the workspace sidebar.
+   Add a folder from the sidebar's context menu, or create an article from a folder's
+   new-article action.
+3. Write in plain text, then save with `Cmd/Ctrl+S`. Paper Shell supports `txt`, `md`,
+   `markdown`, `text`, `org`, and `rst` files.
+4. Open **文件 → 写作统计…**, **文件 → 版本历史…**, or **插件 → 管理插件…** to explore
+   the tools around your document.
 
-Open **文件 → 关于纸壳** to see the application name, package version, description,
-and copyright information.
+Use **文件 → 关于纸壳** to check the installed version.
 
-## Writing statistics
+## Features
 
-Open **文件 → 写作统计…**, or click the word count in the title bar, to open a
-separate, resizable statistics window. It shows the latest saved word total across
-all recorded documents, cumulative additions and deletions, saved focus time, and
-active days. Compare the last 7 days, last 30 days, this year, or all history, grouped
-by day, week (starting Monday), or calendar month. The chart shows the latest 60
-periods; **时间明细** contains the full selected range, including inactive periods.
-The **趋势总览**, **时间明细**, and **文档统计** tabs give each view its own space,
-without nested scrolling sections. The document tab provides a full-width, aligned
-list with filename and path search. It shows each document's latest saved count.
-The window opens immediately with a loading spinner while statistics are computed.
-Refreshing keeps the previous results visible with an updating indicator.
+### Focused editing
 
-Statistics use the same counting rules as the editor: one per Han character and
-one per other non-whitespace run. Additions/deletions compare consecutive saved
-versions by word, including equal-length rewrites. The first saved version counts
-in full as additions; imports, pasted text, and restored versions also count, so
-this is not a keystroke counter. Unsaved drafts and never-saved workspace files are
-excluded. Documents with retained history remain included after moving or deleting
-their source files; historical versions are not summed into the latest total.
-Dates use the current local time zone, and changes/focus time belong to their save
-date. Time is the existing editor focus timer, not a measure of active typing.
+- Search and replace, match highlighting, clipboard actions, and a selection toolbar.
+- Adjustable Chinese fonts, font size, line spacing, and paragraph indentation.
+- Optional Vim modal editing via **编辑 → Vim 模式 (Esc)**. Press `Esc` to switch between
+  Insert and Normal modes; Visual mode and common motions, operators, and counts are supported.
+- Unsaved-change confirmation when switching articles or closing a window.
 
-Saving updates an open statistics window automatically. Use **刷新** to read saves
-from other windows. Missing/corrupt records are reported, and changes across a
-missing version are omitted rather than treated as new writing. Older readable
-versions are not substituted for an unreadable latest total. Loading happens in
-the background and does not modify articles or migrate history.
+### Workspace files
 
-## Inline comments
+Keep the default workspace and any folders you add in one expandable file tree. Custom
+folders stay where they are, and articles are edited in place. Duplicate folders are
+ignored; removing a custom folder from the sidebar never deletes its files.
 
-Select any non-empty text range and release the mouse to use the floating selection
-toolbar (**评论**, **复制**, **剪切**, **删除**), or right-click and choose
-**添加评论 / 备注**. The floating toolbar stays hidden while typing, composing text
-with an IME, or dragging a selection.
-Commented text has a pale amber highlight and an
-underline. Click it to edit or delete the comment. Anchors follow later insertions,
-deletions, formatting, search/replace, and history restores; partial deletion keeps
-the comment on the remaining text, while deleting or replacing the entire range
-removes it.
+The tree hides unsupported files, hidden files and directories, and symbolic links. Use
+the sidebar's refresh action after changing files outside Paper Shell.
 
-Comments are saved with the article (Cmd/Ctrl+S) as character-indexed metadata in
-the app data directory's `marks` folder, leaving the original plain-text file
-unchanged. Comment-only changes also trigger the unsaved-changes prompt when
-switching articles or closing the window.
+### Inline comments
 
-## Workspace files
+Select a non-empty range and release the mouse to add a comment, or right-click and choose
+**添加评论 / 备注**. Commented text has a pale amber highlight and underline; click it to
+edit or delete the comment.
 
-Click the **纸壳** title or press **Cmd/Ctrl+Shift+E** to show or hide the file
-tree. A tiny dot at the title's upper left is filled when the sidebar is visible
-and hollow when hidden. The default workspace and all added folders appear as
-peer roots; each expands independently.
-Right-click blank space in the sidebar for **添加文件夹…** and **刷新**.
-When the article list is hidden, the editor shows a non-interactive paragraph-dot
-gutter. The focused paragraph's dot breathes gently; wrapped lines share one dot.
-The gutter disappears while the article list is visible.
-There is no separate toolbar. Each root has a small new-article icon at its right edge.
-Click a folder row to expand it; indentation shows hierarchy without branch
-lines or disclosure triangles. Files display only their names.
-Folders are remembered, and duplicate additions are ignored. Right-click a custom
-root and choose **从侧栏移除** to remove its entry without deleting any files.
-Unavailable roots stay listed and show a read error so they can be retried or removed.
+Comments are saved as character-indexed metadata in the app data directory, leaving the
+original text file unchanged. Anchors follow later edits and history restores. Deleting
+the entire commented range also removes its comment.
 
-The default workspace keeps its existing location in the app data directory.
-Internal `blobs`, `history`, `marks`, and `plugins` folders are hidden there.
-Custom folders keep their original layout; articles are edited in place and
-version history stays in the app data directory. Existing paragraph note files
-are preserved, but the paragraph note feature has been removed.
+### Branching version history
 
-Click a root's new-article icon (or right-click it and choose **在此新建文章**)
-to start a blank article with the save dialog pointing to that folder. The tree supports `txt`, `md`,
-`markdown`, `text`, `org`, and `rst`; hidden files (such as `.DS_Store`), hidden directories,
-unsupported files, and symbolic links are ignored. Use the blank-space context menu to refresh after external folder changes. Switching
-articles or closing the window offers save, discard, or cancel for unsaved changes.
-Saving an empty article is supported.
+Open **文件 → 版本历史…** to inspect saved versions as a branching tree. Select a version
+to see its timestamp, focus time, word changes, relationships, and content diff. Compare
+against its parent, the current version, or a pinned base.
 
-## Version history
+Rolling back restores the editor content without deleting later saves; continuing from an
+older version creates a sibling branch. Versions can be labeled, pinned, or deleted with
+confirmation. The current version and any branch containing it are protected from deletion.
 
-Open **文件 → 版本历史…** to inspect saved versions as a branching tree. The current
-version has a filled marker and a text badge; fork points and branch tips use distinct
-markers, and each branch has its own lane and color. Filter the full graph to the
-current line or one branch, then select a version to see its timestamp, focus time,
-word changes, parent/children, and content diff. Diffs can compare against the real
-parent, the current version, or any pinned base version.
+### Writing statistics
 
-Rolling back replaces the editor content after confirmation but does not delete later
-saves. The next save uses the restored version as its parent, so continuing from an
-older version creates a sibling branch. Existing linear history files are upgraded
-with stable IDs and parent links when the document is next saved. Consecutive saves
-with identical content are folded into one visual node without losing their saved
-focus time.
+Open **文件 → 写作统计…**, or click the title-bar word count, to see saved word totals,
+additions and deletions, focus time, and active days. Compare the last 7 days, last 30 days,
+this year, or all history, grouped by day, week, or calendar month.
 
-Versions can be given short labels for branch identification. Right-click a tree node
-or use the detail actions to roll back, label, pin a comparison base, or delete.
-Deleting one version reconnects its children to its parent; deleting a side branch
-removes its descendants only. The current version and any branch containing it cannot
-be deleted, and destructive actions require confirmation. Article files and content
-blobs are not deleted by history management.
+The **趋势总览**, **时间明细**, and **文档统计** tabs separate trends, complete time-series
+details, and a searchable per-document list. Statistics are computed in the background,
+and saving updates an open window automatically. **刷新** picks up saves from other windows.
 
-## Plugins
+One Han character counts as one word; other non-whitespace runs count as one word each.
+Statistics compare saved versions rather than keystrokes, so imports, pasted text, and
+restored versions count as changes. Unsaved drafts are excluded. Focus time is the existing
+editor focus timer, not a measure of active typing.
 
-Open **插件 → 管理插件…** to open a separate, resizable plugin manager window
-showing every built-in and external plugin, its source, version, author, enabled
-state, and any discovery errors. Print, Cloud Backup, and GitHub Publish are built
-in. Cloud Backup and GitHub Publish have dedicated settings. macOS Print uses the
-native system print panel; other platforms choose a printer and margins for each
-print run.
+### Plugins and printing
 
-To install an external plugin:
+Paper Shell includes **Print**, **Cloud Backup**, and **GitHub Publish** plugins. Open
+**插件 → 管理插件…** to enable or configure built-ins, discover external plugins, or inspect
+manifest errors. External plugins can be installed by placing a folder containing a
+`plugin.toml` manifest and its command in the plugin directory, then choosing **重新扫描**.
 
-1. Choose **打开插件目录** in the manager.
-2. Put the plugin in an immediate subdirectory of that folder. The subdirectory must
-   contain a `plugin.toml` manifest and its command/script.
-3. Return to Paper Shell and choose **重新扫描**. Restarting is not required.
+On macOS, **打印当前文档** opens the native print panel with automatic wrapping, pagination,
+and PDF export. Other platforms use their existing print-command flow.
 
-The enable checkbox is saved immediately and applies to both built-in and external
-plugins. Disabled plugins do not appear in the run menu and cannot be executed, but
-their settings remain editable. **卸载** is available for external plugins only: after
-confirmation it permanently deletes that plugin's direct child folder and its saved
-settings. Invalid manifests, unreadable directories, reserved IDs, and duplicate IDs
-are shown in the manager. All plugins sharing a duplicate ID are rejected rather than
-running an arbitrary one. Built-in IDs (`print`, `cloud_backup`, `github_publish`) are
-reserved.
+> **Plugin security:** external plugins run local commands with the same permissions as
+> Paper Shell and are not sandboxed. Install only plugins you trust and review their
+> manifests before enabling them. External password settings are masked in the UI but are
+> stored unencrypted in the application configuration file.
 
-Example `plugin.toml`:
+## Development
 
-```toml
-id          = "word-count"
-name        = "字数统计"
-description = "Count words in the current document"
-version     = "0.1.0"
-author      = "you"
-command     = "python3"
-args        = ["main.py"]
+Build instructions, acceptance checks, packaging, the release process, and the project
+roadmap live in [docs/development.md](docs/development.md).
 
-[[settings]]
-key         = "api_key"
-label       = "API 密钥"
-description = "Optional service credential"
-type        = "password"
-required    = true
+## Feedback
 
-[[settings]]
-key         = "report_format"
-label       = "报告格式"
-type        = "text"
-default     = "summary"
-```
-
-External settings are edited in the same manager. Text and password fields support
-defaults and required validation. At runtime the resolved values are available as a
-JSON object in `PAPER_SHELL_PLUGIN_SETTINGS`; for example, Python can read it with
-`json.loads(os.environ["PAPER_SHELL_PLUGIN_SETTINGS"])`. Password values are masked in
-the UI and are not logged by Paper Shell, but **they are stored unencrypted in the
-application configuration file**.
-
-The host also provides the document on stdin and sets `PAPER_SHELL_FILE`,
-`PAPER_SHELL_DATA_DIR`, and `PAPER_SHELL_PLUGIN_DIR`. Standard output is shown as the
-success message; a non-zero exit code and standard error are shown as an execution
-failure. The command and its interpreter/runtime must already be installed.
-
-**Trust boundary:** external plugins run local commands with the same permissions as
-Paper Shell and are not sandboxed. Install only plugins you trust, and review the
-manifest's `command` and `args` before enabling one.
-
-## Printing (macOS)
-
-Choose **打印当前文档** from the plugins menu to open the native macOS print panel.
-The current editor text (including unsaved changes) is laid out with system fonts,
-12 pt type, automatic wrapping and pagination, and equal 72 pt margins. The system
-panel controls the printer, paper size, orientation, scale, copies, and page range.
-Use its actual page preview to check the layout, or **PDF → Save as PDF** to inspect
-or share the same print output before sending it to a printer. Text remains plain
-text; Markdown and other source formats are not interpreted as markup.
-
-macOS printing uses AppKit rather than submitting raw text to `lp`. Other platforms
-retain their existing print command behavior. Automated macOS layout checks generate
-PDFs for long Chinese/English paragraphs and unbroken URLs on A4, Letter, and
-landscape paper without sending anything to a printer. Run them with
-`cargo test --locked --test print_layout`; set `PAPER_SHELL_KEEP_PRINT_PDFS=1` to keep
-the generated temporary PDFs for visual review (the test prints their paths).
-
-## Bundle (macOS)
-
-```bash
-cargo install cargo-bundle
-cargo bundle --release
-```
-
-Bundled `.app` will be created at `target/release/bundle/osx/Paper Shell.app`.
-
-## Release
-
-Pushing a version tag (e.g. `v0.1.0`) triggers GitHub Actions to build, package, and publish release assets:
-- `Paper-Shell-macOS-universal.dmg` / `.zip` (Universal for Apple Silicon & Intel)
-- `Paper-Shell-macOS-aarch64.dmg` / `.zip` (Apple Silicon)
-- `Paper-Shell-macOS-x86_64.dmg` / `.zip` (Intel)
-- `Paper-Shell-Linux-x86_64.tar.gz` (Linux x86_64)
-- `Paper-Shell-Windows-x86_64.zip` (Windows x86_64)
-- `SHA256SUMS.txt` (Checksums)
-
-You can also trigger releases manually from the GitHub Actions tab via `workflow_dispatch`.
-
-## TODOs
-
-- [x] fix open-with on Mac and other system
-- [x] search and replace
-- [x] support copy-paste and right click context menu
-- [x] select a text and high-light all the matched ones
-- [ ] prevent leading punctuation for Chinese text, may require using [cosmic-text](https://github.com/pop-os/) to rewrite editor component for egui
-- [ ] dictionary-lookup panel
-- [ ] support narrative map with click-to-jump function
-- [ ] informative data records on paragraph or full text
-- [x] add a add-ons/plugin system for export
-- [x] support print document (native macOS print preview and PDF export)
+Report bugs or request features through [GitHub Issues](https://github.com/RetricSu/paper-shell/issues).

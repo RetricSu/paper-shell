@@ -341,9 +341,12 @@ impl Editor {
             self.selection = selection;
 
             Self::enable_scroll_to_cursor(ui, &output);
-            if self.vim.enabled && self.vim.mode == VimMode::Normal {
+            if self.vim.enabled && self.vim.mode != VimMode::Insert {
+                // Visual-mode motions must bypass IME too, otherwise Pinyin consumes them.
                 ui.ctx().output_mut(|o| o.ime = None);
-                Self::draw_vim_block_cursor(&output, ui);
+                if self.vim.mode == VimMode::Normal {
+                    Self::draw_vim_block_cursor(&output, ui);
+                }
             } else {
                 Self::fix_macos_ime(&output, ui);
             }
@@ -2723,5 +2726,29 @@ mod tests {
             "editor lost focus on Tab in Vim Normal mode"
         );
         assert_eq!(editor.get_content(), "world \thello");
+    }
+
+    #[test]
+    fn visual_mode_disables_ime_and_insert_mode_restores_it() {
+        let ctx = egui::Context::default();
+        let mut editor = Editor::default();
+        editor.set_content("你好".into());
+        editor.set_vim_mode(true);
+        editor.vim.mode = VimMode::Visual;
+
+        let output = render_editor(&ctx, &mut editor, vec![], Some((0, 0)));
+        assert_eq!(editor.get_vim_mode_label(), Some("可视"));
+        assert!(
+            output.platform_output.ime.is_none(),
+            "Visual mode must keep IME disabled so motion keys reach the editor"
+        );
+
+        editor.vim.mode = VimMode::Insert;
+        let output = render_editor(&ctx, &mut editor, vec![], None);
+        assert_eq!(editor.get_vim_mode_label(), Some("插入"));
+        assert!(
+            output.platform_output.ime.is_some(),
+            "Insert mode must restore IME input"
+        );
     }
 }

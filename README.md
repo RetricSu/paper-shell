@@ -26,6 +26,11 @@ other platforms may need native GUI build dependencies. The first run downloads
 dependencies and compiles the app, so allow extra time and network access.
 These automated checks do not cover interactive desktop UI acceptance.
 
+## About
+
+Open **文件 → 关于纸壳** to see the application name, package version, description,
+and copyright information.
+
 ## Writing statistics
 
 Open **文件 → 写作统计…**, or click the word count in the title bar, to open a

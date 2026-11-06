@@ -25,6 +25,7 @@ pub enum TitleBarAction {
     OpenPluginsFolder,
     /// Open the unified plugin management window.
     ManagePlugins,
+    About,
 }
 
 pub struct TitleBar;
@@ -237,6 +238,11 @@ impl TitleBar {
                             }
                             if ui.button("写作统计…").clicked() {
                                 action = Some(TitleBarAction::Statistics);
+                                ui.close();
+                            }
+                            ui.separator();
+                            if ui.button("关于纸壳").clicked() {
+                                action = Some(TitleBarAction::About);
                                 ui.close();
                             }
                         },
@@ -725,6 +731,20 @@ mod tests {
             font_size,
             line_spacing,
         )
+    }
+
+    #[test]
+    fn file_menu_about_dispatches_action() {
+        let ctx = egui::Context::default();
+        crate::style::configure_style(&ctx);
+        let fonts = [];
+        let (initial, _) = render_typography_title_bar(&ctx, vec![], &fonts, "Default", 14.0, 1.5);
+        let _ = click_text(&ctx, &initial, "文件", &fonts, "Default", 14.0, 1.5);
+        let (menu, _) = render_typography_title_bar(&ctx, vec![], &fonts, "Default", 14.0, 1.5);
+        assert!(has_text(&menu, "关于纸壳"));
+
+        let (_, action) = click_text(&ctx, &menu, "关于纸壳", &fonts, "Default", 14.0, 1.5);
+        assert!(matches!(action, Some(TitleBarAction::About)));
     }
 
     #[test]

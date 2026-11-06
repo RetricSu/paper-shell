@@ -1,3 +1,4 @@
+pub mod about;
 pub mod dialog;
 pub mod editor;
 pub mod font;

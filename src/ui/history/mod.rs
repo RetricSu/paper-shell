@@ -409,7 +409,7 @@ impl HistoryWindow {
         ui.painter().vline(
             panel.response.rect.right() - 0.5,
             panel.response.rect.y_range(),
-            egui::Stroke::new(1.0, ui.visuals().text_color().gamma_multiply(0.18)),
+            egui::Stroke::new(1.0_f32, ui.visuals().text_color().gamma_multiply(0.18)),
         );
 
         if let Some(action) = row_action {
@@ -949,14 +949,14 @@ fn show_version_row(
         ui.painter().rect_stroke(
             rect,
             0.0,
-            egui::Stroke::new(1.0, ui.visuals().text_color()),
+            egui::Stroke::new(1.0_f32, ui.visuals().text_color()),
             egui::StrokeKind::Inside,
         );
     } else if response.has_focus() {
         ui.painter().rect_stroke(
             rect,
             0.0,
-            egui::Stroke::new(1.0, ui.visuals().text_color().gamma_multiply(0.65)),
+            egui::Stroke::new(1.0_f32, ui.visuals().text_color().gamma_multiply(0.65)),
             egui::StrokeKind::Inside,
         );
     }
@@ -972,7 +972,7 @@ fn show_version_row(
         .filter(|edge| edge.child_row <= row && edge.parent_row >= row)
     {
         let color = branch_color(edge.branch_id).gamma_multiply(0.72);
-        let stroke = egui::Stroke::new(1.35, color);
+        let stroke = egui::Stroke::new(1.35_f32, color);
         if edge.child_lane == edge.parent_lane {
             let x = lane_x(edge.child_lane);
             let start_y = if edge.child_row == row {
@@ -1034,15 +1034,15 @@ fn show_version_row(
     ui.painter().circle_filled(center, 7.0, panel_fill);
     if node.is_current {
         ui.painter()
-            .circle_stroke(center, 6.0, egui::Stroke::new(1.5, color));
+            .circle_stroke(center, 6.0, egui::Stroke::new(1.5_f32, color));
         ui.painter().circle_filled(center, 3.5, color);
     } else if node.is_fork_point {
         ui.painter()
-            .circle_stroke(center, 5.0, egui::Stroke::new(1.5, color));
+            .circle_stroke(center, 5.0, egui::Stroke::new(1.5_f32, color));
         ui.painter().circle_filled(center, 2.2, color);
     } else if node.is_branch_head {
         ui.painter()
-            .circle_stroke(center, 4.5, egui::Stroke::new(1.5, color));
+            .circle_stroke(center, 4.5, egui::Stroke::new(1.5_f32, color));
         ui.painter().circle_filled(center, 1.5, color);
     } else {
         ui.painter().circle_filled(center, 3.2, color);

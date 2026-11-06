@@ -1,9 +1,19 @@
 use crate::backend::editor_backend::EditorBackend;
-use crate::statistics::{StatisticsGrouping, StatisticsPeriod, WritingActivity, WritingStatistics};
+use crate::statistics::{
+    StatisticsGrouping, StatisticsPeriod, StatisticsReport, WritingActivity, WritingStatistics,
+};
 use chrono::{Local, NaiveDate};
 use egui::{Color32, Context, RichText, Ui};
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum StatisticsView {
+    #[default]
+    Overview,
+    Time,
+    Documents,
+}
 
 #[derive(Default)]
 pub struct StatisticsWindow {
@@ -14,6 +24,8 @@ pub struct StatisticsWindow {
     error: Option<String>,
     period: StatisticsPeriod,
     grouping: StatisticsGrouping,
+    view: StatisticsView,
+    document_query: String,
 }
 
 impl StatisticsWindow {
@@ -80,9 +92,7 @@ impl StatisticsWindow {
                 crate::style::configure_style(ctx);
                 egui::CentralPanel::default()
                     .frame(egui::Frame::central_panel(&ctx.style()).inner_margin(20))
-                    .show(ctx, |ui| {
-                        egui::ScrollArea::vertical().show(ui, |ui| self.show_content(ui));
-                    });
+                    .show(ctx, |ui| self.show_content(ui));
                 if ctx.input(|i| i.viewport().close_requested())
                     || ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
                 {
@@ -187,128 +197,285 @@ impl StatisticsWindow {
             });
         ui.add_space(12.0);
         ui.separator();
-        ui.add_space(8.0);
-        ui.horizontal_wrapped(|ui| {
-            for (period, label) in [
-                (StatisticsPeriod::Last7Days, "近 7 天"),
-                (StatisticsPeriod::Last30Days, "近 30 天"),
-                (StatisticsPeriod::ThisYear, "今年"),
-                (StatisticsPeriod::AllTime, "全部"),
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            for (view, label) in [
+                (StatisticsView::Overview, "趋势总览"),
+                (StatisticsView::Time, "时间明细"),
+                (StatisticsView::Documents, "文档统计"),
             ] {
-                if ui
-                    .selectable_value(&mut self.period, period, label)
-                    .clicked()
-                {
-                    self.grouping = match period {
-                        StatisticsPeriod::Last7Days | StatisticsPeriod::Last30Days => {
-                            StatisticsGrouping::Day
-                        }
-                        StatisticsPeriod::ThisYear | StatisticsPeriod::AllTime => {
-                            StatisticsGrouping::Month
-                        }
-                    };
-                }
+                ui.selectable_value(&mut self.view, view, label);
             }
-            ui.separator();
-            egui::ComboBox::from_id_salt("statistics_grouping")
-                .width(80.0)
-                .selected_text(grouping_label(self.grouping))
-                .show_ui(ui, |ui| {
-                    for grouping in [
-                        StatisticsGrouping::Day,
-                        StatisticsGrouping::Week,
-                        StatisticsGrouping::Month,
-                    ] {
-                        ui.selectable_value(&mut self.grouping, grouping, grouping_label(grouping));
-                    }
-                });
-        });
-        let report = data.report(self.period, self.grouping, today);
-        ui.label(
-            RichText::new(format!("{} 至 {} · 本地日期", report.start, today))
-                .small()
-                .weak(),
-        );
-        ui.horizontal_wrapped(|ui| {
-            ui.label(format!("新增 {}", number(report.activity.added)));
-            ui.label(format!("删除 {}", number(report.activity.removed)));
-            ui.label(format!("净增 {:+}", report.activity.net()));
-            ui.label(format!("活跃 {} 天", report.active_days));
-            ui.label(format!("写作 {}", duration(report.activity.seconds)));
         });
         ui.add_space(8.0);
-        show_chart(ui, &report.buckets, self.grouping);
-        if !report.activity.is_active() {
-            ui.label(RichText::new("这段时间还没有已保存的字数变化。").weak());
+
+        match self.view {
+            StatisticsView::Overview => {
+                show_overview(ui, data, &mut self.period, &mut self.grouping, today)
+            }
+            StatisticsView::Time => {
+                show_time_details(ui, data, &mut self.period, &mut self.grouping, today)
+            }
+            StatisticsView::Documents => {
+                show_documents(ui, data, &mut self.document_query);
+            }
         }
-        egui::CollapsingHeader::new("时间明细").show(ui, |ui| {
+    }
+}
+
+fn show_overview(
+    ui: &mut Ui,
+    data: &WritingStatistics,
+    period: &mut StatisticsPeriod,
+    grouping: &mut StatisticsGrouping,
+    today: NaiveDate,
+) {
+    let report = show_report_controls(ui, data, period, grouping, today);
+    egui::ScrollArea::vertical()
+        .id_salt("statistics_overview")
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            show_chart(ui, &report.buckets, *grouping);
+            if !report.activity.is_active() {
+                ui.label(RichText::new("这段时间还没有已保存的字数变化。").weak());
+            }
+            ui.add_space(8.0);
+            egui::CollapsingHeader::new("统计口径与说明").show(ui, |ui| {
+                ui.label(RichText::new("汉字每字计 1，其他连续非空白字符计 1 个词，与编辑器一致。首次保存的全文计入新增；导入、粘贴和版本恢复也计入，不代表实际键入量。保存间的改写按字词比较，未保存的改动不计入。写作时长沿用已保存的编辑器聚焦时间，按保存日期归档。").small().weak());
+            });
+        });
+}
+
+fn show_time_details(
+    ui: &mut Ui,
+    data: &WritingStatistics,
+    period: &mut StatisticsPeriod,
+    grouping: &mut StatisticsGrouping,
+    today: NaiveDate,
+) {
+    let report = show_report_controls(ui, data, period, grouping, today);
+    egui::ScrollArea::vertical()
+        .id_salt("statistics_time_rows")
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
             ui.label(
                 RichText::new("按周以周一为起点，首尾仅包含所选日期范围内的记录。")
                     .small()
                     .weak(),
             );
-            egui::ScrollArea::vertical()
-                .id_salt("statistics_time_rows")
-                .max_height(240.0)
+            ui.add_space(4.0);
+            egui::Grid::new("statistics_time_table")
+                .num_columns(5)
+                .striped(true)
+                .spacing([24.0, 8.0])
                 .show(ui, |ui| {
-                    egui::Grid::new("statistics_time_table")
-                        .num_columns(5)
-                        .striped(true)
-                        .spacing([24.0, 6.0])
-                        .show(ui, |ui| {
-                            for heading in ["日期", "新增", "删除", "净增", "写作时长"]
-                            {
-                                ui.strong(heading);
-                            }
-                            ui.end_row();
-                            for (date, activity) in report.buckets.iter().rev() {
-                                ui.label(bucket_label(*date, self.grouping));
-                                ui.label(format!("+{}", number(activity.added)));
-                                ui.label(format!("−{}", number(activity.removed)));
-                                ui.label(format!("{:+}", activity.net()));
-                                ui.label(duration(activity.seconds));
-                                ui.end_row();
-                            }
-                        });
+                    for heading in ["日期", "新增", "删除", "净增", "写作时长"] {
+                        ui.strong(heading);
+                    }
+                    ui.end_row();
+                    for (date, activity) in report.buckets.iter().rev() {
+                        ui.label(bucket_label(*date, *grouping));
+                        ui.label(format!("+{}", number(activity.added)));
+                        ui.label(format!("−{}", number(activity.removed)));
+                        ui.label(format!("{:+}", activity.net()));
+                        ui.label(duration(activity.seconds));
+                        ui.end_row();
+                    }
                 });
         });
-        ui.add_space(8.0);
-        egui::CollapsingHeader::new("各文档 · 最新保存字数")
-            .default_open(true)
-            .show(ui, |ui| {
-                egui::ScrollArea::vertical()
-                    .id_salt("statistics_documents")
-                    .max_height(180.0)
-                    .show_rows(ui, 20.0, data.documents.len(), |ui, rows| {
-                        for index in rows {
-                            let doc = &data.documents[index];
-                            let path = doc
-                                .path
-                                .as_ref()
-                                .map_or_else(|| doc.id.clone(), |p| p.display().to_string());
-                            let name = doc.path.as_ref().and_then(|p| p.file_name()).map_or_else(
-                                || doc.id.clone(),
-                                |n| n.to_string_lossy().into_owned(),
-                            );
-                            ui.horizontal(|ui| {
-                                let width = (ui.available_width() - 100.0).max(100.0);
-                                ui.add_sized(
-                                    [width, 20.0],
-                                    egui::Label::new(name).truncate().halign(egui::Align::Min),
-                                )
-                                .on_hover_text(path);
-                                ui.label(doc.words.map_or_else(
-                                    || "无法读取".to_string(),
-                                    |n| format!("{} 字", number(n)),
-                                ));
-                            });
-                        }
-                    });
-            });
-        ui.add_space(12.0);
+}
+
+fn show_report_controls(
+    ui: &mut Ui,
+    data: &WritingStatistics,
+    period: &mut StatisticsPeriod,
+    grouping: &mut StatisticsGrouping,
+    today: NaiveDate,
+) -> StatisticsReport {
+    ui.horizontal_wrapped(|ui| {
+        for (candidate, label) in [
+            (StatisticsPeriod::Last7Days, "近 7 天"),
+            (StatisticsPeriod::Last30Days, "近 30 天"),
+            (StatisticsPeriod::ThisYear, "今年"),
+            (StatisticsPeriod::AllTime, "全部"),
+        ] {
+            if ui
+                .selectable_value(&mut *period, candidate, label)
+                .clicked()
+            {
+                *grouping = match candidate {
+                    StatisticsPeriod::Last7Days | StatisticsPeriod::Last30Days => {
+                        StatisticsGrouping::Day
+                    }
+                    StatisticsPeriod::ThisYear | StatisticsPeriod::AllTime => {
+                        StatisticsGrouping::Month
+                    }
+                };
+            }
+        }
         ui.separator();
-        ui.label(RichText::new("统计口径：汉字每字计 1，其他连续非空白字符计 1 个词，与编辑器一致。首次保存的全文计入新增；导入、粘贴和版本恢复也计入，不代表实际键入量。保存间的改写按字词比较，未保存的改动不计入。写作时长沿用已保存的编辑器聚焦时间，按保存日期归档。").small().weak());
+        egui::ComboBox::from_id_salt("statistics_grouping")
+            .width(80.0)
+            .selected_text(grouping_label(*grouping))
+            .show_ui(ui, |ui| {
+                for candidate in [
+                    StatisticsGrouping::Day,
+                    StatisticsGrouping::Week,
+                    StatisticsGrouping::Month,
+                ] {
+                    ui.selectable_value(&mut *grouping, candidate, grouping_label(candidate));
+                }
+            });
+    });
+    let report = data.report(*period, *grouping, today);
+    ui.label(
+        RichText::new(format!("{} 至 {} · 本地日期", report.start, today))
+            .small()
+            .weak(),
+    );
+    ui.horizontal_wrapped(|ui| {
+        ui.label(format!("新增 {}", number(report.activity.added)));
+        ui.label(format!("删除 {}", number(report.activity.removed)));
+        ui.label(format!("净增 {:+}", report.activity.net()));
+        ui.label(format!("活跃 {} 天", report.active_days));
+        ui.label(format!("写作 {}", duration(report.activity.seconds)));
+    });
+    ui.add_space(8.0);
+    report
+}
+
+fn show_documents(ui: &mut Ui, data: &WritingStatistics, query: &mut String) {
+    let matching: Vec<usize> = data
+        .documents
+        .iter()
+        .enumerate()
+        .filter(|(_, doc)| document_matches(doc, query))
+        .map(|(index, _)| index)
+        .collect();
+
+    ui.horizontal(|ui| {
+        if query.trim().is_empty() {
+            ui.strong(format!("{} 篇文档", number(data.documents.len())));
+        } else {
+            ui.strong(format!(
+                "匹配 {} / {} 篇",
+                number(matching.len()),
+                number(data.documents.len())
+            ));
+        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let width = ui.available_width().clamp(120.0, 280.0);
+            ui.add(
+                egui::TextEdit::singleline(query)
+                    .hint_text("搜索文件名或路径")
+                    .desired_width(width),
+            );
+        });
+    });
+    ui.label(
+        RichText::new("最新保存字数 · 按字数从多到少 · 悬停查看完整路径")
+            .small()
+            .weak(),
+    );
+    ui.add_space(4.0);
+
+    if matching.is_empty() {
+        ui.add_space(32.0);
+        ui.vertical_centered(|ui| {
+            ui.label(RichText::new("没有匹配的文档").strong());
+            ui.label(RichText::new("试试更短的文件名或路径关键词。").weak());
+        });
+        return;
     }
+
+    let (name_width, count_width) = document_column_widths(ui);
+    ui.horizontal(|ui| {
+        aligned_label(
+            ui,
+            [name_width, 20.0].into(),
+            RichText::new("文档").small().weak(),
+            egui::Align::Min,
+        );
+        aligned_label(
+            ui,
+            [count_width, 20.0].into(),
+            RichText::new("最新保存字数").small().weak(),
+            egui::Align::Max,
+        );
+    });
+    ui.separator();
+    egui::ScrollArea::vertical()
+        .id_salt("statistics_documents")
+        .auto_shrink([false, false])
+        .show_rows(ui, 32.0, matching.len(), |ui, rows| {
+            let (name_width, count_width) = document_column_widths(ui);
+            for index in rows {
+                let doc = &data.documents[matching[index]];
+                let (name, path) = document_labels(doc);
+                ui.horizontal(|ui| {
+                    aligned_label(ui, [name_width, 32.0].into(), name, egui::Align::Min)
+                        .on_hover_text(path);
+                    aligned_label(
+                        ui,
+                        [count_width, 32.0].into(),
+                        doc.words.map_or_else(
+                            || "无法读取".to_string(),
+                            |words| format!("{} 字", number(words)),
+                        ),
+                        egui::Align::Max,
+                    );
+                });
+            }
+        });
+}
+
+fn aligned_label(
+    ui: &mut Ui,
+    size: egui::Vec2,
+    text: impl Into<egui::WidgetText>,
+    align: egui::Align,
+) -> egui::Response {
+    let layout = if align == egui::Align::Max {
+        egui::Layout::right_to_left(egui::Align::Center)
+    } else {
+        egui::Layout::left_to_right(egui::Align::Center)
+    };
+    let (cell_rect, cell_response) = ui.allocate_exact_size(size, egui::Sense::hover());
+    let label_response = ui
+        .new_child(egui::UiBuilder::new().max_rect(cell_rect).layout(layout))
+        .add(egui::Label::new(text).truncate().halign(align));
+    cell_response | label_response
+}
+
+fn document_column_widths(ui: &Ui) -> (f32, f32) {
+    let count_width = 120.0;
+    let name_width = (ui.available_width() - count_width - ui.spacing().item_spacing.x).max(80.0);
+    (name_width, count_width)
+}
+
+fn document_labels(doc: &crate::statistics::DocumentStatistics) -> (String, String) {
+    let path = doc
+        .path
+        .as_ref()
+        .map_or_else(|| doc.id.clone(), |path| path.display().to_string());
+    let name = doc
+        .path
+        .as_ref()
+        .and_then(|path| path.file_name())
+        .map_or_else(
+            || doc.id.clone(),
+            |name| name.to_string_lossy().into_owned(),
+        );
+    (name, path)
+}
+
+fn document_matches(doc: &crate::statistics::DocumentStatistics, query: &str) -> bool {
+    let query = query.trim().to_lowercase();
+    if query.is_empty() {
+        return true;
+    }
+    let (name, path) = document_labels(doc);
+    name.to_lowercase().contains(&query) || path.to_lowercase().contains(&query)
 }
 
 fn grouping_label(grouping: StatisticsGrouping) -> &'static str {
@@ -343,7 +510,7 @@ fn show_chart(ui: &mut Ui, buckets: &[(NaiveDate, WritingActivity)], grouping: S
     });
     let visible = &buckets[buckets.len().saturating_sub(60)..];
     let (rect, _) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), 164.0),
+        egui::vec2(ui.available_width(), 220.0),
         egui::Sense::hover(),
     );
     let plot = rect.shrink2(egui::vec2(6.0, 20.0));
@@ -448,56 +615,74 @@ mod tests {
     use crate::statistics::DocumentStatistics;
 
     #[test]
-    fn statistics_content_fits_minimum_width_with_large_totals_and_long_names() {
-        for width in [600.0, 800.0] {
-            let ctx = Context::default();
-            let today = Local::now().date_naive();
-            let mut window = StatisticsWindow {
-                data: Some(WritingStatistics {
-                    documents: vec![DocumentStatistics {
-                        path: Some(format!("/tmp/{}.md", "很长的文章名称".repeat(100)).into()),
-                        words: Some(1_234_567),
-                        days: [(
-                            today,
-                            WritingActivity {
-                                added: 1_234_567,
-                                removed: 123,
-                                seconds: 360_000,
-                            },
-                        )]
-                        .into(),
+    fn statistics_views_fit_minimum_width_with_large_totals_and_long_names() {
+        for view in [
+            StatisticsView::Overview,
+            StatisticsView::Time,
+            StatisticsView::Documents,
+        ] {
+            for (width, height) in [(600.0, 460.0), (800.0, 720.0)] {
+                let ctx = Context::default();
+                let today = Local::now().date_naive();
+                let mut window = StatisticsWindow {
+                    data: Some(WritingStatistics {
+                        documents: vec![DocumentStatistics {
+                            path: Some(format!("/tmp/{}.md", "很长的文章名称".repeat(100)).into()),
+                            words: Some(1_234_567),
+                            days: [(
+                                today,
+                                WritingActivity {
+                                    added: 1_234_567,
+                                    removed: 123,
+                                    seconds: 360_000,
+                                },
+                            )]
+                            .into(),
+                            ..Default::default()
+                        }],
                         ..Default::default()
-                    }],
+                    }),
+                    view,
                     ..Default::default()
-                }),
-                ..Default::default()
-            };
-            for _ in 0..2 {
-                let _ = ctx.run(
-                    egui::RawInput {
-                        screen_rect: Some(egui::Rect::from_min_size(
-                            egui::Pos2::ZERO,
-                            egui::vec2(width, 720.0),
-                        )),
-                        ..Default::default()
-                    },
-                    |ctx| {
-                        egui::CentralPanel::default()
-                            .frame(egui::Frame::NONE.inner_margin(20))
-                            .show(ctx, |ui| {
-                                let available = ui.available_width();
-                                egui::ScrollArea::vertical().show(ui, |ui| {
+                };
+                for _ in 0..2 {
+                    let _ = ctx.run(
+                        egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(
+                                egui::Pos2::ZERO,
+                                egui::vec2(width, height),
+                            )),
+                            ..Default::default()
+                        },
+                        |ctx| {
+                            egui::CentralPanel::default()
+                                .frame(egui::Frame::NONE.inner_margin(20))
+                                .show(ctx, |ui| {
+                                    let available = ui.available_width();
                                     window.show_content(ui);
                                     assert!(
                                         ui.min_rect().width() <= available + 1.0,
-                                        "statistics overflow at {width}: {:?}",
+                                        "{view:?} overflow at {width}x{height}: {:?}",
                                         ui.min_rect()
                                     );
                                 });
-                            });
-                    },
-                );
+                        },
+                    );
+                }
             }
         }
+    }
+
+    #[test]
+    fn document_search_matches_names_and_paths_case_insensitively() {
+        let doc = DocumentStatistics {
+            path: Some("/tmp/Writing/Chapter One.md".into()),
+            ..Default::default()
+        };
+        assert!(document_matches(&doc, ""));
+        assert!(document_matches(&doc, "chapter"));
+        assert!(document_matches(&doc, "WRITING"));
+        assert!(document_matches(&doc, " one "));
+        assert!(!document_matches(&doc, "missing"));
     }
 }

@@ -799,15 +799,21 @@ impl Editor {
         self.is_focused
     }
 
-    /// Format the content by adding two spaces at the beginning of each line.
+    /// Format the content with two-space indentation at the beginning of each line.
     /// Blank lines are preserved as is.
     pub fn format(&mut self) {
-        let formatted = Self::add_paragraph_indentation(&self.content);
+        self.format_with_tabs(false);
+    }
+
+    /// Format the content with either a Tab or two spaces at the beginning of each line.
+    pub fn format_with_tabs(&mut self, use_tabs: bool) {
+        let indentation = if use_tabs { "\t" } else { "  " };
+        let formatted = Self::add_paragraph_indentation(&self.content, indentation);
         self.replace_content_preserving_comments(formatted);
     }
 
-    /// Helper function to add two spaces at the beginning of each line
-    fn add_paragraph_indentation(text: &str) -> String {
+    /// Replace existing leading whitespace with the requested paragraph indentation.
+    fn add_paragraph_indentation(text: &str, indentation: &str) -> String {
         let mut result = String::with_capacity(text.len() + 128);
 
         for (i, line) in text.lines().enumerate() {
@@ -819,8 +825,7 @@ impl Editor {
                 // Preserve blank lines as is
                 result.push_str(line);
             } else {
-                // Always add exactly two spaces after trimming leading whitespace
-                result.push_str("  ");
+                result.push_str(indentation);
                 result.push_str(line.trim_start());
             }
         }
@@ -2552,22 +2557,39 @@ mod tests {
     }
 
     #[test]
+    fn test_format_with_tab_indentation() {
+        let mut editor = Editor::default();
+        editor.set_content("  First paragraph.\n\n\tSecond paragraph.".to_string());
+        editor.format_with_tabs(true);
+        assert_eq!(
+            editor.get_content(),
+            "\tFirst paragraph.\n\n\tSecond paragraph."
+        );
+
+        editor.format();
+        assert_eq!(
+            editor.get_content(),
+            "  First paragraph.\n\n  Second paragraph."
+        );
+    }
+
+    #[test]
     fn test_add_paragraph_indentation() {
         assert_eq!(
-            Editor::add_paragraph_indentation("First paragraph.\n\nSecond paragraph."),
+            Editor::add_paragraph_indentation("First paragraph.\n\nSecond paragraph.", "  "),
             "  First paragraph.\n\n  Second paragraph."
         );
         assert_eq!(
-            Editor::add_paragraph_indentation("Already indented.\n\nNot indented."),
+            Editor::add_paragraph_indentation("Already indented.\n\nNot indented.", "  "),
             "  Already indented.\n\n  Not indented."
         );
         assert_eq!(
-            Editor::add_paragraph_indentation("Single line."),
-            "  Single line."
+            Editor::add_paragraph_indentation("Single line.", "\t"),
+            "\tSingle line."
         );
-        assert_eq!(Editor::add_paragraph_indentation(""), "");
+        assert_eq!(Editor::add_paragraph_indentation("", "  "), "");
         assert_eq!(
-            Editor::add_paragraph_indentation("    Extra spaces."),
+            Editor::add_paragraph_indentation("    Extra spaces.", "  "),
             "  Extra spaces."
         );
     }

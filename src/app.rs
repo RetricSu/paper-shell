@@ -946,6 +946,7 @@ impl eframe::App for PaperShellApp {
                     current_font: &self.current_font,
                     font_size: self.editor.font_size,
                     line_spacing: self.editor.line_spacing,
+                    format_use_tabs: self.config.settings.format_use_tabs,
                     recent_files: &self.config.settings.recent_files,
                     plugins: &self.plugin_metadata,
                     sidebar_expanded: self.sidebar.is_expanded(),
@@ -972,7 +973,15 @@ impl eframe::App for PaperShellApp {
                         self.try_open_file_from_selector()
                     }
                     crate::ui::title_bar::TitleBarAction::OpenFile(path) => self.open_file(path),
-                    crate::ui::title_bar::TitleBarAction::Format => self.editor.format(),
+                    crate::ui::title_bar::TitleBarAction::Format => self
+                        .editor
+                        .format_with_tabs(self.config.settings.format_use_tabs),
+                    crate::ui::title_bar::TitleBarAction::SetFormatUseTabs(use_tabs) => {
+                        self.config.settings.format_use_tabs = use_tabs;
+                        if let Err(error) = self.config.save() {
+                            self.file_error = Some(format!("无法保存段落缩进设置: {}", error));
+                        }
+                    }
                     crate::ui::title_bar::TitleBarAction::History => self.try_load_history(),
                     crate::ui::title_bar::TitleBarAction::Statistics => {
                         self.statistics_window.open(ctx)
@@ -1004,6 +1013,7 @@ impl eframe::App for PaperShellApp {
                         self.config.settings.font_size = 14.0;
                         self.config.settings.line_spacing = 1.5;
                         self.config.settings.font_family = "Default".to_string();
+                        self.config.settings.format_use_tabs = false;
                         ctx.set_fonts(crate::ui::font::setup_fonts());
                         self.current_font = "Default".to_string();
                         if let Err(e) = self.config.save() {

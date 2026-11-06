@@ -12,6 +12,7 @@ pub enum TitleBarAction {
     History,
     Statistics,
     Format,
+    SetFormatUseTabs(bool),
     FontChange(String),
     FontSizeChange(f32),
     LineSpacingChange(f32),
@@ -43,6 +44,7 @@ pub struct TitleBarState<'a> {
     pub current_font: &'a str,
     pub font_size: f32,
     pub line_spacing: f32,
+    pub format_use_tabs: bool,
     pub recent_files: &'a [PathBuf],
     pub plugins: &'a [PluginMetadata],
     pub vim_mode: bool,
@@ -64,6 +66,7 @@ impl TitleBar {
             current_font,
             font_size,
             line_spacing,
+            format_use_tabs,
             recent_files,
             plugins,
             vim_mode,
@@ -447,13 +450,39 @@ impl TitleBar {
 
                         ui.separator();
 
-                        if ui
-                            .button("整理段落缩进")
-                            .on_hover_text("为段落首行添加缩进空格")
-                            .clicked()
-                        {
-                            action = Some(TitleBarAction::Format);
-                        }
+                        ui.horizontal(|ui| {
+                            if ui
+                                .button("整理段落缩进")
+                                .on_hover_text(if format_use_tabs {
+                                    "为段落首行添加 Tab 缩进"
+                                } else {
+                                    "为段落首行添加两个空格"
+                                })
+                                .clicked()
+                            {
+                                action = Some(TitleBarAction::Format);
+                            }
+
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                let mut use_tabs = format_use_tabs;
+                                if Self::format_indent_switch(ui, &mut use_tabs)
+                                    .on_hover_text(if format_use_tabs {
+                                        "当前使用 Tab 缩进，点击切换为空格"
+                                    } else {
+                                        "当前使用空格缩进，点击切换为 Tab"
+                                    })
+                                    .changed()
+                                {
+                                    action = Some(TitleBarAction::SetFormatUseTabs(use_tabs));
+                                }
+                                ui.add_space(4.0);
+                                ui.label(
+                                    egui::RichText::new(if use_tabs { "Tab" } else { "空格" })
+                                        .small(),
+                                )
+                                .on_hover_text("一键 Format 的缩进方式");
+                            });
+                        });
 
                         ui.separator();
 
@@ -548,6 +577,47 @@ impl TitleBar {
             );
         }
         ui.add(button)
+    }
+
+    fn format_indent_switch(ui: &mut Ui, use_tabs: &mut bool) -> egui::Response {
+        let (rect, mut response) =
+            ui.allocate_exact_size(egui::vec2(26.0, 14.0), egui::Sense::click());
+        if response.clicked() {
+            *use_tabs = !*use_tabs;
+            response.mark_changed();
+        }
+        response.widget_info(|| {
+            egui::WidgetInfo::selected(
+                egui::WidgetType::Checkbox,
+                ui.is_enabled(),
+                *use_tabs,
+                "段落缩进使用 Tab",
+            )
+        });
+
+        if ui.is_rect_visible(rect) {
+            let visuals = ui.style().interact_selectable(&response, *use_tabs);
+            let track_rect = rect.expand(visuals.expansion);
+            let radius = track_rect.height() / 2.0;
+            ui.painter().rect(
+                track_rect,
+                radius,
+                visuals.bg_fill,
+                visuals.bg_stroke,
+                egui::StrokeKind::Inside,
+            );
+            let thumb_x = if *use_tabs {
+                track_rect.right() - radius
+            } else {
+                track_rect.left() + radius
+            };
+            ui.painter().circle_filled(
+                egui::pos2(thumb_x, track_rect.center().y),
+                radius - 2.0,
+                ui.visuals().window_fill(),
+            );
+        }
+        response
     }
 
     fn window_controls(ui: &mut Ui) {
@@ -676,6 +746,26 @@ mod tests {
         font_size: f32,
         line_spacing: f32,
     ) -> (egui::FullOutput, Option<TitleBarAction>) {
+        render_typography_title_bar_with_indent(
+            ctx,
+            events,
+            fonts,
+            current_font,
+            font_size,
+            line_spacing,
+            false,
+        )
+    }
+
+    fn render_typography_title_bar_with_indent(
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+        fonts: &[String],
+        current_font: &str,
+        font_size: f32,
+        line_spacing: f32,
+        format_use_tabs: bool,
+    ) -> (egui::FullOutput, Option<TitleBarAction>) {
         let mut action = None;
         let output = ctx.run(
             egui::RawInput {
@@ -699,6 +789,7 @@ mod tests {
                             current_font,
                             font_size,
                             line_spacing,
+                            format_use_tabs,
                             recent_files: &[],
                             plugins: &[],
                             sidebar_expanded: true,
@@ -803,6 +894,7 @@ mod tests {
                         current_font: "Default",
                         font_size: 14.0,
                         line_spacing: 1.5,
+                        format_use_tabs: false,
                         recent_files: &[],
                         plugins: &[],
                         sidebar_expanded: false,
@@ -847,6 +939,7 @@ mod tests {
                             current_font: "Default",
                             font_size: 14.0,
                             line_spacing: 1.5,
+                            format_use_tabs: false,
                             recent_files: &[],
                             plugins: &[],
                             sidebar_expanded: false,
@@ -943,6 +1036,7 @@ mod tests {
                         current_font: "PingFang SC",
                         font_size: 16.0,
                         line_spacing: 1.8,
+                        format_use_tabs: false,
                         recent_files: &[],
                         plugins: &[],
                         sidebar_expanded: true,
@@ -977,6 +1071,7 @@ mod tests {
                         current_font: "PingFang SC",
                         font_size: 16.0,
                         line_spacing: 1.8,
+                        format_use_tabs: false,
                         recent_files: &[],
                         plugins: &[],
                         sidebar_expanded: true,
@@ -1008,6 +1103,7 @@ mod tests {
                         current_font: "PingFang SC",
                         font_size: 16.0,
                         line_spacing: 1.8,
+                        format_use_tabs: false,
                         recent_files: &[],
                         plugins: &[],
                         sidebar_expanded: true,
@@ -1054,6 +1150,68 @@ mod tests {
         assert!(has_text(&typography_open, "行间距"));
         assert!(has_text(&typography_open, "整理段落缩进"));
         assert!(has_text(&typography_open, "重置默认排版"));
+    }
+
+    #[test]
+    fn format_indent_switch_dispatches_selection_and_keeps_menu_open() {
+        let ctx = egui::Context::default();
+        crate::style::configure_style(&ctx);
+        let fonts = vec!["PingFang SC".to_string()];
+
+        let (initial, _) = render_typography_title_bar(&ctx, vec![], &fonts, "Default", 14.0, 1.5);
+        let _ = click_text(&ctx, &initial, "排版", &fonts, "Default", 14.0, 1.5);
+        let (menu, _) = render_typography_title_bar(&ctx, vec![], &fonts, "Default", 14.0, 1.5);
+        let mode_rect = menu
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.text() == "空格" => {
+                    Some(text.visual_bounding_rect())
+                }
+                _ => None,
+            })
+            .expect("space indentation label must be visible");
+        let switch_rect = menu
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Rect(rect)
+                    if (rect.rect.width() - 26.0).abs() < f32::EPSILON
+                        && (rect.rect.height() - 14.0).abs() < f32::EPSILON
+                        && (rect.rect.center().y - mode_rect.center().y).abs() < 2.0
+                        && rect.rect.left() >= mode_rect.right() =>
+                {
+                    Some(rect.rect)
+                }
+                _ => None,
+            })
+            .expect("small switch must be right-aligned beside its label");
+
+        let (_, action) = render_typography_title_bar_with_indent(
+            &ctx,
+            click_events(switch_rect.center()),
+            &fonts,
+            "Default",
+            14.0,
+            1.5,
+            false,
+        );
+        assert!(matches!(
+            action,
+            Some(TitleBarAction::SetFormatUseTabs(true))
+        ));
+
+        let (menu, _) = render_typography_title_bar_with_indent(
+            &ctx,
+            vec![],
+            &fonts,
+            "Default",
+            14.0,
+            1.5,
+            true,
+        );
+        assert!(has_text(&menu, "字号"));
+        assert!(has_text(&menu, "Tab"));
     }
 
     #[test]
@@ -1234,6 +1392,7 @@ mod tests {
                                     current_font: "Default",
                                     font_size: 14.0,
                                     line_spacing: 1.5,
+                                    format_use_tabs: false,
                                     recent_files: &[],
                                     plugins: &[],
                                     sidebar_expanded: false,

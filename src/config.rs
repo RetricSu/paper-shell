@@ -124,6 +124,10 @@ pub struct Settings {
     #[serde(default = "default_line_spacing")]
     pub line_spacing: f32,
 
+    /// Whether one-click paragraph formatting uses a Tab instead of two spaces.
+    #[serde(default)]
+    pub format_use_tabs: bool,
+
     /// Font family name (e.g. "Default", "PingFang SC", "Songti SC")
     #[serde(default = "default_font_family")]
     pub font_family: String,
@@ -170,6 +174,7 @@ impl Default for Settings {
             autosave_interval: 300, // 5 minutes
             font_size: default_font_size(),
             line_spacing: default_line_spacing(),
+            format_use_tabs: false,
             font_family: default_font_family(),
             recent_files: Vec::new(),
             vim_mode: false,
@@ -358,22 +363,26 @@ mod tests {
         assert_eq!(settings.font_size, 14.0);
         assert_eq!(settings.line_spacing, 1.5);
         assert_eq!(settings.font_family, "Default");
+        assert!(!settings.format_use_tabs);
 
         settings.font_size = 18.0;
         settings.line_spacing = 1.8;
         settings.font_family = "PingFang SC".to_string();
+        settings.format_use_tabs = true;
 
         let serialized = toml::to_string(&settings).unwrap();
         let reloaded: Settings = toml::from_str(&serialized).unwrap();
         assert_eq!(reloaded.font_size, 18.0);
         assert_eq!(reloaded.line_spacing, 1.8);
         assert_eq!(reloaded.font_family, "PingFang SC");
+        assert!(reloaded.format_use_tabs);
 
         // Deserializing empty string should use defaults
         let empty_reloaded: Settings = toml::from_str("").unwrap();
         assert_eq!(empty_reloaded.font_size, 14.0);
         assert_eq!(empty_reloaded.line_spacing, 1.5);
         assert_eq!(empty_reloaded.font_family, "Default");
+        assert!(!empty_reloaded.format_use_tabs);
 
         // Sanitizing out-of-range values restores defaults
         let mut corrupted = Settings {

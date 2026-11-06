@@ -5,6 +5,7 @@ use crate::messages::ResponseMessage;
 use crate::plugin::builtin::cloud_backup::DocumentIdentity;
 use crate::plugin::{PluginContext, PluginManager};
 use crate::style::configure_style;
+use crate::ui::about::AboutWindow;
 use crate::ui::dialog::{DocumentChangeDecision, PendingDocumentAction, UnsavedChangesDialog};
 use crate::ui::editor::Editor;
 use crate::ui::history::{HistoryAction, HistoryWindow};
@@ -47,6 +48,7 @@ pub struct PaperShellApp {
 
     history_window: HistoryWindow,
     statistics_window: crate::ui::statistics::StatisticsWindow,
+    about_window: AboutWindow,
 
     current_font: String,
     available_fonts: Vec<String>,
@@ -130,6 +132,7 @@ impl Default for PaperShellApp {
             response_sender: sender,
             history_window: HistoryWindow::new(),
             statistics_window: crate::ui::statistics::StatisticsWindow::default(),
+            about_window: AboutWindow::default(),
             available_fonts,
             current_font,
             last_focus_state: false,
@@ -1063,6 +1066,7 @@ impl eframe::App for PaperShellApp {
                     crate::ui::title_bar::TitleBarAction::ManagePlugins => {
                         self.plugin_manager_window.open(ctx);
                     }
+                    crate::ui::title_bar::TitleBarAction::About => self.about_window.open(ctx),
                     crate::ui::title_bar::TitleBarAction::ConfigurePlugin(id) => {
                         if id == "cloud_backup" {
                             self.cloud_backup_dialog
@@ -1126,6 +1130,7 @@ impl eframe::App for PaperShellApp {
         // History Window
         self.history_window.show(ctx);
         self.statistics_window.show(ctx, &self.editor_backend);
+        self.about_window.show(ctx);
         if let Some(action) = self.history_window.take_pending_action() {
             self.handle_history_action(action);
         }

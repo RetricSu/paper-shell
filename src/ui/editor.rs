@@ -1231,28 +1231,21 @@ impl Editor {
         }
 
         let screen_rect = ui.ctx().content_rect();
-        let mut position = Self::comment_popup_position(output, end);
-        position.x = position.x.clamp(
-            screen_rect.min.x,
-            (screen_rect.max.x - 240.0).max(screen_rect.min.x),
-        );
-        position.y = position.y.clamp(
-            screen_rect.min.y,
-            (screen_rect.max.y - 38.0).max(screen_rect.min.y),
-        );
+        let position = Self::comment_popup_position(output, end);
         let mut edit = None;
         egui::Area::new(ui.make_persistent_id("selection_comment_tool"))
             .order(egui::Order::Foreground)
             .fixed_pos(position)
+            .constrain_to(screen_rect)
             .show(ui.ctx(), |ui| {
                 egui::Frame::popup(ui.style())
                     .inner_margin(egui::Margin::symmetric(4, 3))
                     .show(ui, |ui| {
-                        ui.spacing_mut().item_spacing = egui::vec2(2.0, 0.0);
+                        ui.spacing_mut().item_spacing = egui::vec2(0.0, 2.0);
                         ui.visuals_mut().widgets.inactive.bg_stroke = egui::Stroke::NONE;
                         ui.visuals_mut().widgets.hovered.bg_stroke = egui::Stroke::NONE;
                         ui.visuals_mut().widgets.active.bg_stroke = egui::Stroke::NONE;
-                        ui.horizontal(|ui| {
+                        ui.vertical(|ui| {
                             if ui
                                 .button(format!("{} 评论", egui_phosphor::regular::CHAT_TEXT))
                                 .clicked()
@@ -2075,7 +2068,7 @@ mod tests {
     }
 
     #[test]
-    fn selection_toolbar_offers_actions_without_tooltip_and_deletes_selection() {
+    fn selection_menu_stacks_actions_vertically_and_deletes_selection() {
         use egui::{Event, Modifiers, PointerButton};
 
         let ctx = egui::Context::default();
@@ -2088,25 +2081,30 @@ mod tests {
         render_editor(&ctx, &mut editor, vec![], None);
         render_editor(&ctx, &mut editor, vec![], Some((0, 6)));
         let output = render_editor(&ctx, &mut editor, vec![], None);
-        for suffix in [" 评论", " 复制", " 剪切", " 删除"] {
+        let action_centers = [" 评论", " 复制", " 剪切", " 删除"].map(|suffix| {
+            output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.text().ends_with(suffix) => {
+                        Some(text.pos + text.galley.rect.center().to_vec2())
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("missing toolbar action {suffix}"))
+        });
+        for pair in action_centers.windows(2) {
             assert!(
-                output.shapes.iter().any(|shape| {
-                    matches!(&shape.shape, egui::Shape::Text(text) if text.galley.text().ends_with(suffix))
-                }),
-                "missing toolbar action {suffix}"
+                pair[0].y < pair[1].y,
+                "selection actions should be stacked from top to bottom: {action_centers:?}"
+            );
+            assert!(
+                (pair[0].x - pair[1].x).abs() < 0.1,
+                "selection actions should share one vertical column: {action_centers:?}"
             );
         }
 
-        let comment_button = output
-            .shapes
-            .iter()
-            .find_map(|shape| match &shape.shape {
-                egui::Shape::Text(text) if text.galley.text().ends_with(" 评论") => {
-                    Some(text.pos + text.galley.rect.center().to_vec2())
-                }
-                _ => None,
-            })
-            .expect("comment button rendered");
+        let comment_button = action_centers[0];
         let hovered = render_editor(
             &ctx,
             &mut editor,

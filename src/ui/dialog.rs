@@ -13,6 +13,7 @@ pub enum PendingDocumentAction {
     OpenFile(PathBuf),
     NewDocument(Option<PathBuf>),
     CloseWindow,
+    InstallUpdate,
     Rollback(String),
 }
 

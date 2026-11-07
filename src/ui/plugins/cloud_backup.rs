@@ -7,7 +7,7 @@ use crate::plugin::builtin::cloud_backup::{
     BackupPayload, CloudBackupConfig, DocumentIdentity, download_backup, resolve_target_url,
     test_connection, upload_backup,
 };
-use egui::{Color32, Context, RichText};
+use egui::{Color32, Context, RichText, Ui, Vec2};
 use std::sync::mpsc::{Receiver, Sender, channel};
 
 pub enum CloudBackupAction {
@@ -51,6 +51,7 @@ struct RestoredBackup {
 
 pub struct CloudBackupDialog {
     open: bool,
+    viewport_id: egui::ViewportId,
     config: CloudBackupConfig,
     show_password: bool,
     show_enc_password: bool,
@@ -74,6 +75,7 @@ impl CloudBackupDialog {
         let (tx, rx) = channel();
         Self {
             open: false,
+            viewport_id: egui::ViewportId::from_hash_of("cloud_backup_window"),
             config: CloudBackupConfig::default(),
             show_password: false,
             show_enc_password: false,
@@ -87,15 +89,24 @@ impl CloudBackupDialog {
         }
     }
 
-    pub fn open(&mut self, config: &CloudBackupConfig) {
+    pub fn viewport_id(&self) -> egui::ViewportId {
+        self.viewport_id
+    }
+
+    pub fn open(&mut self, ctx: &Context, config: &CloudBackupConfig) {
         self.config = config.clone();
-        self.open = true;
+        if self.open {
+            ctx.send_viewport_cmd_to(self.viewport_id, egui::ViewportCommand::Focus);
+        } else {
+            self.open = true;
+        }
         if self.active_operation.is_none() {
             self.status_message = config
                 .last_backup_status
                 .as_ref()
                 .map(|status| (false, status.clone()));
         }
+        ctx.request_repaint();
     }
 
     pub fn set_status(&mut self, is_error: bool, message: String) {
@@ -295,276 +306,394 @@ impl CloudBackupDialog {
             return None;
         }
 
-        let mut open = self.open;
         let mut action = None;
 
-        egui::Window::new(format!(
-            "{} 云端备份与同步",
-            egui_phosphor::regular::CLOUD
-        ))
-        .open(&mut open)
-        .collapsible(false)
-        .resizable(true)
-        .default_width(480.0)
-        .show(ctx, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                ui.label("当前文档：");
-                ui.label(RichText::new(&identity.filename).strong());
-                ui.label(format!("({} 字符)", current_content.chars().count()));
-            });
-            ui.label(RichText::new(format!("文档标识：{}", identity.doc_id)).small().weak());
-            ui.add_space(8.0);
+        ctx.show_viewport_immediate(
+            self.viewport_id,
+            egui::ViewportBuilder::default()
+                .with_title(format!(
+                    "{} 云端备份与同步 · {}",
+                    egui_phosphor::regular::CLOUD,
+                    crate::constant::DEFAULT_WINDOW_TITLE
+                ))
+                .with_inner_size(Vec2::new(560.0, 700.0))
+                .with_min_inner_size(Vec2::new(440.0, 420.0))
+                .with_decorations(false)
+                .with_transparent(true)
+                .with_resizable(true),
+            |ctx, _class| {
+                crate::style::configure_style(ctx);
+                let title_bar_panel = egui::TopBottomPanel::top("cloud_backup_title_bar")
+                    .show_separator_line(false)
+                    .show(ctx, |ui| self.show_title_bar(ui));
+                crate::ui::title_bar::TitleBar::paint_bottom_border(
+                    ctx,
+                    title_bar_panel.response.rect,
+                );
+                egui::CentralPanel::default()
+                    .frame(egui::Frame::central_panel(&ctx.style()).inner_margin(16))
+                    .show(ctx, |ui| {
+                        egui::ScrollArea::vertical()
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                action = self.show_content(ui, identity, current_content);
+                            });
+                    });
 
-            ui.group(|ui| {
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(RichText::new("自建云端配置").strong());
+                let close_requested = ctx.input(|input| input.viewport().close_requested())
+                    || ctx.input_mut(|input| {
+                        input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)
+                    });
+                if close_requested {
+                    self.open = false;
+                }
+                if !self.open {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            },
+        );
+
+        action
+    }
+
+    fn show_title_bar(&mut self, ui: &mut Ui) {
+        ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
+        ui.spacing_mut().interact_size.y = 20.0;
+
+        let drag = ui.interact(
+            ui.available_rect_before_wrap(),
+            ui.id().with("cloud_backup_title_drag"),
+            egui::Sense::click_and_drag(),
+        );
+        if drag.drag_started() {
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+        }
+        if drag.double_clicked() {
+            let is_maximized = ui.input(|input| input.viewport().maximized.unwrap_or(false));
+            ui.ctx()
+                .send_viewport_cmd(egui::ViewportCommand::Maximized(!is_maximized));
+        }
+
+        egui::MenuBar::new().ui(ui, |ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .add_sized(
+                        [22.0, 20.0],
+                        egui::Button::new(egui_phosphor::regular::X).frame(false),
+                    )
+                    .on_hover_text("关闭窗口")
+                    .clicked()
+                {
+                    self.open = false;
+                }
+
+                let is_maximized = ui.input(|input| input.viewport().maximized.unwrap_or(false));
+                let max_icon = if is_maximized {
+                    egui_phosphor::regular::CORNERS_IN
+                } else {
+                    egui_phosphor::regular::CORNERS_OUT
+                };
+                if ui
+                    .add_sized([22.0, 20.0], egui::Button::new(max_icon).frame(false))
+                    .on_hover_text(if is_maximized { "还原" } else { "最大化" })
+                    .clicked()
+                {
+                    ui.ctx()
+                        .send_viewport_cmd(egui::ViewportCommand::Maximized(!is_maximized));
+                }
+
+                if ui
+                    .add_sized(
+                        [22.0, 20.0],
+                        egui::Button::new(egui_phosphor::regular::MINUS).frame(false),
+                    )
+                    .on_hover_text("最小化")
+                    .clicked()
+                {
+                    ui.ctx()
+                        .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+                }
+
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                     ui.label(
-                        RichText::new("(支持 WebDAV / Nextcloud / Alist / NAS / HTTP)").small(),
+                        RichText::new(format!("{} 云端备份与同步", egui_phosphor::regular::CLOUD))
+                            .strong()
+                            .color(ui.visuals().text_color().gamma_multiply(0.82)),
                     );
                 });
-                ui.add_space(4.0);
-
-                ui.label("云端服务目录 URL");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.config.server_url)
-                        .hint_text("例如: https://dav.example.com/papershell/"),
-                );
-                ui.add_space(4.0);
-
-                ui.horizontal(|ui| {
-                    ui.vertical(|ui| {
-                        ui.label("用户名 (可选)");
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.config.username)
-                                .hint_text("Basic Auth 用户名"),
-                        );
-                    });
-                    ui.add_space(8.0);
-                    ui.vertical(|ui| {
-                        ui.horizontal(|ui| {
-                            ui.label("密码 / Token (可选)");
-                            if ui
-                                .button(if self.show_password {
-                                    egui_phosphor::regular::EYE_SLASH
-                                } else {
-                                    egui_phosphor::regular::EYE
-                                })
-                                .on_hover_text("显示/隐藏密码")
-                                .clicked()
-                            {
-                                self.show_password = !self.show_password;
-                            }
-                        });
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.config.password)
-                                .password(!self.show_password)
-                                .hint_text("密码或 Bearer Token"),
-                        );
-                    });
-                });
-                ui.add_space(4.0);
-
-                ui.label("远程文件名模板（建议保留 {doc_id} 防止同名文档冲突）");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.config.remote_filename)
-                        .hint_text("{stem}_{doc_id}.backup"),
-                );
             });
+        });
+    }
 
-            ui.add_space(8.0);
-            ui.group(|ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("安全与加密").strong());
-                    ui.checkbox(
-                        &mut self.config.enable_encryption,
-                        "启用端到端加密 (AES-256-GCM)",
+    fn show_content(
+        &mut self,
+        ui: &mut Ui,
+        identity: &DocumentIdentity,
+        current_content: &str,
+    ) -> Option<CloudBackupAction> {
+        let mut action = None;
+        ui.horizontal_wrapped(|ui| {
+            ui.label("当前文档：");
+            ui.label(RichText::new(&identity.filename).strong());
+            ui.label(format!("({} 字符)", current_content.chars().count()));
+        });
+        ui.label(
+            RichText::new(format!("文档标识：{}", identity.doc_id))
+                .small()
+                .weak(),
+        );
+        ui.add_space(8.0);
+
+        ui.group(|ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new("自建云端配置").strong());
+                ui.label(RichText::new("(支持 WebDAV / Nextcloud / Alist / NAS / HTTP)").small());
+            });
+            ui.add_space(4.0);
+
+            ui.label("云端服务目录 URL");
+            ui.add(
+                egui::TextEdit::singleline(&mut self.config.server_url)
+                    .hint_text("例如: https://dav.example.com/papershell/"),
+            );
+            ui.add_space(4.0);
+
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    ui.label("用户名 (可选)");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.config.username)
+                            .hint_text("Basic Auth 用户名"),
                     );
                 });
-
-                if self.config.enable_encryption {
-                    ui.add_space(4.0);
+                ui.add_space(8.0);
+                ui.vertical(|ui| {
                     ui.horizontal(|ui| {
-                        ui.label("加密密码：");
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.config.encryption_password)
-                                .password(!self.show_enc_password)
-                                .hint_text("仅保留在本次会话"),
-                        );
+                        ui.label("密码 / Token (可选)");
                         if ui
-                            .button(if self.show_enc_password {
+                            .button(if self.show_password {
                                 egui_phosphor::regular::EYE_SLASH
                             } else {
                                 egui_phosphor::regular::EYE
                             })
-                            .on_hover_text("显示/隐藏加密密码")
+                            .on_hover_text("显示/隐藏密码")
                             .clicked()
                         {
-                            self.show_enc_password = !self.show_enc_password;
+                            self.show_password = !self.show_password;
+                        }
+                    });
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.config.password)
+                            .password(!self.show_password)
+                            .hint_text("密码或 Bearer Token"),
+                    );
+                });
+            });
+            ui.add_space(4.0);
+
+            ui.label("远程文件名模板（建议保留 {doc_id} 防止同名文档冲突）");
+            ui.add(
+                egui::TextEdit::singleline(&mut self.config.remote_filename)
+                    .hint_text("{stem}_{doc_id}.backup"),
+            );
+        });
+
+        ui.add_space(8.0);
+        ui.group(|ui| {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("安全与加密").strong());
+                ui.checkbox(
+                    &mut self.config.enable_encryption,
+                    "启用端到端加密 (AES-256-GCM)",
+                );
+            });
+
+            if self.config.enable_encryption {
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.label("加密密码：");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.config.encryption_password)
+                            .password(!self.show_enc_password)
+                            .hint_text("仅保留在本次会话"),
+                    );
+                    if ui
+                        .button(if self.show_enc_password {
+                            egui_phosphor::regular::EYE_SLASH
+                        } else {
+                            egui_phosphor::regular::EYE
+                        })
+                        .on_hover_text("显示/隐藏加密密码")
+                        .clicked()
+                    {
+                        self.show_enc_password = !self.show_enc_password;
+                    }
+                });
+                ui.label(
+                    RichText::new(
+                        "加密密码不明文写入配置文件，重启后需重新输入。请牢记密码，丢失无法解密。",
+                    )
+                    .small()
+                    .color(Color32::from_rgb(180, 140, 60)),
+                );
+            }
+        });
+
+        ui.add_space(10.0);
+        let is_busy = self.active_operation.is_some();
+        let has_url = !self.config.server_url.trim().is_empty();
+
+        ui.horizontal_wrapped(|ui| {
+            if ui
+                .add_enabled(
+                    has_url && !is_busy,
+                    egui::Button::new(format!("{} 测试连接", egui_phosphor::regular::PLUG)),
+                )
+                .clicked()
+            {
+                self.spawn_test(identity);
+            }
+
+            if ui
+                .add_enabled(
+                    has_url && !is_busy,
+                    egui::Button::new(format!(
+                        "{} 立即备份到云端",
+                        egui_phosphor::regular::CLOUD_ARROW_UP
+                    )),
+                )
+                .clicked()
+            {
+                self.spawn_upload(identity, current_content);
+            }
+
+            if ui
+                .add_enabled(
+                    has_url && !is_busy,
+                    egui::Button::new(format!(
+                        "{} 从云端同步拉取",
+                        egui_phosphor::regular::CLOUD_ARROW_DOWN
+                    )),
+                )
+                .clicked()
+            {
+                self.spawn_download(identity);
+            }
+
+            if ui
+                .add_enabled(
+                    !is_busy,
+                    egui::Button::new(format!("{} 保存配置", egui_phosphor::regular::CHECK)),
+                )
+                .clicked()
+            {
+                action = Some(CloudBackupAction::SaveConfig(self.config.clone()));
+            }
+        });
+
+        if let Some(active) = &self.active_operation {
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label(active.description);
+            });
+        }
+
+        if let Some((is_error, message)) = &self.status_message {
+            ui.add_space(8.0);
+            let (icon, color) = if *is_error {
+                (
+                    egui_phosphor::regular::WARNING_CIRCLE,
+                    Color32::from_rgb(210, 80, 80),
+                )
+            } else {
+                (
+                    egui_phosphor::regular::CHECK_CIRCLE,
+                    Color32::from_rgb(60, 160, 90),
+                )
+            };
+            egui::Frame::new()
+                .fill(if *is_error {
+                    Color32::from_rgba_premultiplied(220, 50, 50, 18)
+                } else {
+                    Color32::from_rgba_premultiplied(50, 180, 80, 18)
+                })
+                .stroke(egui::Stroke::new(1.0_f32, color))
+                .inner_margin(egui::Margin::same(8))
+                .show(ui, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(RichText::new(icon).color(color));
+                        ui.label(message);
+                    });
+                });
+        }
+
+        let mut restore_action = None;
+        let mut discard_restored = false;
+        if let Some(restored) = &self.restored {
+            ui.add_space(10.0);
+            ui.group(|ui| {
+                ui.label(RichText::new("云端内容准备就绪").strong());
+                ui.label(format!(
+                    "文档：{} · {} 字 · 来源：{}",
+                    restored.payload.filename, restored.payload.word_count, restored.target_url
+                ));
+                let preview: String = restored.payload.content.chars().take(160).collect();
+                egui::ScrollArea::vertical()
+                    .max_height(90.0)
+                    .show(ui, |ui| {
+                        ui.label(RichText::new(preview).weak());
+                    });
+                ui.add_space(6.0);
+
+                if restored.requested_doc_id != identity.doc_id {
+                    ui.colored_label(
+                        ui.visuals().error_fg_color,
+                        "当前文档已变化，不能应用这份备份",
+                    );
+                } else {
+                    ui.horizontal_wrapped(|ui| {
+                        if ui.button("备份当前内容并替换").clicked() {
+                            restore_action = Some(CloudBackupAction::ReplaceContent {
+                                content: restored.payload.content.clone(),
+                                expected_doc_id: identity.doc_id.clone(),
+                                source_name: restored.payload.filename.clone(),
+                            });
+                        }
+                        if ui.button("作为新文档打开").clicked() {
+                            restore_action = Some(CloudBackupAction::OpenNewDocument {
+                                filename: restored.payload.filename.clone(),
+                                content: restored.payload.content.clone(),
+                            });
                         }
                     });
                     ui.label(
                         RichText::new(
-                            "加密密码不明文写入配置文件，重启后需重新输入。请牢记密码，丢失无法解密。",
+                            "恢复前会先将当前正文保存到本机恢复快照，避免不可撤销的丢失。",
                         )
-                        .small()
-                        .color(Color32::from_rgb(180, 140, 60)),
+                        .small(),
                     );
                 }
-            });
 
-            ui.add_space(10.0);
-            let is_busy = self.active_operation.is_some();
-            let has_url = !self.config.server_url.trim().is_empty();
-
-            ui.horizontal_wrapped(|ui| {
-                if ui
-                    .add_enabled(
-                        has_url && !is_busy,
-                        egui::Button::new(format!("{} 测试连接", egui_phosphor::regular::PLUG)),
-                    )
-                    .clicked()
-                {
-                    self.spawn_test(identity);
-                }
-
-                if ui
-                    .add_enabled(
-                        has_url && !is_busy,
-                        egui::Button::new(format!(
-                            "{} 立即备份到云端",
-                            egui_phosphor::regular::CLOUD_ARROW_UP
-                        )),
-                    )
-                    .clicked()
-                {
-                    self.spawn_upload(identity, current_content);
-                }
-
-                if ui
-                    .add_enabled(
-                        has_url && !is_busy,
-                        egui::Button::new(format!(
-                            "{} 从云端同步拉取",
-                            egui_phosphor::regular::CLOUD_ARROW_DOWN
-                        )),
-                    )
-                    .clicked()
-                {
-                    self.spawn_download(identity);
-                }
-
-                if ui
-                    .add_enabled(
-                        !is_busy,
-                        egui::Button::new(format!("{} 保存配置", egui_phosphor::regular::CHECK)),
-                    )
-                    .clicked()
-                {
-                    action = Some(CloudBackupAction::SaveConfig(self.config.clone()));
+                if ui.button("放弃本次同步").clicked() {
+                    discard_restored = true;
                 }
             });
+        }
 
-            if let Some(active) = &self.active_operation {
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    ui.spinner();
-                    ui.label(active.description);
-                });
-            }
+        if restore_action.is_some() || discard_restored {
+            self.restored = None;
+        }
+        if restore_action.is_some() {
+            action = restore_action;
+        }
 
-            if let Some((is_error, message)) = &self.status_message {
-                ui.add_space(8.0);
-                let (icon, color) = if *is_error {
-                    (
-                        egui_phosphor::regular::WARNING_CIRCLE,
-                        Color32::from_rgb(210, 80, 80),
-                    )
-                } else {
-                    (
-                        egui_phosphor::regular::CHECK_CIRCLE,
-                        Color32::from_rgb(60, 160, 90),
-                    )
-                };
-                egui::Frame::new()
-                    .fill(if *is_error {
-                        Color32::from_rgba_premultiplied(220, 50, 50, 18)
-                    } else {
-                        Color32::from_rgba_premultiplied(50, 180, 80, 18)
-                    })
-                    .stroke(egui::Stroke::new(1.0_f32, color))
-                    .inner_margin(egui::Margin::same(8))
-                    .show(ui, |ui| {
-                        ui.horizontal_wrapped(|ui| {
-                            ui.label(RichText::new(icon).color(color));
-                            ui.label(message);
-                        });
-                    });
-            }
+        ui.add_space(10.0);
+        ui.separator();
+        if ui.button("关闭").clicked() {
+            self.open = false;
+        }
 
-            let mut restore_action = None;
-            let mut discard_restored = false;
-            if let Some(restored) = &self.restored {
-                ui.add_space(10.0);
-                ui.group(|ui| {
-                    ui.label(RichText::new("云端内容准备就绪").strong());
-                    ui.label(format!(
-                        "文档：{} · {} 字 · 来源：{}",
-                        restored.payload.filename, restored.payload.word_count, restored.target_url
-                    ));
-                    let preview: String = restored.payload.content.chars().take(160).collect();
-                    egui::ScrollArea::vertical().max_height(90.0).show(ui, |ui| {
-                        ui.label(RichText::new(preview).weak());
-                    });
-                    ui.add_space(6.0);
-
-                    if restored.requested_doc_id != identity.doc_id {
-                        ui.colored_label(
-                            ui.visuals().error_fg_color,
-                            "当前文档已变化，不能应用这份备份",
-                        );
-                    } else {
-                        ui.horizontal_wrapped(|ui| {
-                            if ui.button("备份当前内容并替换").clicked() {
-                                restore_action = Some(CloudBackupAction::ReplaceContent {
-                                    content: restored.payload.content.clone(),
-                                    expected_doc_id: identity.doc_id.clone(),
-                                    source_name: restored.payload.filename.clone(),
-                                });
-                            }
-                            if ui.button("作为新文档打开").clicked() {
-                                restore_action = Some(CloudBackupAction::OpenNewDocument {
-                                    filename: restored.payload.filename.clone(),
-                                    content: restored.payload.content.clone(),
-                                });
-                            }
-                        });
-                        ui.label(
-                            RichText::new("恢复前会先将当前正文保存到本机恢复快照，避免不可撤销的丢失。")
-                                .small(),
-                        );
-                    }
-
-                    if ui.button("放弃本次同步").clicked() {
-                        discard_restored = true;
-                    }
-                });
-            }
-
-            if restore_action.is_some() || discard_restored {
-                self.restored = None;
-            }
-            if restore_action.is_some() {
-                action = restore_action;
-            }
-
-            ui.add_space(10.0);
-            ui.separator();
-            if ui.button("关闭").clicked() {
-                self.open = false;
-            }
-        });
-
-        self.open = self.open && open;
         action
     }
 }
@@ -583,13 +712,56 @@ mod tests {
     }
 
     #[test]
+    fn cloud_backup_uses_a_standalone_closable_viewport() {
+        let ctx = Context::default();
+        let mut dialog = CloudBackupDialog::new();
+        let doc = identity("doc-a");
+        assert_ne!(dialog.viewport_id(), egui::ViewportId::ROOT);
+
+        dialog.open(&ctx, &CloudBackupConfig::default());
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(560.0, 700.0),
+            )),
+            ..Default::default()
+        };
+        let output = ctx.run(input.clone(), |ctx| {
+            assert!(dialog.show(ctx, &doc, "content").is_none());
+        });
+        assert!(output.shapes.iter().any(|clipped| {
+            matches!(
+                &clipped.shape,
+                egui::Shape::Text(text) if text.galley.text().contains("云端备份与同步")
+            )
+        }));
+
+        let _ = ctx.run(
+            egui::RawInput {
+                events: vec![egui::Event::Key {
+                    key: egui::Key::Escape,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+                ..input
+            },
+            |ctx| {
+                assert!(dialog.show(ctx, &doc, "content").is_none());
+            },
+        );
+        assert!(!dialog.open);
+    }
+
+    #[test]
     fn reopening_keeps_busy_state_and_stale_results_are_ignored() {
         let mut dialog = CloudBackupDialog::new();
         let doc = identity("doc-a");
         dialog.sync_document(&doc);
         let first_id = dialog.begin_operation(&doc, "https://example/a".into(), "running");
 
-        dialog.open(&CloudBackupConfig::default());
+        dialog.open(&Context::default(), &CloudBackupConfig::default());
         assert!(dialog.active_operation.is_some());
 
         let second_id = dialog.begin_operation(&doc, "https://example/b".into(), "running");

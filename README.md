@@ -72,8 +72,10 @@ and the current saved file reopens after restart. Other open windows keep runnin
 
 Updates use the macOS Universal app bundle or the Linux/Windows x86_64 executable.
 Install the app in a writable location first; macOS updates require a packaged `.app`
-outside the DMG. Network errors can be retried from About, which also links to the
-release page for manual installation. Drafts, prereleases, and older versions are skipped.
+outside the DMG. The updater clears the quarantine attribute on the verified replacement,
+so an in-app update does not repeat the browser-download Gatekeeper prompt. Network errors
+can be retried from About, which also links to the release page for manual installation.
+Drafts, prereleases, and older versions are skipped.
 
 ## Features
 

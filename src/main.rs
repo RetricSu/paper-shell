@@ -18,7 +18,7 @@ fn main() -> eframe::Result {
     let initial_file = std::env::args().nth(1).map(PathBuf::from);
     let options = ui::viewport::build_viewport();
 
-    eframe::run_native(
+    let result = eframe::run_native(
         constant::DEFAULT_WINDOW_TITLE,
         options,
         Box::new(|cc| {
@@ -37,5 +37,9 @@ fn main() -> eframe::Result {
 
             Ok(Box::new(app))
         }),
-    )
+    );
+    if result.is_ok() {
+        paper_shell::updater::restart_if_requested();
+    }
+    result
 }

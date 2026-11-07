@@ -98,6 +98,47 @@ You can also trigger releases manually from the GitHub Actions tab via `workflow
 The workflow accepts an optional tag name and controls for publishing a release, creating
 a draft, or marking it as a prerelease.
 
+### In-app update contract
+
+`src/updater.rs` reads the public GitHub Releases `latest` endpoint for
+`RetricSu/paper-shell`; no token, update server, or signing secret is required. It compares
+semantic versions and only offers newer stable versions. Package filenames above are an
+interface shared with the updater: macOS uses the Universal ZIP and replaces the entire
+bundle, Windows uses its ZIP, and Linux uses its tar.gz. Keep these names and archive
+layouts stable. All archives and `SHA256SUMS.txt` must belong to the same release tag.
+
+The workflow validates the tag against both Cargo manifests before building and refuses
+to publish an existing tag from a different commit. Manual runs must build the intended
+tag/commit with a matching version; a missing tag is created at the workflow's commit.
+Versions containing a prerelease suffix are automatically marked as prereleases.
+`scripts/check-update-assets.py` checks archive layouts and macOS bundle versions before
+checksums and publication. Every build uses the lockfile. Never replace a published
+version's packages with a different build; publish a new version instead.
+
+Downloads stream to a temporary directory, with size limits, checksum verification,
+and rejection of archive traversal and symlinks. On macOS, the bundle identifier,
+bundle version, and code signature are also checked; installation stages beside the
+current app and restores the old bundle if the final rename fails. Other platforms
+use `self-replace` for executable replacement. Installing happens after the document
+save/discard/cancel flow, then eframe closes and restarts the updated executable with
+the current saved file. The update affects the installation shared by all windows;
+only the window initiating the update restarts, and others continue with their loaded
+version until reopened.
+
+SHA-256 checksums protect download integrity over HTTPS. They are distributed by the
+same GitHub release and are not an independent publisher signature. The existing macOS
+ad-hoc signing/Gatekeeper limitations still apply. Developer ID signing/notarization
+and independently signed update metadata can be added separately.
+
+For end-to-end release acceptance, use disposable copies of two packaged versions:
+publish the newer version through the workflow, launch the older updater-enabled copy,
+check/download/install from About, and verify the new version and reopened document.
+Also exercise cancel/save failure, offline/rate-limit errors, and a read-only installation.
+Run this on macOS (including an app path containing spaces), Windows, and Linux. Unit
+tests cover version/asset selection, checksum failures, unsafe archives, bundle rollback,
+and cancellation with unsaved writing; they do not replace a real packaged upgrade test.
+An older release without this updater needs one manual upgrade to an updater-enabled build.
+
 To monitor a tagged release and inspect the resulting assets with the GitHub CLI:
 
 ```bash

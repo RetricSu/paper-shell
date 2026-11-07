@@ -17,3 +17,4 @@ pub mod process_env;
 pub mod statistics;
 pub mod style;
 pub mod ui;
+pub mod updater;

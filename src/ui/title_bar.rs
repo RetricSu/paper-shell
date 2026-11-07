@@ -32,6 +32,7 @@ pub enum TitleBarAction {
 pub struct TitleBar;
 
 pub struct TitleBarState<'a> {
+    pub update_available: bool,
     pub title: &'a str,
     pub sidebar_expanded: bool,
     pub word_count: usize,
@@ -54,6 +55,7 @@ pub struct TitleBarState<'a> {
 impl TitleBar {
     pub fn show(ui: &mut Ui, state: TitleBarState<'_>) -> Option<TitleBarAction> {
         let TitleBarState {
+            update_available,
             title,
             sidebar_expanded,
             word_count,
@@ -244,7 +246,15 @@ impl TitleBar {
                                 ui.close();
                             }
                             ui.separator();
-                            if ui.button("关于纸壳").clicked() {
+                            if ui
+                                .button(if update_available {
+                                    "关于纸壳 · 有新版本"
+                                } else {
+                                    "关于纸壳"
+                                })
+                                .on_hover_text("查看版本与检查更新")
+                                .clicked()
+                            {
                                 action = Some(TitleBarAction::About);
                                 ui.close();
                             }
@@ -778,6 +788,7 @@ mod tests {
                     action = TitleBar::show(
                         ui,
                         TitleBarState {
+                            update_available: false,
                             title: "Test Document",
                             document_path: Some("/tmp/test.txt"),
                             word_count: 100,
@@ -883,6 +894,7 @@ mod tests {
                 egui::TopBottomPanel::top("title").show(ctx, |ui| {
                     let available = ui.available_width();
                     TitleBar::show(ui, TitleBarState {
+                        update_available: false,
                         title: "A very long document name that must leave window controls accessible.txt",
                         document_path: None,
                         word_count: 1_000_000,
@@ -928,6 +940,7 @@ mod tests {
                     let _ = TitleBar::show(
                         ui,
                         TitleBarState {
+                            update_available: false,
                             title: "Test Document",
                             document_path: None,
                             word_count: 100,
@@ -1025,6 +1038,7 @@ mod tests {
                 let _ = TitleBar::show(
                     ui,
                     TitleBarState {
+                        update_available: false,
                         title: "Test Document",
                         document_path: Some("/tmp/test.txt"),
                         word_count: 100,
@@ -1060,6 +1074,7 @@ mod tests {
                 let _ = TitleBar::show(
                     ui,
                     TitleBarState {
+                        update_available: false,
                         title: "Test Document",
                         document_path: Some("/tmp/test.txt"),
                         word_count: 100,
@@ -1092,6 +1107,7 @@ mod tests {
                 let _ = TitleBar::show(
                     ui,
                     TitleBarState {
+                        update_available: false,
                         title: "Test Document",
                         document_path: Some("/tmp/test.txt"),
                         word_count: 100,
@@ -1381,6 +1397,7 @@ mod tests {
                             let _ = TitleBar::show(
                                 ui,
                                 TitleBarState {
+                                    update_available: false,
                                     title: "Test Document",
                                     document_path: Some("/tmp/test.txt"),
                                     word_count: 100,

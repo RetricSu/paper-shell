@@ -49,6 +49,7 @@ pub struct PaperShellApp {
     history_window: HistoryWindow,
     statistics_window: crate::ui::statistics::StatisticsWindow,
     about_window: AboutWindow,
+    updater: crate::updater::Updater,
 
     current_font: String,
     available_fonts: Vec<String>,
@@ -133,6 +134,7 @@ impl Default for PaperShellApp {
             history_window: HistoryWindow::new(),
             statistics_window: crate::ui::statistics::StatisticsWindow::default(),
             about_window: AboutWindow::default(),
+            updater: crate::updater::Updater::default(),
             available_fonts,
             current_font,
             last_focus_state: false,
@@ -186,6 +188,7 @@ impl PaperShellApp {
             });
         }
 
+        app.updater.check(&cc.egui_ctx);
         app
     }
 
@@ -833,9 +836,29 @@ impl PaperShellApp {
                 self.allow_close_once = true;
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
+            PendingDocumentAction::InstallUpdate => {
+                if self
+                    .updater
+                    .install(self.editor.get_current_file().cloned())
+                {
+                    self.allow_close_once = true;
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                } else {
+                    self.about_window.open(ctx);
+                }
+            }
             PendingDocumentAction::Rollback(hash) => {
                 let _ = self.apply_rollback(&hash);
             }
+        }
+    }
+
+    fn request_update_install(&mut self, ctx: &egui::Context) {
+        if self.is_document_dirty() {
+            self.unsaved_dialog
+                .open(PendingDocumentAction::InstallUpdate);
+        } else {
+            self.execute_pending_document_action(ctx, PendingDocumentAction::InstallUpdate);
         }
     }
 
@@ -900,6 +923,7 @@ impl eframe::App for PaperShellApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.updater.poll();
         self.check_response_messages();
         self.update_time_backend_if_focus_changed();
         if ctx.input(|input| input.viewport().close_requested()) {
@@ -934,6 +958,7 @@ impl eframe::App for PaperShellApp {
             if let Some(action) = crate::ui::title_bar::TitleBar::show(
                 ui,
                 crate::ui::title_bar::TitleBarState {
+                    update_available: self.updater.has_update(),
                     title: crate::constant::DEFAULT_WINDOW_TITLE,
                     word_count: total_words,
                     cursor_word_count: cursor_words,
@@ -1140,7 +1165,9 @@ impl eframe::App for PaperShellApp {
         // History Window
         self.history_window.show(ctx);
         self.statistics_window.show(ctx, &self.editor_backend);
-        self.about_window.show(ctx);
+        if self.about_window.show(ctx, &mut self.updater) {
+            self.request_update_install(ctx);
+        }
         if let Some(action) = self.history_window.take_pending_action() {
             self.handle_history_action(action);
         }
@@ -1380,6 +1407,43 @@ impl eframe::App for PaperShellApp {
 #[cfg(test)]
 mod document_change_tests {
     use super::*;
+
+    #[test]
+    fn update_restart_preserves_unsaved_document_when_cancelled() {
+        let ctx = egui::Context::default();
+        let mut app = PaperShellApp::default();
+        app.editor.set_content("unsaved writing".into());
+        app.request_update_install(&ctx);
+        assert_eq!(
+            app.unsaved_dialog.pending_action(),
+            Some(&PendingDocumentAction::InstallUpdate)
+        );
+        assert!(!app.allow_close_once);
+        app.handle_unsaved_dialog_decision(&ctx, DocumentChangeDecision::Cancel);
+        assert!(!app.unsaved_dialog.is_open());
+        assert!(!app.allow_close_once);
+        assert_eq!(app.editor.get_content(), "unsaved writing");
+    }
+
+    #[test]
+    fn failed_save_prevents_update_installation_and_close() {
+        let ctx = egui::Context::default();
+        let root = tempfile::tempdir().unwrap();
+        let mut app = PaperShellApp::default();
+        app.editor
+            .set_current_file(Some(root.path().join("missing-directory/document.txt")));
+        app.editor.set_content("unsaved writing".into());
+        app.request_update_install(&ctx);
+        app.handle_unsaved_dialog_decision(&ctx, DocumentChangeDecision::Save);
+        assert!(app.unsaved_dialog.is_open());
+        assert_eq!(
+            app.unsaved_dialog.pending_action(),
+            Some(&PendingDocumentAction::InstallUpdate)
+        );
+        assert!(app.file_error.is_some());
+        assert!(!app.allow_close_once);
+        assert_eq!(app.editor.get_content(), "unsaved writing");
+    }
 
     #[test]
     fn cloud_restore_snapshot_preserves_previous_content() {

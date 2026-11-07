@@ -59,7 +59,21 @@ packages and release notes.
 4. Open **文件 → 写作统计…**, **文件 → 版本历史…**, or **插件 → 管理插件…** to explore
    the tools around your document.
 
-Use **文件 → 关于纸壳** to check the installed version.
+Use **文件 → 关于纸壳** to check the installed version and update the app.
+
+### App updates
+
+Paper Shell checks GitHub for a newer stable release in the background at startup. When
+an update is available, **文件 → 关于纸壳 · 有新版本** opens the update controls. You can also
+check manually in the About window. Choose **下载更新**, then **安装并重启** when ready;
+the app verifies the package against the release's SHA-256 checksums before offering to
+install it. Unsaved writing goes through the usual save/discard/cancel confirmation,
+and the current saved file reopens after restart. Other open windows keep running.
+
+Updates use the macOS Universal app bundle or the Linux/Windows x86_64 executable.
+Install the app in a writable location first; macOS updates require a packaged `.app`
+outside the DMG. Network errors can be retried from About, which also links to the
+release page for manual installation. Drafts, prereleases, and older versions are skipped.
 
 ## Features
 

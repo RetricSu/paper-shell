@@ -515,7 +515,7 @@ impl CloudBackupDialog {
                     ui.add(
                         egui::TextEdit::singleline(&mut self.config.encryption_password)
                             .password(!self.show_enc_password)
-                            .hint_text("仅保留在本次会话"),
+                            .hint_text("输入原密码，保存后本机记住"),
                     );
                     if ui
                         .button(if self.show_enc_password {
@@ -531,7 +531,7 @@ impl CloudBackupDialog {
                 });
                 ui.label(
                     RichText::new(
-                        "加密密码不明文写入配置文件，重启后需重新输入。请牢记密码，丢失无法解密。",
+                        "点击「保存配置」后，密码会以明文保存在本机配置中，不会上传到备份服务器。已有备份请使用原密码；请另行妥善保管密码。",
                     )
                     .small()
                     .color(Color32::from_rgb(180, 140, 60)),

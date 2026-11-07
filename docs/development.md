@@ -117,8 +117,10 @@ version's packages with a different build; publish a new version instead.
 
 Downloads stream to a temporary directory, with size limits, checksum verification,
 and rejection of archive traversal and symlinks. On macOS, the bundle identifier,
-bundle version, and code signature are also checked; installation stages beside the
-current app and restores the old bundle if the final rename fails. Other platforms
+bundle version, and code signature are also checked; the verified replacement's quarantine
+attribute is removed before installation so ad-hoc signed updates do not repeat the
+browser-download Gatekeeper prompt. Installation stages beside the current app and restores
+the old bundle if the final rename fails. Other platforms
 use `self-replace` for executable replacement. Installing happens after the document
 save/discard/cancel flow, then eframe closes and restarts the updated executable with
 the current saved file. The update affects the installation shared by all windows;

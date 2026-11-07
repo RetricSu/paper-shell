@@ -524,6 +524,9 @@ fn install_prepared(update: &PreparedUpdate) -> Result<PathBuf, String> {
             .map_err(|e| format!("应用目录不可写，请将应用移出磁盘映像或手动安装：{e}"))?;
         let replacement = stage.path().join("Paper Shell.app");
         copy_bundle(&payload.join("Paper Shell.app"), &replacement).map_err(|e| e.to_string())?;
+        // The payload has passed checksum and code-signature validation. Do not make
+        // users repeat the browser-download Gatekeeper prompt for every update.
+        clear_quarantine(&replacement)?;
         replace_bundle(&replacement, &target, stage)?;
         Ok(target.join("Contents/MacOS/paper-shell"))
     }
@@ -571,6 +574,16 @@ fn copy_bundle(source: &Path, destination: &Path) -> std::io::Result<()> {
         } else {
             fs::copy(entry.path(), output)?;
         }
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn clear_quarantine(bundle: &Path) -> Result<(), String> {
+    const QUARANTINE: &str = "com.apple.quarantine";
+    let attributes = xattr::list(bundle).map_err(|e| format!("无法读取应用隔离属性：{e}"))?;
+    if attributes.into_iter().any(|name| name == QUARANTINE) {
+        xattr::remove(bundle, QUARANTINE).map_err(|e| format!("无法清除应用隔离属性：{e}"))?;
     }
     Ok(())
 }
@@ -855,6 +868,22 @@ mod tests {
         )
         .unwrap();
         validate_payload(&copied, &Version::new(1, 0, 0)).unwrap();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_quarantine_removal_is_idempotent() {
+        let root = tempfile::tempdir().unwrap();
+        let bundle = root.path().join("Paper Shell.app");
+        fs::create_dir(&bundle).unwrap();
+        xattr::set(&bundle, "com.apple.quarantine", b"test").unwrap();
+        clear_quarantine(&bundle).unwrap();
+        assert!(
+            xattr::get(&bundle, "com.apple.quarantine")
+                .unwrap()
+                .is_none()
+        );
+        clear_quarantine(&bundle).unwrap();
     }
 
     #[test]

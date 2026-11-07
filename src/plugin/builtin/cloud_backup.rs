@@ -65,8 +65,8 @@ pub struct CloudBackupConfig {
     pub remote_filename: String,
     /// Whether end-to-end encryption is enabled
     pub enable_encryption: bool,
-    /// Encryption password / passphrase (session-only, not stored in plaintext on disk)
-    #[serde(skip)]
+    /// Encryption password / passphrase, saved in the local app config only.
+    /// Remote backups serialize BackupEnvelope instead and never include this field.
     pub encryption_password: String,
     /// Last backup timestamp (for UI display)
     pub last_backup_time: Option<String>,
@@ -910,7 +910,21 @@ mod tests {
         .unwrap();
         assert!(upload_result.contains("云端备份成功"));
 
-        let downloaded = download_backup(&config, &target_url).unwrap();
+        let body = stored_body.lock().unwrap().clone();
+        let envelope: BackupEnvelope = serde_json::from_slice(&body).unwrap();
+        assert!(envelope.encrypted);
+        assert!(envelope.payload.is_none());
+        assert!(
+            !String::from_utf8(body)
+                .unwrap()
+                .contains(&config.encryption_password)
+        );
+
+        // An existing remote backup remains readable after saving and reloading
+        // the local password, without uploading or re-encrypting it again.
+        let saved = toml::to_string(&config).unwrap();
+        let reloaded: CloudBackupConfig = toml::from_str(&saved).unwrap();
+        let downloaded = download_backup(&reloaded, &target_url).unwrap();
         assert_eq!(downloaded.filename, "doc.md");
         assert_eq!(downloaded.doc_id, "doc123");
         assert_eq!(

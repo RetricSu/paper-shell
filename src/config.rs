@@ -317,15 +317,35 @@ mod tests {
         settings.cloud_backup.enable_encryption = true;
         settings.cloud_backup.encryption_password = "test_pass".to_string();
 
-        let serialized = toml::to_string(&settings).unwrap();
-        assert!(!serialized.contains("test_pass"));
-        let reloaded: Settings = toml::from_str(&serialized).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.toml");
+        confy::store_path(&path, &settings).unwrap();
+        let reloaded: Settings = confy::load_path(&path).unwrap();
         assert_eq!(
             reloaded.cloud_backup.server_url,
             "https://dav.example.com/papershell/"
         );
         assert!(reloaded.cloud_backup.enable_encryption);
-        assert_eq!(reloaded.cloud_backup.encryption_password, "");
+        assert_eq!(reloaded.cloud_backup.encryption_password, "test_pass");
+
+        // Older versions omitted the password: ask for it once, retaining the
+        // existing server and encryption settings.
+        let legacy: Settings = toml::from_str(
+            "[cloud_backup]\nserver_url = 'https://dav.example.com/papershell/'\nenable_encryption = true\n",
+        )
+        .unwrap();
+        assert_eq!(
+            legacy.cloud_backup.server_url,
+            settings.cloud_backup.server_url
+        );
+        assert!(legacy.cloud_backup.enable_encryption);
+        assert!(legacy.cloud_backup.encryption_password.is_empty());
+
+        // Clearing the password must also survive restarting the app.
+        settings.cloud_backup.encryption_password.clear();
+        confy::store_path(&path, &settings).unwrap();
+        let cleared: Settings = confy::load_path(&path).unwrap();
+        assert!(cleared.cloud_backup.encryption_password.is_empty());
     }
 
     #[test]

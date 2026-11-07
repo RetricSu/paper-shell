@@ -749,8 +749,7 @@ impl PaperShellApp {
             PluginManagerAction::Configure(id) => match id.as_str() {
                 "cloud_backup" => {
                     self.cloud_backup_dialog
-                        .open(&self.config.settings.cloud_backup);
-                    ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Focus);
+                        .open(ctx, &self.config.settings.cloud_backup);
                 }
                 "github_publish" => {
                     self.plugin_config_window
@@ -1065,7 +1064,7 @@ impl eframe::App for PaperShellApp {
                             self.file_error = Some(format!("插件“{id}”不存在或已禁用"));
                         } else if id == "cloud_backup" {
                             self.cloud_backup_dialog
-                                .open(&self.config.settings.cloud_backup);
+                                .open(ctx, &self.config.settings.cloud_backup);
                         } else if id == "github_publish" {
                             if self.config.settings.github_publish.repo.trim().is_empty() {
                                 self.plugin_config_window
@@ -1105,7 +1104,7 @@ impl eframe::App for PaperShellApp {
                     crate::ui::title_bar::TitleBarAction::ConfigurePlugin(id) => {
                         if id == "cloud_backup" {
                             self.cloud_backup_dialog
-                                .open(&self.config.settings.cloud_backup);
+                                .open(ctx, &self.config.settings.cloud_backup);
                         } else if id == "github_publish" {
                             self.plugin_config_window
                                 .open(&self.config.settings.github_publish, false);

@@ -91,20 +91,9 @@ impl SkinRenderer {
         }
     }
 
-    /// Paint background color and optional background image behind editor content.
+    /// Paint optional background image behind editor content.
     pub fn paint_background(&mut self, ui: &mut Ui, skin: &Skin, rect: Rect) {
-        let corner_radius = skin.effects.corner_radius.max(0.0);
-
-        // 1. Paint background fill color
-        if let Some(ref hex) = skin.colors.editor_background_color
-            && let Some(color) = parse_hex_color(hex)
-        {
-            let opacity = skin.effects.editor_opacity.clamp(0.0, 1.0);
-            let fill = color.gamma_multiply(opacity);
-            ui.painter().rect_filled(rect, corner_radius, fill);
-        }
-
-        // 2. Paint background image if available
+        // Paint background image if available
         if let Some(texture) = self.get_or_load_texture(ui.ctx(), skin) {
             let tex_size = texture.size_vec2();
             if tex_size.x > 0.0 && tex_size.y > 0.0 {

@@ -91,7 +91,7 @@ impl PluginManagerWindow {
             tune_line_spacing: 1.5,
             tune_font_color: "#1A1A1A".to_string(),
             tune_item_spacing: 8.0,
-            tune_editor_padding: 8.0,
+            tune_editor_padding: 2.0,
             tune_bg_opacity: 0.25,
             tune_editor_opacity: 1.0,
             tune_corner_radius: 0.0,

@@ -1445,11 +1445,23 @@ impl eframe::App for PaperShellApp {
 
         let current_skin = self.skin_manager.current_skin();
 
+        let editor_bg = current_skin
+            .colors
+            .editor_background_color
+            .as_deref()
+            .and_then(crate::config::parse_hex_color)
+            .unwrap_or(ctx.style().visuals.panel_fill);
+        let editor_fill = if current_skin.effects.editor_opacity < 1.0 {
+            editor_bg.gamma_multiply(current_skin.effects.editor_opacity.clamp(0.0, 1.0))
+        } else {
+            editor_bg
+        };
+
         // Main Content
         egui::CentralPanel::default()
             .frame(
                 egui::Frame::central_panel(&ctx.style())
-                    .fill(egui::Color32::TRANSPARENT)
+                    .fill(editor_fill)
                     .inner_margin(egui::Margin {
                         left: current_skin.spacing.editor_padding_left as i8,
                         right: current_skin.spacing.editor_padding_right as i8,
@@ -2204,5 +2216,44 @@ mod final_integration_tests {
         // 5. Uninstall custom skin reverts to default
         assert!(app.skin_manager.uninstall_skin("user_summer_skin").is_ok());
         assert_eq!(app.skin_manager.current_skin_id(), "classic_paper");
+    }
+
+    #[test]
+    fn test_central_panel_background_is_solid_without_transparent_borders() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut app = PaperShellApp {
+            skin_manager: crate::skin::SkinManager::new(
+                temp_dir.path().to_path_buf(),
+                "classic_paper".to_string(),
+            ),
+            ..Default::default()
+        };
+        let ctx = egui::Context::default();
+        let mut frame = eframe::Frame::_new_kittest();
+
+        let screen_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        let output = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(screen_rect),
+                ..Default::default()
+            },
+            |ctx| {
+                eframe::App::update(&mut app, ctx, &mut frame);
+            },
+        );
+
+        let has_solid_central_panel = output.shapes.iter().any(|clipped| {
+            if let egui::epaint::Shape::Rect(rect_shape) = &clipped.shape {
+                rect_shape.rect.width() >= 700.0
+                    && rect_shape.rect.height() >= 500.0
+                    && rect_shape.fill == egui::Color32::from_rgb(255, 255, 255)
+            } else {
+                false
+            }
+        });
+        assert!(
+            has_solid_central_panel,
+            "CentralPanel must have solid fill covering the entire area without transparent borders"
+        );
     }
 }

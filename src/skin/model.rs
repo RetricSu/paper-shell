@@ -49,11 +49,11 @@ fn default_window_margin() -> f32 {
 }
 
 fn default_editor_padding_left() -> f32 {
-    8.0
+    2.0
 }
 
 fn default_editor_padding_right() -> f32 {
-    8.0
+    6.0
 }
 
 fn default_editor_padding_top() -> f32 {

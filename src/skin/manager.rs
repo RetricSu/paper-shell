@@ -140,8 +140,7 @@ impl SkinManager {
         if !target_dir.starts_with(&self.skins_dir) || target_dir == self.skins_dir {
             return Err("皮肤 ID 导致路径越界".to_string());
         }
-        std::fs::create_dir_all(&target_dir)
-            .map_err(|e| format!("创建皮肤目录失败: {e}"))?;
+        std::fs::create_dir_all(&target_dir).map_err(|e| format!("创建皮肤目录失败: {e}"))?;
 
         let toml_str = skin
             .to_toml_string()

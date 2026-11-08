@@ -86,7 +86,8 @@ pub fn is_valid_skin_id(id: &str) -> bool {
     !s.is_empty()
         && s.len() <= 64
         && !s.contains(['/', '\\', ':', '\0', '.'])
-        && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
 
 /// Validates that an asset filename contains only safe characters and has an image extension.
@@ -523,7 +524,9 @@ impl Skin {
         if let Some(ref bg_img) = self.effects.background_image
             && !is_valid_asset_filename(bg_img)
         {
-            return Err("背景图片文件名无效：不能包含路径分隔符，必须以合法图片后缀结尾".to_string());
+            return Err(
+                "背景图片文件名无效：不能包含路径分隔符，必须以合法图片后缀结尾".to_string(),
+            );
         }
         if self.typography.font_size <= 0.0 || self.typography.font_size > 72.0 {
             return Err("字体大小必须在 1 到 72 之间".to_string());
@@ -539,8 +542,7 @@ impl Skin {
     }
 
     pub fn from_toml_str(content: &str) -> Result<Self, String> {
-        let skin: Skin =
-            toml::from_str(content).map_err(|e| format!("解析皮肤 TOML 失败: {e}"))?;
+        let skin: Skin = toml::from_str(content).map_err(|e| format!("解析皮肤 TOML 失败: {e}"))?;
         skin.validate()?;
         Ok(skin)
     }
@@ -584,15 +586,13 @@ impl Skin {
             let toml_str = export_skin
                 .to_toml_string()
                 .map_err(|e| format!("序列化皮肤失败: {e}"))?;
-            std::fs::write(target_path, toml_str)
-                .map_err(|e| format!("写入皮肤文件失败: {e}"))?;
+            std::fs::write(target_path, toml_str).map_err(|e| format!("写入皮肤文件失败: {e}"))?;
             Ok(())
         }
     }
 
     fn export_to_zip(&self, target_path: &Path) -> Result<(), String> {
-        let file = File::create(target_path)
-            .map_err(|e| format!("创建压缩包失败: {e}"))?;
+        let file = File::create(target_path).map_err(|e| format!("创建压缩包失败: {e}"))?;
         let mut zip = zip::ZipWriter::new(file);
         let options = zip::write::SimpleFileOptions::default()
             .compression_method(zip::CompressionMethod::Deflated);
@@ -666,8 +666,7 @@ impl Skin {
             if !target_dir.starts_with(destination_dir) || target_dir == destination_dir {
                 return Err("皮肤 ID 导致路径越界".to_string());
             }
-            std::fs::create_dir_all(&target_dir)
-                .map_err(|e| format!("创建皮肤目录失败: {e}"))?;
+            std::fs::create_dir_all(&target_dir).map_err(|e| format!("创建皮肤目录失败: {e}"))?;
 
             // Copy all files from source to destination safely
             if let Ok(entries) = std::fs::read_dir(source_path) {
@@ -694,10 +693,10 @@ impl Skin {
 
             if ext == "zip" || ext == "paperskin" {
                 // Extract zip archive
-                let file = File::open(source_path)
-                    .map_err(|e| format!("打开皮肤压缩包失败: {e}"))?;
-                let mut archive = zip::ZipArchive::new(file)
-                    .map_err(|e| format!("读取皮肤压缩包失败: {e}"))?;
+                let file =
+                    File::open(source_path).map_err(|e| format!("打开皮肤压缩包失败: {e}"))?;
+                let mut archive =
+                    zip::ZipArchive::new(file).map_err(|e| format!("读取皮肤压缩包失败: {e}"))?;
 
                 if archive.len() > MAX_ZIP_ENTRIES {
                     return Err(format!("压缩包条目过多（上限 {} 项）", MAX_ZIP_ENTRIES));
@@ -709,7 +708,11 @@ impl Skin {
                     let mut file = archive
                         .by_index(i)
                         .map_err(|e| format!("读取压缩包项失败: {e}"))?;
-                    if file.name().map(|n| n.ends_with("skin.toml")).unwrap_or(false) {
+                    if file
+                        .name()
+                        .map(|n| n.ends_with("skin.toml"))
+                        .unwrap_or(false)
+                    {
                         file.read_to_string(&mut toml_content)
                             .map_err(|e| format!("读取 skin.toml 失败: {e}"))?;
                         break;
@@ -859,8 +862,14 @@ mod tests {
         let deserialized = Skin::from_toml_str(&toml_str).unwrap();
         assert_eq!(parchment.id, deserialized.id);
         assert_eq!(parchment.name, deserialized.name);
-        assert_eq!(parchment.typography.font_size, deserialized.typography.font_size);
-        assert_eq!(parchment.spacing.window_margin, deserialized.spacing.window_margin);
+        assert_eq!(
+            parchment.typography.font_size,
+            deserialized.typography.font_size
+        );
+        assert_eq!(
+            parchment.spacing.window_margin,
+            deserialized.spacing.window_margin
+        );
         assert_eq!(parchment.colors.dark_mode, deserialized.colors.dark_mode);
         assert_eq!(
             parchment.effects.background_image_opacity,
@@ -886,8 +895,18 @@ mod tests {
         let imported = Skin::import_from_file(&zip_path, &dest_dir).unwrap();
         assert_eq!(imported.id, "test_custom_parchment");
         assert_eq!(imported.name, "测试羊皮纸");
-        assert!(dest_dir.join("test_custom_parchment").join("skin.toml").exists());
-        assert!(dest_dir.join("test_custom_parchment").join("bg.png").exists());
+        assert!(
+            dest_dir
+                .join("test_custom_parchment")
+                .join("skin.toml")
+                .exists()
+        );
+        assert!(
+            dest_dir
+                .join("test_custom_parchment")
+                .join("bg.png")
+                .exists()
+        );
     }
 
     #[test]

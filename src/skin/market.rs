@@ -1,6 +1,6 @@
 use super::model::{
-    is_valid_asset_filename, is_valid_skin_id, Skin, SkinColors, SkinEffects, SkinSpacing,
-    SkinTypography,
+    Skin, SkinColors, SkinEffects, SkinSpacing, SkinTypography, is_valid_asset_filename,
+    is_valid_skin_id,
 };
 use serde::{Deserialize, Serialize};
 use std::io::Read;
@@ -307,8 +307,7 @@ impl SkinMarketClient {
                                         .get(&raw_toml_url)
                                         .header("User-Agent", "paper-shell-desktop")
                                         .call()
-                                        && let Ok(toml_str) =
-                                            toml_resp.body_mut().read_to_string()
+                                        && let Ok(toml_str) = toml_resp.body_mut().read_to_string()
                                         && let Ok(mut skin) = Skin::from_toml_str(&toml_str)
                                     {
                                         skin.builtin = false;
@@ -337,9 +336,7 @@ impl SkinMarketClient {
                                             is_installed,
                                         });
                                     }
-                                } else if item.item_type == "file"
-                                    && item.name.ends_with(".toml")
-                                {
+                                } else if item.item_type == "file" && item.name.ends_with(".toml") {
                                     let download_url = item.download_url.unwrap_or_else(|| {
                                         format!(
                                             "https://raw.githubusercontent.com/{}/{}/{}/{}/{}",
@@ -350,8 +347,7 @@ impl SkinMarketClient {
                                         .get(&download_url)
                                         .header("User-Agent", "paper-shell-desktop")
                                         .call()
-                                        && let Ok(toml_str) =
-                                            toml_resp.body_mut().read_to_string()
+                                        && let Ok(toml_str) = toml_resp.body_mut().read_to_string()
                                         && let Ok(mut skin) = Skin::from_toml_str(&toml_str)
                                     {
                                         skin.builtin = false;
@@ -417,8 +413,7 @@ impl SkinMarketClient {
         if !target_dir.starts_with(skins_dir) || target_dir == skins_dir {
             return Err("不安全的皮肤安装路径".to_string());
         }
-        std::fs::create_dir_all(&target_dir)
-            .map_err(|e| format!("创建皮肤目录失败: {e}"))?;
+        std::fs::create_dir_all(&target_dir).map_err(|e| format!("创建皮肤目录失败: {e}"))?;
 
         let agent = http_agent();
 
@@ -446,23 +441,21 @@ impl SkinMarketClient {
         if let Some(ref img_url) = market_skin.image_url
             && let Some(ref img_name) = market_skin.skin.effects.background_image
             && is_valid_asset_filename(img_name)
-        {
-            if let Ok(mut resp) = agent
+            && let Ok(mut resp) = agent
                 .get(img_url)
                 .header("User-Agent", "paper-shell-desktop")
                 .call()
+        {
+            let mut bytes = Vec::new();
+            if resp
+                .body_mut()
+                .as_reader()
+                .take(MAX_IMAGE_DOWNLOAD_SIZE as u64)
+                .read_to_end(&mut bytes)
+                .is_ok()
+                && !bytes.is_empty()
             {
-                let mut bytes = Vec::new();
-                if resp
-                    .body_mut()
-                    .as_reader()
-                    .take(MAX_IMAGE_DOWNLOAD_SIZE as u64)
-                    .read_to_end(&mut bytes)
-                    .is_ok()
-                    && !bytes.is_empty()
-                {
-                    let _ = std::fs::write(target_dir.join(img_name), bytes);
-                }
+                let _ = std::fs::write(target_dir.join(img_name), bytes);
             }
         }
 
@@ -495,7 +488,9 @@ mod tests {
         let templates = SkinMarketClient::community_templates();
         let target = &templates[0];
 
-        let installed = client.download_and_install(target, temp_dir.path()).unwrap();
+        let installed = client
+            .download_and_install(target, temp_dir.path())
+            .unwrap();
         assert_eq!(installed.id, target.id);
         assert!(temp_dir.path().join(&target.id).join("skin.toml").exists());
     }

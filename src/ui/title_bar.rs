@@ -654,10 +654,7 @@ impl TitleBar {
                                 action = Some(TitleBarAction::ImportSkin);
                             }
                             if ui
-                                .button(format!(
-                                    "{} 导出当前皮肤…",
-                                    egui_phosphor::regular::EXPORT
-                                ))
+                                .button(format!("{} 导出当前皮肤…", egui_phosphor::regular::EXPORT))
                                 .clicked()
                             {
                                 action = Some(TitleBarAction::ExportCurrentSkin);
@@ -767,7 +764,10 @@ impl TitleBar {
                                 ui.close();
                             }
                             if ui
-                                .button(format!("{} 皮肤市场与管理…", egui_phosphor::regular::PALETTE))
+                                .button(format!(
+                                    "{} 皮肤市场与管理…",
+                                    egui_phosphor::regular::PALETTE
+                                ))
                                 .on_hover_text("管理皮肤、从 GitHub 市场安装或导入导出")
                                 .clicked()
                             {

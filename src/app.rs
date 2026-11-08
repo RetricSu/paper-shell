@@ -122,10 +122,8 @@ impl Default for PaperShellApp {
         let sidebar = crate::ui::sidebar::Sidebar::new(workspace_state);
 
         let skins_dir = config.data_dir().join("skins");
-        let skin_manager = crate::skin::SkinManager::new(
-            skins_dir,
-            config.settings.current_skin.clone(),
-        );
+        let skin_manager =
+            crate::skin::SkinManager::new(skins_dir, config.settings.current_skin.clone());
         let skin_market_client = crate::skin::SkinMarketClient::new(
             config.settings.skin_market_repo.clone(),
             config.settings.skin_market_branch.clone(),
@@ -600,8 +598,10 @@ impl PaperShellApp {
                         let count = skins.len();
                         self.skin_market_client.cached_skins = skins;
                         self.skin_market_client.last_error = None;
-                        self.plugin_manager_window
-                            .set_status(false, format!("已成功从 GitHub 仓库拉取 {} 款皮肤", count));
+                        self.plugin_manager_window.set_status(
+                            false,
+                            format!("已成功从 GitHub 仓库拉取 {} 款皮肤", count),
+                        );
                     }
                     Err(err) => {
                         self.skin_market_client.last_error = Some(err.clone());
@@ -890,17 +890,15 @@ impl PaperShellApp {
             PluginManagerAction::ExportCurrentSettingsAsSkin => {
                 self.export_current_skin_dialog();
             }
-            PluginManagerAction::UninstallSkin(id) => {
-                match self.skin_manager.uninstall_skin(&id) {
-                    Ok(()) => {
-                        let current_id = self.skin_manager.current_skin_id().to_string();
-                        self.apply_skin(ctx, &current_id);
-                        self.plugin_manager_window
-                            .set_status(false, format!("皮肤“{id}”已卸载"));
-                    }
-                    Err(error) => self.plugin_manager_window.set_status(true, error),
+            PluginManagerAction::UninstallSkin(id) => match self.skin_manager.uninstall_skin(&id) {
+                Ok(()) => {
+                    let current_id = self.skin_manager.current_skin_id().to_string();
+                    self.apply_skin(ctx, &current_id);
+                    self.plugin_manager_window
+                        .set_status(false, format!("皮肤“{id}”已卸载"));
                 }
-            }
+                Err(error) => self.plugin_manager_window.set_status(true, error),
+            },
             PluginManagerAction::SaveCustomSkin(skin) => {
                 let skin_name = skin.name.clone();
                 match self.skin_manager.save_custom_skin(skin) {
@@ -935,10 +933,10 @@ impl PaperShellApp {
             }
             PluginManagerAction::InstallMarketSkin(market_skin) => {
                 let name = market_skin.name.clone();
-                match self.skin_market_client.download_and_install(
-                    &market_skin,
-                    self.skin_manager.skins_dir(),
-                ) {
+                match self
+                    .skin_market_client
+                    .download_and_install(&market_skin, self.skin_manager.skins_dir())
+                {
                     Ok(installed) => {
                         self.skin_manager.rescan();
                         self.apply_skin(ctx, &installed.id);
@@ -2161,11 +2159,13 @@ mod final_integration_tests {
     #[test]
     fn test_skin_workflow_apply_and_custom_save() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut app = PaperShellApp::default();
-        app.skin_manager = crate::skin::SkinManager::new(
-            temp_dir.path().to_path_buf(),
-            "classic_paper".to_string(),
-        );
+        let mut app = PaperShellApp {
+            skin_manager: crate::skin::SkinManager::new(
+                temp_dir.path().to_path_buf(),
+                "classic_paper".to_string(),
+            ),
+            ..Default::default()
+        };
         let ctx = egui::Context::default();
 
         // 1. Initial skin is classic_paper

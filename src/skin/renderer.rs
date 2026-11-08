@@ -1,7 +1,9 @@
 use super::model::Skin;
 use crate::config::parse_hex_color;
 use base64::Engine;
-use egui::{Color32, Context, Pos2, Rect, Stroke, Style, TextureHandle, TextureOptions, Ui, Vec2, Visuals};
+use egui::{
+    Color32, Context, Pos2, Rect, Stroke, Style, TextureHandle, TextureOptions, Ui, Vec2, Visuals,
+};
 
 pub struct SkinRenderer {
     cached_texture: Option<(String, TextureHandle)>,
@@ -21,11 +23,7 @@ impl SkinRenderer {
     }
 
     /// Load or retrieve the background image texture for this skin.
-    pub fn get_or_load_texture(
-        &mut self,
-        ctx: &Context,
-        skin: &Skin,
-    ) -> Option<&TextureHandle> {
+    pub fn get_or_load_texture(&mut self, ctx: &Context, skin: &Skin) -> Option<&TextureHandle> {
         let key = if let Some(ref data) = skin.effects.background_image_data {
             format!("{}:b64:{}", skin.id, data.len())
         } else if let Some(ref name) = skin.effects.background_image {
@@ -68,7 +66,11 @@ impl SkinRenderer {
             let rgba = img.to_rgba8();
             let (width, height) = rgba.dimensions();
             if width > 4096 || height > 4096 {
-                tracing::warn!("Background image dimensions {}x{} exceed 4096 limit, skipping", width, height);
+                tracing::warn!(
+                    "Background image dimensions {}x{} exceed 4096 limit, skipping",
+                    width,
+                    height
+                );
                 self.cached_texture = None;
                 return None;
             }
@@ -148,7 +150,7 @@ impl SkinRenderer {
                             Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
                         )
                     }
-                    "cover" | _ => {
+                    _ => {
                         // Fit to cover entire rect with clipping
                         let scale = (rect.width() / tex_size.x).max(rect.height() / tex_size.y);
                         let draw_size = tex_size * scale;
@@ -265,7 +267,10 @@ mod tests {
         assert_eq!(ctx.style().spacing.item_spacing.x, 12.0);
         assert_eq!(ctx.style().spacing.item_spacing.y, 10.0);
         assert!(ctx.style().visuals.dark_mode);
-        assert_eq!(ctx.style().visuals.window_corner_radius, egui::CornerRadius::same(4));
+        assert_eq!(
+            ctx.style().visuals.window_corner_radius,
+            egui::CornerRadius::same(4)
+        );
     }
 
     #[test]

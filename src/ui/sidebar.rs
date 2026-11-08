@@ -188,106 +188,104 @@ impl Sidebar {
             side_panel = side_panel.frame(egui::Frame::side_top_panel(&ctx.style()).fill(color));
         }
         side_panel.show(ctx, |ui| {
-                ui.spacing_mut().item_spacing = egui::vec2(4.0, 3.0);
-                ui.spacing_mut().indent = 12.0;
-                ui.visuals_mut().indent_has_left_vline = false;
-                // Register behind the rows so their own interactions take precedence.
-                let blank_area = ui.interact(
-                    ui.max_rect(),
-                    ui.id().with("workspace_blank"),
-                    egui::Sense::click(),
-                );
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false, false])
-                    .id_salt("workspace_files")
-                    .show(ui, |ui| {
-                        for root in std::iter::once(default_root)
-                            .chain(custom_roots.iter().map(PathBuf::as_path))
-                        {
-                            let is_default = root == default_root;
-                            let name = if is_default {
-                                "默认工作区".to_string()
-                            } else {
-                                root.file_name()
-                                    .unwrap_or(root.as_os_str())
-                                    .to_string_lossy()
-                                    .into_owned()
-                            };
-                            let (response, open) = ui
-                                .horizontal(|ui| {
-                                    ui.with_layout(
-                                        egui::Layout::right_to_left(egui::Align::Center),
-                                        |ui| {
-                                            if ui
-                                                .add_sized(
-                                                    [22.0, 22.0],
-                                                    egui::Button::new(
-                                                        egui_phosphor::regular::FILE_PLUS,
-                                                    )
-                                                    .frame(false),
+            ui.spacing_mut().item_spacing = egui::vec2(4.0, 3.0);
+            ui.spacing_mut().indent = 12.0;
+            ui.visuals_mut().indent_has_left_vline = false;
+            // Register behind the rows so their own interactions take precedence.
+            let blank_area = ui.interact(
+                ui.max_rect(),
+                ui.id().with("workspace_blank"),
+                egui::Sense::click(),
+            );
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .id_salt("workspace_files")
+                .show(ui, |ui| {
+                    for root in std::iter::once(default_root)
+                        .chain(custom_roots.iter().map(PathBuf::as_path))
+                    {
+                        let is_default = root == default_root;
+                        let name = if is_default {
+                            "默认工作区".to_string()
+                        } else {
+                            root.file_name()
+                                .unwrap_or(root.as_os_str())
+                                .to_string_lossy()
+                                .into_owned()
+                        };
+                        let (response, open) = ui
+                            .horizontal(|ui| {
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        if ui
+                                            .add_sized(
+                                                [22.0, 22.0],
+                                                egui::Button::new(
+                                                    egui_phosphor::regular::FILE_PLUS,
                                                 )
-                                                .on_hover_text(format!("在 {} 中新建文章", name))
-                                                .clicked()
-                                            {
-                                                action = Some(SidebarAction::NewDocument(Some(
-                                                    root.to_path_buf(),
-                                                )));
-                                            }
-                                            ui.with_layout(
-                                                egui::Layout::top_down(egui::Align::Min),
-                                                |ui| self.folder_row(ui, root, &name, true),
+                                                .frame(false),
                                             )
-                                            .inner
-                                        },
-                                    )
-                                    .inner
-                                })
-                                .inner;
-                            response
-                                .on_hover_text(root.display().to_string())
-                                .context_menu(|ui| {
-                                    if ui.button("在此新建文章").clicked() {
-                                        action = Some(SidebarAction::NewDocument(Some(
-                                            root.to_path_buf(),
-                                        )));
-                                        ui.close();
-                                    }
-                                    if !is_default
-                                        && ui
-                                            .button("从侧栏移除")
-                                            .on_hover_text("仅移除入口，保留磁盘文件")
+                                            .on_hover_text(format!("在 {} 中新建文章", name))
                                             .clicked()
-                                    {
-                                        action =
-                                            Some(SidebarAction::RemoveFolder(root.to_path_buf()));
-                                        ui.close();
-                                    }
-                                });
-                            if open {
-                                ui.indent(("workspace_children", root), |ui| {
-                                    self.show_folder(
-                                        ui,
-                                        root,
-                                        default_root,
-                                        current_file,
-                                        0,
-                                        &mut action,
-                                    );
-                                });
-                            }
+                                        {
+                                            action = Some(SidebarAction::NewDocument(Some(
+                                                root.to_path_buf(),
+                                            )));
+                                        }
+                                        ui.with_layout(
+                                            egui::Layout::top_down(egui::Align::Min),
+                                            |ui| self.folder_row(ui, root, &name, true),
+                                        )
+                                        .inner
+                                    },
+                                )
+                                .inner
+                            })
+                            .inner;
+                        response
+                            .on_hover_text(root.display().to_string())
+                            .context_menu(|ui| {
+                                if ui.button("在此新建文章").clicked() {
+                                    action =
+                                        Some(SidebarAction::NewDocument(Some(root.to_path_buf())));
+                                    ui.close();
+                                }
+                                if !is_default
+                                    && ui
+                                        .button("从侧栏移除")
+                                        .on_hover_text("仅移除入口，保留磁盘文件")
+                                        .clicked()
+                                {
+                                    action = Some(SidebarAction::RemoveFolder(root.to_path_buf()));
+                                    ui.close();
+                                }
+                            });
+                        if open {
+                            ui.indent(("workspace_children", root), |ui| {
+                                self.show_folder(
+                                    ui,
+                                    root,
+                                    default_root,
+                                    current_file,
+                                    0,
+                                    &mut action,
+                                );
+                            });
                         }
-                    });
-                blank_area.context_menu(|ui| {
-                    if ui.button("添加文件夹…").clicked() {
-                        action = Some(SidebarAction::OpenFolder);
-                        ui.close();
-                    }
-                    if ui.button("刷新").clicked() {
-                        self.refresh();
-                        ui.close();
                     }
                 });
+            blank_area.context_menu(|ui| {
+                if ui.button("添加文件夹…").clicked() {
+                    action = Some(SidebarAction::OpenFolder);
+                    ui.close();
+                }
+                if ui.button("刷新").clicked() {
+                    self.refresh();
+                    ui.close();
+                }
             });
+        });
         action
     }
 

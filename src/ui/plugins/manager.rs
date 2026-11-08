@@ -195,17 +195,25 @@ impl PluginManagerWindow {
                         }
                         match self.current_tab {
                             ManagerTab::Plugins => {
-                                if let Some(body_action) = self.show_content(ui, plugins, load_errors) {
+                                if let Some(body_action) =
+                                    self.show_content(ui, plugins, load_errors)
+                                {
                                     action = Some(body_action);
                                 }
                             }
                             ManagerTab::Skins => {
-                                if let Some(body_action) = self.show_skins_content(ui, skin_manager.as_deref_mut()) {
+                                if let Some(body_action) =
+                                    self.show_skins_content(ui, skin_manager.as_deref_mut())
+                                {
                                     action = Some(body_action);
                                 }
                             }
                             ManagerTab::Market => {
-                                if let Some(body_action) = self.show_market_content(ui, skin_manager.as_deref_mut(), market_client.as_deref_mut()) {
+                                if let Some(body_action) = self.show_market_content(
+                                    ui,
+                                    skin_manager.as_deref_mut(),
+                                    market_client.as_deref_mut(),
+                                ) {
                                     action = Some(body_action);
                                 }
                             }
@@ -376,7 +384,10 @@ impl PluginManagerWindow {
                             ManagerTab::Skins => {
                                 if quiet_button(
                                     ui,
-                                    format!("{} 导入皮肤…", egui_phosphor::regular::DOWNLOAD_SIMPLE),
+                                    format!(
+                                        "{} 导入皮肤…",
+                                        egui_phosphor::regular::DOWNLOAD_SIMPLE
+                                    ),
                                 )
                                 .on_hover_text("从 .toml, .paperskin 或 .zip 文件导入皮肤")
                                 .clicked()
@@ -404,7 +415,10 @@ impl PluginManagerWindow {
                             ManagerTab::Market => {
                                 if quiet_button(
                                     ui,
-                                    format!("{} 从 GitHub 刷新", egui_phosphor::regular::ARROW_CLOCKWISE),
+                                    format!(
+                                        "{} 从 GitHub 刷新",
+                                        egui_phosphor::regular::ARROW_CLOCKWISE
+                                    ),
                                 )
                                 .on_hover_text("从远程 GitHub 仓库文件夹拉取最新皮肤列表")
                                 .clicked()
@@ -925,10 +939,16 @@ impl PluginManagerWindow {
 
                     ui.horizontal(|ui| {
                         ui.label("字体大小:");
-                        ui.add(egui::Slider::new(&mut self.tune_font_size, 10.0..=32.0).suffix(" pt"));
+                        ui.add(
+                            egui::Slider::new(&mut self.tune_font_size, 10.0..=32.0).suffix(" pt"),
+                        );
                         ui.add_space(8.0);
                         ui.label("行间距:");
-                        ui.add(egui::Slider::new(&mut self.tune_line_spacing, 1.0..=2.5).step_by(0.1).suffix(" x"));
+                        ui.add(
+                            egui::Slider::new(&mut self.tune_line_spacing, 1.0..=2.5)
+                                .step_by(0.1)
+                                .suffix(" x"),
+                        );
                         ui.add_space(8.0);
                         ui.label("字体颜色:");
                         ui.text_edit_singleline(&mut self.tune_font_color);
@@ -936,21 +956,35 @@ impl PluginManagerWindow {
 
                     ui.horizontal(|ui| {
                         ui.label("元素间距:");
-                        ui.add(egui::Slider::new(&mut self.tune_item_spacing, 4.0..=20.0).suffix(" px"));
+                        ui.add(
+                            egui::Slider::new(&mut self.tune_item_spacing, 4.0..=20.0)
+                                .suffix(" px"),
+                        );
                         ui.add_space(8.0);
                         ui.label("编辑边距:");
-                        ui.add(egui::Slider::new(&mut self.tune_editor_padding, 2.0..=24.0).suffix(" px"));
+                        ui.add(
+                            egui::Slider::new(&mut self.tune_editor_padding, 2.0..=24.0)
+                                .suffix(" px"),
+                        );
                     });
 
                     ui.horizontal(|ui| {
                         ui.label("编辑器透明度:");
-                        ui.add(egui::Slider::new(&mut self.tune_editor_opacity, 0.2..=1.0).step_by(0.05));
+                        ui.add(
+                            egui::Slider::new(&mut self.tune_editor_opacity, 0.2..=1.0)
+                                .step_by(0.05),
+                        );
                         ui.add_space(8.0);
                         ui.label("背景图透明度:");
-                        ui.add(egui::Slider::new(&mut self.tune_bg_opacity, 0.0..=1.0).step_by(0.05));
+                        ui.add(
+                            egui::Slider::new(&mut self.tune_bg_opacity, 0.0..=1.0).step_by(0.05),
+                        );
                         ui.add_space(8.0);
                         ui.label("圆角:");
-                        ui.add(egui::Slider::new(&mut self.tune_corner_radius, 0.0..=12.0).suffix(" px"));
+                        ui.add(
+                            egui::Slider::new(&mut self.tune_corner_radius, 0.0..=12.0)
+                                .suffix(" px"),
+                        );
                     });
 
                     ui.horizontal(|ui| {
@@ -981,8 +1015,16 @@ impl PluginManagerWindow {
                                 },
                                 colors: crate::skin::SkinColors {
                                     dark_mode: self.tune_dark_mode,
-                                    background_color: Some(if self.tune_dark_mode { "#16161A".to_string() } else { "#FAFAFA".to_string() }),
-                                    editor_background_color: Some(if self.tune_dark_mode { "#1F1F24".to_string() } else { "#FFFFFF".to_string() }),
+                                    background_color: Some(if self.tune_dark_mode {
+                                        "#16161A".to_string()
+                                    } else {
+                                        "#FAFAFA".to_string()
+                                    }),
+                                    editor_background_color: Some(if self.tune_dark_mode {
+                                        "#1F1F24".to_string()
+                                    } else {
+                                        "#FFFFFF".to_string()
+                                    }),
                                     text_color: Some(self.tune_font_color.clone()),
                                     ..Default::default()
                                 },
@@ -1046,18 +1088,20 @@ impl PluginManagerWindow {
                                 // Row 1: dot, name, tags, action buttons
                                 ui.horizontal(|ui| {
                                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                        if !skin.builtin {
-                                            if quiet_button(
+                                        if !skin.builtin
+                                            && quiet_button(
                                                 ui,
-                                                RichText::new(format!("{} 卸载", egui_phosphor::regular::TRASH))
-                                                    .color(ERROR_TEXT_COLOR),
+                                                RichText::new(format!(
+                                                    "{} 卸载",
+                                                    egui_phosphor::regular::TRASH
+                                                ))
+                                                .color(ERROR_TEXT_COLOR),
                                             )
                                             .on_hover_text("永久删除该自定义皮肤")
                                             .clicked()
-                                            {
-                                                self.confirm_uninstall_skin =
-                                                    Some((skin.id.clone(), skin.name.clone()));
-                                            }
+                                        {
+                                            self.confirm_uninstall_skin =
+                                                Some((skin.id.clone(), skin.name.clone()));
                                         }
 
                                         if quiet_button(
@@ -1067,7 +1111,9 @@ impl PluginManagerWindow {
                                         .on_hover_text("导出该皮肤为 .toml 或 .paperskin")
                                         .clicked()
                                         {
-                                            action = Some(PluginManagerAction::ExportSkin(skin.id.clone()));
+                                            action = Some(PluginManagerAction::ExportSkin(
+                                                skin.id.clone(),
+                                            ));
                                         }
 
                                         if is_current {
@@ -1079,52 +1125,84 @@ impl PluginManagerWindow {
                                                         .strong(),
                                                 ),
                                             );
-                                        } else {
-                                            if action_button(ui, "应用皮肤").clicked() {
-                                                action = Some(PluginManagerAction::SelectSkin(skin.id.clone()));
-                                            }
+                                        } else if action_button(ui, "应用皮肤").clicked() {
+                                            action = Some(PluginManagerAction::SelectSkin(
+                                                skin.id.clone(),
+                                            ));
                                         }
 
-                                        ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                                            // Active indicator dot
-                                            let (dot_rect, _) = ui.allocate_exact_size(
-                                                egui::vec2(10.0, 20.0),
-                                                egui::Sense::hover(),
-                                            );
-                                            let dot_center =
-                                                egui::pos2(dot_rect.left() + 3.5, dot_rect.center().y);
-                                            let dot_color = STATUS_GREEN.gamma_multiply(if is_current {
-                                                0.95
-                                            } else {
-                                                0.35
-                                            });
-                                            if is_current {
-                                                ui.painter().circle_filled(dot_center, 3.0, dot_color);
-                                            } else {
-                                                ui.painter().circle_stroke(
-                                                    dot_center,
-                                                    2.5,
-                                                    egui::Stroke::new(1.0, dot_color),
+                                        ui.with_layout(
+                                            Layout::left_to_right(Align::Center),
+                                            |ui| {
+                                                // Active indicator dot
+                                                let (dot_rect, _) = ui.allocate_exact_size(
+                                                    egui::vec2(10.0, 20.0),
+                                                    egui::Sense::hover(),
                                                 );
-                                            }
+                                                let dot_center = egui::pos2(
+                                                    dot_rect.left() + 3.5,
+                                                    dot_rect.center().y,
+                                                );
+                                                let dot_color =
+                                                    STATUS_GREEN.gamma_multiply(if is_current {
+                                                        0.95
+                                                    } else {
+                                                        0.35
+                                                    });
+                                                if is_current {
+                                                    ui.painter()
+                                                        .circle_filled(dot_center, 3.0, dot_color);
+                                                } else {
+                                                    ui.painter().circle_stroke(
+                                                        dot_center,
+                                                        2.5,
+                                                        egui::Stroke::new(1.0, dot_color),
+                                                    );
+                                                }
 
-                                            ui.label(RichText::new(&skin.name).size(14.0).strong());
-                                            ui.add_space(4.0);
+                                                ui.label(
+                                                    RichText::new(&skin.name).size(14.0).strong(),
+                                                );
+                                                ui.add_space(4.0);
 
-                                            let type_label = if skin.builtin { "内置" } else { "自定义" };
-                                            ui.label(RichText::new(type_label).small().color(text_color.gamma_multiply(0.55)));
+                                                let type_label = if skin.builtin {
+                                                    "内置"
+                                                } else {
+                                                    "自定义"
+                                                };
+                                                ui.label(
+                                                    RichText::new(type_label)
+                                                        .small()
+                                                        .color(text_color.gamma_multiply(0.55)),
+                                                );
 
-                                            let mode_label = if skin.colors.dark_mode { "深色" } else { "浅色" };
-                                            ui.label(RichText::new(mode_label).small().color(text_color.gamma_multiply(0.55)));
+                                                let mode_label = if skin.colors.dark_mode {
+                                                    "深色"
+                                                } else {
+                                                    "浅色"
+                                                };
+                                                ui.label(
+                                                    RichText::new(mode_label)
+                                                        .small()
+                                                        .color(text_color.gamma_multiply(0.55)),
+                                                );
 
-                                            ui.label(RichText::new(format!("v{}", skin.version)).small().color(text_color.gamma_multiply(0.45)));
-                                        });
+                                                ui.label(
+                                                    RichText::new(format!("v{}", skin.version))
+                                                        .small()
+                                                        .color(text_color.gamma_multiply(0.45)),
+                                                );
+                                            },
+                                        );
                                     });
                                 });
 
                                 // Row 2: Description
                                 if !skin.description.is_empty() {
-                                    ui.label(RichText::new(&skin.description).color(text_color.gamma_multiply(0.72)));
+                                    ui.label(
+                                        RichText::new(&skin.description)
+                                            .color(text_color.gamma_multiply(0.72)),
+                                    );
                                 }
 
                                 // Row 3: Meta chips & color swatches
@@ -1135,16 +1213,31 @@ impl PluginManagerWindow {
                                         "字号 {}pt · 行距 {}x",
                                         skin.typography.font_size, skin.typography.line_spacing
                                     );
-                                    ui.label(RichText::new(font_desc).small().color(text_color.gamma_multiply(0.60)));
-
-                                    let padding_desc = format!(
-                                        "内边距 {}px",
-                                        skin.spacing.editor_padding_left
+                                    ui.label(
+                                        RichText::new(font_desc)
+                                            .small()
+                                            .color(text_color.gamma_multiply(0.60)),
                                     );
-                                    ui.label(RichText::new(padding_desc).small().color(text_color.gamma_multiply(0.60)));
 
-                                    if skin.effects.background_image.is_some() || skin.effects.background_image_data.is_some() {
-                                        ui.label(RichText::new(format!("背景图 (透明度 {:.0}%)", skin.effects.background_image_opacity * 100.0)).small().color(STATUS_GREEN));
+                                    let padding_desc =
+                                        format!("内边距 {}px", skin.spacing.editor_padding_left);
+                                    ui.label(
+                                        RichText::new(padding_desc)
+                                            .small()
+                                            .color(text_color.gamma_multiply(0.60)),
+                                    );
+
+                                    if skin.effects.background_image.is_some()
+                                        || skin.effects.background_image_data.is_some()
+                                    {
+                                        ui.label(
+                                            RichText::new(format!(
+                                                "背景图 (透明度 {:.0}%)",
+                                                skin.effects.background_image_opacity * 100.0
+                                            ))
+                                            .small()
+                                            .color(STATUS_GREEN),
+                                        );
                                     }
 
                                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -1271,44 +1364,69 @@ impl PluginManagerWindow {
                                 ui.horizontal(|ui| {
                                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                         if is_installed {
-                                            ui.label(RichText::new("✓ 已安装").color(STATUS_GREEN).strong());
+                                            ui.label(
+                                                RichText::new("✓ 已安装")
+                                                    .color(STATUS_GREEN)
+                                                    .strong(),
+                                            );
                                             if quiet_button(ui, "重新下载").clicked() {
-                                                action = Some(PluginManagerAction::InstallMarketSkin(market_skin.clone()));
+                                                action =
+                                                    Some(PluginManagerAction::InstallMarketSkin(
+                                                        market_skin.clone(),
+                                                    ));
                                             }
-                                        } else {
-                                            if action_button(
-                                                ui,
-                                                format!("{} 安装皮肤", egui_phosphor::regular::DOWNLOAD_SIMPLE),
-                                            )
-                                            .clicked()
-                                            {
-                                                action = Some(PluginManagerAction::InstallMarketSkin(market_skin.clone()));
-                                            }
+                                        } else if action_button(
+                                            ui,
+                                            format!(
+                                                "{} 安装皮肤",
+                                                egui_phosphor::regular::DOWNLOAD_SIMPLE
+                                            ),
+                                        )
+                                        .clicked()
+                                        {
+                                            action = Some(PluginManagerAction::InstallMarketSkin(
+                                                market_skin.clone(),
+                                            ));
                                         }
 
-                                        ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                                            ui.label(RichText::new(&market_skin.name).size(14.0).strong());
-                                            ui.add_space(6.0);
-                                            ui.label(
-                                                RichText::new(format!(
-                                                    "v{} · {}",
-                                                    market_skin.version, market_skin.author
-                                                ))
-                                                .small()
-                                                .color(text_color.gamma_multiply(0.55)),
-                                            );
-                                            let mode_label = if market_skin.skin.colors.dark_mode {
-                                                "深色"
-                                            } else {
-                                                "浅色"
-                                            };
-                                            ui.label(RichText::new(mode_label).small().color(text_color.gamma_multiply(0.50)));
-                                        });
+                                        ui.with_layout(
+                                            Layout::left_to_right(Align::Center),
+                                            |ui| {
+                                                ui.label(
+                                                    RichText::new(&market_skin.name)
+                                                        .size(14.0)
+                                                        .strong(),
+                                                );
+                                                ui.add_space(6.0);
+                                                ui.label(
+                                                    RichText::new(format!(
+                                                        "v{} · {}",
+                                                        market_skin.version, market_skin.author
+                                                    ))
+                                                    .small()
+                                                    .color(text_color.gamma_multiply(0.55)),
+                                                );
+                                                let mode_label =
+                                                    if market_skin.skin.colors.dark_mode {
+                                                        "深色"
+                                                    } else {
+                                                        "浅色"
+                                                    };
+                                                ui.label(
+                                                    RichText::new(mode_label)
+                                                        .small()
+                                                        .color(text_color.gamma_multiply(0.50)),
+                                                );
+                                            },
+                                        );
                                     });
                                 });
 
                                 if !market_skin.description.is_empty() {
-                                    ui.label(RichText::new(&market_skin.description).color(text_color.gamma_multiply(0.72)));
+                                    ui.label(
+                                        RichText::new(&market_skin.description)
+                                            .color(text_color.gamma_multiply(0.72)),
+                                    );
                                 }
 
                                 ui.horizontal(|ui| {
@@ -1316,12 +1434,21 @@ impl PluginManagerWindow {
 
                                     let font_desc = format!(
                                         "字号 {}pt · 行距 {}x",
-                                        market_skin.skin.typography.font_size, market_skin.skin.typography.line_spacing
+                                        market_skin.skin.typography.font_size,
+                                        market_skin.skin.typography.line_spacing
                                     );
-                                    ui.label(RichText::new(font_desc).small().color(text_color.gamma_multiply(0.60)));
+                                    ui.label(
+                                        RichText::new(font_desc)
+                                            .small()
+                                            .color(text_color.gamma_multiply(0.60)),
+                                    );
 
-                                    if market_skin.skin.effects.background_image.is_some() || market_skin.skin.effects.background_image_data.is_some() {
-                                        ui.label(RichText::new("含背景图").small().color(STATUS_GREEN));
+                                    if market_skin.skin.effects.background_image.is_some()
+                                        || market_skin.skin.effects.background_image_data.is_some()
+                                    {
+                                        ui.label(
+                                            RichText::new("含背景图").small().color(STATUS_GREEN),
+                                        );
                                     }
 
                                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -1849,28 +1976,42 @@ mod tests {
         );
         let mut saved = None;
         let _ = ctx.run(egui::RawInput::default(), |ctx| {
-            saved = manager.show(ctx, &plugins, &[], &mut settings, None, None).1;
+            saved = manager
+                .show(ctx, &plugins, &[], &mut settings, None, None)
+                .1;
         });
         assert!(saved.is_none());
         assert!(settings.is_open());
         settings.values.insert("token".into(), "secret".into());
         stage.set(1);
         let _ = ctx.run(egui::RawInput::default(), |ctx| {
-            saved = manager.show(ctx, &plugins, &[], &mut settings, None, None).1;
+            saved = manager
+                .show(ctx, &plugins, &[], &mut settings, None, None)
+                .1;
         });
         assert_eq!(saved.unwrap().values["token"], "secret");
         // A failed persistence attempt keeps the draft in its own window.
         settings.notify_save_error("保存失败".into());
         stage.set(2);
         let _ = ctx.run(egui::RawInput::default(), |ctx| {
-            assert!(manager.show(ctx, &plugins, &[], &mut settings, None, None).1.is_none());
+            assert!(
+                manager
+                    .show(ctx, &plugins, &[], &mut settings, None, None)
+                    .1
+                    .is_none()
+            );
         });
         assert!(!settings.is_open());
         assert!(manager.is_open());
         settings.notify_save_error("重试".into());
         stage.set(3);
         let _ = ctx.run(egui::RawInput::default(), |ctx| {
-            assert!(manager.show(ctx, &plugins, &[], &mut settings, None, None).1.is_none());
+            assert!(
+                manager
+                    .show(ctx, &plugins, &[], &mut settings, None, None)
+                    .1
+                    .is_none()
+            );
         });
         assert!(!settings.is_open());
         assert!(manager.is_open());

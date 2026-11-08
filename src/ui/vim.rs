@@ -35,6 +35,7 @@ pub enum VimAction {
     /// Paste the yank register (or system clipboard when empty) N times.
     Paste {
         count: usize,
+        before: bool,
     },
     OpenSearch,
 }
@@ -54,6 +55,8 @@ pub struct VimState {
     count: Option<usize>,
     operator: Option<Operator>,
     register: String,
+    register_updated: bool,
+    pub visual_start: Option<usize>,
 }
 
 fn key_event(key: Key, modifiers: Modifiers) -> Event {
@@ -242,6 +245,8 @@ impl VimState {
             count: None,
             operator: None,
             register: String::new(),
+            register_updated: false,
+            visual_start: None,
         }
     }
 
@@ -253,6 +258,7 @@ impl VimState {
         self.pending = None;
         self.operator = None;
         self.count = None;
+        self.visual_start = None;
     }
 
     /// Process an explicit Escape event.
@@ -275,6 +281,7 @@ impl VimState {
             }
             VimMode::Visual => {
                 self.mode = VimMode::Normal;
+                self.visual_start = None;
                 VimAction::ClearSelection
             }
         }
@@ -283,6 +290,100 @@ impl VimState {
     /// Yank register contents (empty when nothing was yanked this session).
     pub fn register(&self) -> &str {
         &self.register
+    }
+
+    pub fn set_register(&mut self, text: String) {
+        self.register = text;
+        self.register_updated = true;
+    }
+
+    pub fn take_register_updated(&mut self) -> bool {
+        let updated = self.register_updated;
+        self.register_updated = false;
+        updated
+    }
+
+    pub fn apply_paste(
+        &mut self,
+        content: &str,
+        cursor: usize,
+        count: usize,
+        before: bool,
+    ) -> VimAction {
+        if self.register.is_empty() {
+            return VimAction::None;
+        }
+        let text = self.register.repeat(count.max(1));
+        let chars: Vec<char> = content.chars().collect();
+
+        if text.ends_with('\n') {
+            if chars.is_empty() {
+                return VimAction::ContentChanged {
+                    new_content: text,
+                    new_cursor: 0,
+                };
+            }
+            let cur = cursor.min(chars.len());
+            let line_st = line_start(&chars, cur);
+            let line_en = line_end(&chars, cur);
+
+            if before {
+                let mut new_chars = Vec::with_capacity(chars.len() + text.chars().count());
+                new_chars.extend_from_slice(&chars[..line_st]);
+                new_chars.extend(text.chars());
+                new_chars.extend_from_slice(&chars[line_st..]);
+                let new_content: String = new_chars.into_iter().collect();
+                VimAction::ContentChanged {
+                    new_content,
+                    new_cursor: line_st,
+                }
+            } else {
+                let insert_pos = if line_en < chars.len() {
+                    line_en + 1
+                } else {
+                    chars.len()
+                };
+                let mut new_chars = Vec::with_capacity(chars.len() + text.chars().count() + 1);
+                new_chars.extend_from_slice(&chars[..insert_pos]);
+                if insert_pos == chars.len() && !chars.is_empty() && chars[chars.len() - 1] != '\n'
+                {
+                    new_chars.push('\n');
+                }
+                let new_cursor = new_chars.len();
+                new_chars.extend(text.chars());
+                new_chars.extend_from_slice(&chars[insert_pos..]);
+                let new_content: String = new_chars.into_iter().collect();
+                VimAction::ContentChanged {
+                    new_content,
+                    new_cursor,
+                }
+            }
+        } else {
+            if chars.is_empty() {
+                return VimAction::ContentChanged {
+                    new_content: text,
+                    new_cursor: 0,
+                };
+            }
+            let cur = cursor.min(chars.len());
+            let insert_pos = if before {
+                cur
+            } else if cur < chars.len() && chars[cur] != '\n' {
+                cur + 1
+            } else {
+                cur
+            };
+            let text_char_count = text.chars().count();
+            let mut new_chars = Vec::with_capacity(chars.len() + text_char_count);
+            new_chars.extend_from_slice(&chars[..insert_pos]);
+            new_chars.extend(text.chars());
+            new_chars.extend_from_slice(&chars[insert_pos..]);
+            let new_content: String = new_chars.into_iter().collect();
+            VimAction::ContentChanged {
+                new_content,
+                new_cursor: insert_pos,
+            }
+        }
     }
 
     fn push_repeated(out: &mut Vec<Event>, key: Key, modifiers: Modifiers, count: usize) {
@@ -331,50 +432,67 @@ impl VimState {
     }
 
     /// Apply a pending operator with the given motion char.
-    fn apply_operator(&mut self, content: &str, cursor: usize, c: char, count: usize) -> VimAction {
-        let op = self.operator.take().unwrap();
+    fn apply_operator(
+        &mut self,
+        content: &str,
+        cursor: usize,
+        op: Operator,
+        c: char,
+        count: usize,
+    ) -> VimAction {
         self.count = None;
 
-        // Line-wise dgg / dG: delete whole lines from/to the document edge.
+        // Line-wise dgg / dG / ygg / yG:
         if c == 'g' || c == 'G' {
-            let (text, cur) = if c == 'g' {
-                let line_no = content[..content
-                    .char_indices()
-                    .nth(cursor)
-                    .map(|(i, _)| i)
-                    .unwrap_or(content.len())]
-                    .matches('\n')
-                    .count();
-                vim_dd_count(content, 0, line_no + 1)
+            let line_no = content[..content
+                .char_indices()
+                .nth(cursor)
+                .map(|(i, _)| i)
+                .unwrap_or(content.len())]
+                .matches('\n')
+                .count();
+            if op == Operator::Yank {
+                let text = if c == 'g' {
+                    vim_yank_lines(content, 0, line_no + 1)
+                } else {
+                    vim_yank_lines(content, cursor, usize::MAX / 2)
+                };
+                self.set_register(text.clone());
+                return VimAction::Yank(text);
+            }
+            let (text, cur, deleted) = if c == 'g' {
+                vim_delete_lines(content, 0, line_no + 1)
             } else {
-                vim_dd_count(content, cursor, usize::MAX / 2)
+                vim_delete_lines(content, cursor, usize::MAX / 2)
             };
+            self.set_register(deleted);
             return self.finish_edit(op, text, cur);
         }
 
-        // Line-wise dj / dk: delete current line plus adjacent lines.
+        // Line-wise dj / dk / yj / yk:
         if c == 'j' || c == 'k' {
-            let mut text = content.to_string();
-            let mut cur = cursor;
-            for _ in 0..count {
-                if c == 'j' {
-                    let (t, u) = vim_dd_count(&text, cur, 2);
-                    text = t;
-                    cur = u;
-                } else {
-                    let chars: Vec<char> = text.chars().collect();
-                    let start = line_start(&chars, cur);
-                    if start == 0 {
-                        let (t, u) = vim_dd(&text, cur);
-                        text = t;
-                        cur = u;
-                    } else {
-                        let (t, u) = vim_dd_count(&text, start.saturating_sub(1), 2);
-                        text = t;
-                        cur = u;
+            let chars: Vec<char> = content.chars().collect();
+            let (start_cur, line_cnt) = if c == 'j' {
+                (cursor, count + 1)
+            } else {
+                let mut cur = cursor;
+                for _ in 0..count {
+                    let st = line_start(&chars, cur);
+                    if st == 0 {
+                        cur = 0;
+                        break;
                     }
+                    cur = st - 1;
                 }
+                (cur, count + 1)
+            };
+            if op == Operator::Yank {
+                let text = vim_yank_lines(content, start_cur, line_cnt);
+                self.set_register(text.clone());
+                return VimAction::Yank(text);
             }
+            let (text, cur, deleted) = vim_delete_lines(content, start_cur, line_cnt);
+            self.set_register(deleted);
             return self.finish_edit(op, text, cur);
         }
 
@@ -394,11 +512,9 @@ impl VimState {
             return VimAction::None;
         }
         let removed: String = chars[start..end].iter().collect();
+        self.set_register(removed.clone());
         match op {
-            Operator::Yank => {
-                self.register = removed.clone();
-                VimAction::Yank(removed)
-            }
+            Operator::Yank => VimAction::Yank(removed),
             Operator::Delete | Operator::Change => {
                 let mut new_chars = Vec::with_capacity(chars.len());
                 new_chars.extend_from_slice(&chars[..start]);
@@ -425,6 +541,7 @@ impl VimState {
         focused: bool,
         content: &str,
         cursor: usize,
+        selection: Option<(usize, usize)>,
     ) -> VimAction {
         if !self.enabled || !focused {
             return VimAction::None;
@@ -505,8 +622,13 @@ impl VimState {
                         if c.is_control() {
                             continue;
                         }
-                        let action =
-                            self.handle_char(c, &current_content, current_cursor, &mut out_events);
+                        let action = self.handle_char(
+                            c,
+                            &current_content,
+                            current_cursor,
+                            selection,
+                            &mut out_events,
+                        );
                         match &action {
                             VimAction::None => {}
                             VimAction::ContentChanged {
@@ -542,6 +664,7 @@ impl VimState {
         c: char,
         content: &str,
         cursor: usize,
+        selection: Option<(usize, usize)>,
         out_events: &mut Vec<Event>,
     ) -> VimAction {
         let visual = self.mode == VimMode::Visual;
@@ -557,9 +680,9 @@ impl VimState {
         if self.pending == Some('g') {
             self.pending = None;
             if c == 'g' {
-                if self.operator.is_some() {
+                if let Some(op) = self.operator.take() {
                     let count = self.take_count();
-                    return self.apply_operator(content, cursor, 'g', count);
+                    return self.apply_operator(content, cursor, op, 'g', count);
                 }
                 Self::motion_event(out_events, 'g', visual, 1);
                 return VimAction::None;
@@ -567,49 +690,147 @@ impl VimState {
         }
 
         // Pending operator: the next char is the motion.
-        if self.operator.is_some() {
+        if let Some(op) = self.operator.take() {
             let same = matches!(
-                (self.operator, c),
-                (Some(Operator::Delete), 'd')
-                    | (Some(Operator::Change), 'c')
-                    | (Some(Operator::Yank), 'y')
+                (op, c),
+                (Operator::Delete, 'd') | (Operator::Change, 'c') | (Operator::Yank, 'y')
             );
             if same {
                 let count = self.take_count();
-                let (text, cur) = vim_dd_count(content, cursor, count);
-                let op = self.operator.take().unwrap();
-                return self.finish_edit(op, text, cur);
+                match op {
+                    Operator::Yank => {
+                        let text = vim_yank_lines(content, cursor, count);
+                        self.set_register(text.clone());
+                        return VimAction::Yank(text);
+                    }
+                    Operator::Delete => {
+                        let (text, cur, deleted) = vim_delete_lines(content, cursor, count);
+                        self.set_register(deleted);
+                        return self.finish_edit(op, text, cur);
+                    }
+                    Operator::Change => {
+                        let (text, cur, deleted) = vim_delete_lines(content, cursor, count);
+                        self.set_register(deleted);
+                        self.mode = VimMode::Insert;
+                        return VimAction::ContentChanged {
+                            new_content: text,
+                            new_cursor: cur,
+                        };
+                    }
+                }
             }
             let count = self.take_count();
-            return self.apply_operator(content, cursor, c, count);
+            return self.apply_operator(content, cursor, op, c, count);
         }
 
         // Visual-mode direct actions.
         if visual {
+            let resolved_selection = selection.or_else(|| {
+                self.visual_start.map(|v_start| {
+                    (
+                        v_start.min(cursor),
+                        v_start
+                            .max(cursor)
+                            .saturating_add(1)
+                            .min(content.chars().count()),
+                    )
+                })
+            });
+
             match c {
                 'v' => {
                     self.mode = VimMode::Normal;
+                    self.visual_start = None;
                     return VimAction::ClearSelection;
                 }
                 'd' | 'x' => {
                     self.mode = VimMode::Normal;
-                    out_events.push(key_event(Key::Backspace, Modifiers::NONE));
-                    return VimAction::ModeChanged;
+                    self.visual_start = None;
+                    if let Some((start, end)) = resolved_selection
+                        && start < end
+                    {
+                        let chars: Vec<char> = content.chars().collect();
+                        if start < chars.len() {
+                            let end = end.min(chars.len());
+                            let cut_text: String = chars[start..end].iter().collect();
+                            self.set_register(cut_text);
+                            let mut new_chars = Vec::with_capacity(chars.len());
+                            new_chars.extend_from_slice(&chars[..start]);
+                            new_chars.extend_from_slice(&chars[end..]);
+                            let new_content: String = new_chars.into_iter().collect();
+                            return VimAction::ContentChanged {
+                                new_content,
+                                new_cursor: start.min(chars.len().saturating_sub(end - start)),
+                            };
+                        }
+                    }
+                    return VimAction::ClearSelection;
                 }
                 'c' => {
                     self.mode = VimMode::Insert;
-                    out_events.push(key_event(Key::Backspace, Modifiers::NONE));
+                    self.visual_start = None;
+                    if let Some((start, end)) = resolved_selection
+                        && start < end
+                    {
+                        let chars: Vec<char> = content.chars().collect();
+                        if start < chars.len() {
+                            let end = end.min(chars.len());
+                            let cut_text: String = chars[start..end].iter().collect();
+                            self.set_register(cut_text);
+                            let mut new_chars = Vec::with_capacity(chars.len());
+                            new_chars.extend_from_slice(&chars[..start]);
+                            new_chars.extend_from_slice(&chars[end..]);
+                            let new_content: String = new_chars.into_iter().collect();
+                            return VimAction::ContentChanged {
+                                new_content,
+                                new_cursor: start.min(chars.len().saturating_sub(end - start)),
+                            };
+                        }
+                    }
                     return VimAction::ModeChanged;
                 }
                 'y' => {
                     self.mode = VimMode::Normal;
-                    out_events.push(key_event(Key::C, Modifiers::COMMAND));
+                    self.visual_start = None;
+                    if let Some((start, end)) = resolved_selection
+                        && start < end
+                    {
+                        let chars: Vec<char> = content.chars().collect();
+                        if start < chars.len() {
+                            let end = end.min(chars.len());
+                            let yanked: String = chars[start..end].iter().collect();
+                            self.set_register(yanked.clone());
+                            return VimAction::Yank(yanked);
+                        }
+                    }
                     return VimAction::ClearSelection;
                 }
-                'p' => {
+                'p' | 'P' => {
                     self.mode = VimMode::Normal;
+                    self.visual_start = None;
                     let count = self.take_count();
-                    return VimAction::Paste { count };
+                    if self.register.is_empty() {
+                        return VimAction::Paste {
+                            count,
+                            before: c == 'P',
+                        };
+                    }
+                    let paste_text = self.register.repeat(count.max(1));
+                    let (start, end) = resolved_selection.unwrap_or((cursor, cursor));
+                    let chars: Vec<char> = content.chars().collect();
+                    let start = start.min(chars.len());
+                    let end = end.min(chars.len());
+                    let paste_chars: Vec<char> = paste_text.chars().collect();
+                    let mut new_chars = Vec::with_capacity(chars.len() + paste_chars.len());
+                    new_chars.extend_from_slice(&chars[..start]);
+                    new_chars.extend_from_slice(&paste_chars);
+                    new_chars.extend_from_slice(&chars[end..]);
+                    let new_cursor = start + paste_chars.len();
+                    let new_content: String = new_chars.into_iter().collect();
+                    return VimAction::ContentChanged {
+                        new_content,
+                        new_cursor: new_cursor.min(chars.len() + paste_chars.len()),
+                    };
                 }
                 _ => {}
             }
@@ -618,6 +839,7 @@ impl VimState {
         match c {
             'v' if !visual => {
                 self.mode = VimMode::Visual;
+                self.visual_start = Some(cursor);
                 VimAction::ModeChanged
             }
             'g' => {
@@ -666,22 +888,64 @@ impl VimState {
             'x' => {
                 let count = self.take_count();
                 let chars: Vec<char> = content.chars().collect();
-                let mut idx = cursor;
+                if cursor >= chars.len() || chars[cursor] == '\n' {
+                    return VimAction::None;
+                }
+                let mut end = cursor;
                 let mut remaining = count;
-                while remaining > 0 && idx < chars.len() && chars[idx] != '\n' {
-                    out_events.push(key_event(Key::Delete, Modifiers::NONE));
-                    idx += 1;
+                while remaining > 0 && end < chars.len() && chars[end] != '\n' {
+                    end += 1;
                     remaining -= 1;
                 }
-                VimAction::None
+                let cut_text: String = chars[cursor..end].iter().collect();
+                if cut_text.is_empty() {
+                    return VimAction::None;
+                }
+                self.set_register(cut_text);
+                let mut new_chars = Vec::with_capacity(chars.len());
+                new_chars.extend_from_slice(&chars[..cursor]);
+                new_chars.extend_from_slice(&chars[end..]);
+                let new_cursor = if new_chars.is_empty() {
+                    0
+                } else if cursor >= new_chars.len() {
+                    new_chars.len().saturating_sub(1)
+                } else if new_chars[cursor] == '\n' && cursor > 0 && new_chars[cursor - 1] != '\n' {
+                    cursor.saturating_sub(1)
+                } else {
+                    cursor
+                };
+                let new_content: String = new_chars.into_iter().collect();
+                VimAction::ContentChanged {
+                    new_content,
+                    new_cursor,
+                }
             }
             'u' => {
                 out_events.push(key_event(Key::Z, Modifiers::COMMAND));
                 VimAction::None
             }
-            'p' => VimAction::Paste {
-                count: self.take_count(),
-            },
+            'p' => {
+                let count = self.take_count();
+                if self.register.is_empty() {
+                    VimAction::Paste {
+                        count,
+                        before: false,
+                    }
+                } else {
+                    self.apply_paste(content, cursor, count, false)
+                }
+            }
+            'P' => {
+                let count = self.take_count();
+                if self.register.is_empty() {
+                    VimAction::Paste {
+                        count,
+                        before: true,
+                    }
+                } else {
+                    self.apply_paste(content, cursor, count, true)
+                }
+            }
             '/' => VimAction::OpenSearch,
             'i' => {
                 self.mode = VimMode::Insert;
@@ -725,24 +989,14 @@ impl VimState {
 
 /// Delete `count` lines starting at the cursor's line.
 pub fn vim_dd_count(content: &str, cursor_char: usize, count: usize) -> (String, usize) {
-    let mut text = content.to_string();
-    let mut cursor = cursor_char;
-    for _ in 0..count.max(1) {
-        let (new_text, new_cursor) = vim_dd(&text, cursor);
-        text = new_text;
-        cursor = new_cursor;
-        if text.is_empty() {
-            break;
-        }
-    }
+    let (text, cursor, _) = vim_delete_lines(content, cursor_char, count);
     (text, cursor)
 }
 
-/// Delete current line (paragraph). Uses char indices for full Unicode/Chinese safety.
-pub fn vim_dd(content: &str, cursor_char: usize) -> (String, usize) {
+fn vim_delete_single_line(content: &str, cursor_char: usize) -> (String, usize, String) {
     let chars: Vec<char> = content.chars().collect();
     if chars.is_empty() {
-        return (String::new(), 0);
+        return (String::new(), 0, String::new());
     }
 
     let cursor = cursor_char.min(chars.len().saturating_sub(1));
@@ -753,6 +1007,11 @@ pub fn vim_dd(content: &str, cursor_char: usize) -> (String, usize) {
     let mut line_end = cursor;
     while line_end < chars.len() && chars[line_end] != '\n' {
         line_end += 1;
+    }
+
+    let mut deleted: String = chars[line_start..line_end].iter().collect();
+    if line_end < chars.len() || !deleted.ends_with('\n') {
+        deleted.push('\n');
     }
 
     let (del_start, del_end, new_cursor) = if line_end < chars.len() {
@@ -772,7 +1031,59 @@ pub fn vim_dd(content: &str, cursor_char: usize) -> (String, usize) {
     new_chars.extend_from_slice(&chars[..del_start]);
     new_chars.extend_from_slice(&chars[del_end..]);
     let new_cursor = new_cursor.min(new_chars.len());
-    (new_chars.into_iter().collect(), new_cursor)
+    (new_chars.into_iter().collect(), new_cursor, deleted)
+}
+
+pub fn vim_delete_lines(
+    content: &str,
+    cursor_char: usize,
+    count: usize,
+) -> (String, usize, String) {
+    let mut text = content.to_string();
+    let mut cursor = cursor_char;
+    let mut all_deleted = String::new();
+    for _ in 0..count.max(1) {
+        if text.is_empty() {
+            break;
+        }
+        let (new_text, new_cursor, deleted) = vim_delete_single_line(&text, cursor);
+        text = new_text;
+        cursor = new_cursor;
+        all_deleted.push_str(&deleted);
+    }
+    (text, cursor, all_deleted)
+}
+
+pub fn vim_yank_lines(content: &str, cursor_char: usize, count: usize) -> String {
+    let chars: Vec<char> = content.chars().collect();
+    if chars.is_empty() {
+        return String::new();
+    }
+    let cur = cursor_char.min(chars.len().saturating_sub(1));
+    let line_st = line_start(&chars, cur);
+    let mut end = line_st;
+    for i in 0..count.max(1) {
+        while end < chars.len() && chars[end] != '\n' {
+            end += 1;
+        }
+        if end < chars.len() && i + 1 < count {
+            end += 1;
+        }
+    }
+    if end < chars.len() && chars[end] == '\n' {
+        end += 1;
+    }
+    let mut yanked: String = chars[line_st..end].iter().collect();
+    if !yanked.ends_with('\n') {
+        yanked.push('\n');
+    }
+    yanked
+}
+
+/// Delete current line (paragraph). Uses char indices for full Unicode/Chinese safety.
+pub fn vim_dd(content: &str, cursor_char: usize) -> (String, usize) {
+    let (text, cursor, _) = vim_delete_single_line(content, cursor_char);
+    (text, cursor)
 }
 
 /// Open newline below current line and return (new_content, new_cursor_char).
@@ -837,7 +1148,19 @@ mod tests {
         cursor: usize,
     ) -> (Vec<Event>, VimAction) {
         let mut events = vec![Event::Text(text.to_string())];
-        let action = vim.process_events(&mut events, true, content, cursor);
+        let action = vim.process_events(&mut events, true, content, cursor, None);
+        (events, action)
+    }
+
+    fn feed_with_selection(
+        vim: &mut VimState,
+        text: &str,
+        content: &str,
+        cursor: usize,
+        selection: Option<(usize, usize)>,
+    ) -> (Vec<Event>, VimAction) {
+        let mut events = vec![Event::Text(text.to_string())];
+        let action = vim.process_events(&mut events, true, content, cursor, selection);
         (events, action)
     }
 
@@ -849,7 +1172,7 @@ mod tests {
     fn insert_esc_switches_to_normal_and_consumes_event() {
         let mut vim = VimState::new(true);
         let mut events = vec![Event::Text("a".into()), esc_event()];
-        let action = vim.process_events(&mut events, true, "abc", 0);
+        let action = vim.process_events(&mut events, true, "abc", 0, None);
         assert_eq!(vim.mode, VimMode::Normal);
         assert_eq!(action, VimAction::ModeChanged);
         assert_eq!(events.len(), 1);
@@ -860,7 +1183,7 @@ mod tests {
         let mut vim = VimState::new(false);
         let mut events = vec![Event::Text("j".into()), esc_event()];
         assert_eq!(
-            vim.process_events(&mut events, true, "", 0),
+            vim.process_events(&mut events, true, "", 0, None),
             VimAction::None
         );
         assert_eq!(events.len(), 2);
@@ -868,7 +1191,7 @@ mod tests {
         let mut vim = normal_state();
         let mut events = vec![Event::Text("j".into())];
         assert_eq!(
-            vim.process_events(&mut events, false, "", 0),
+            vim.process_events(&mut events, false, "", 0, None),
             VimAction::None
         );
         assert_eq!(events.len(), 1);
@@ -898,8 +1221,15 @@ mod tests {
         let mut vim = normal_state();
         let (events, _) = feed(&mut vim, "3j", "a\nb\nc", 0);
         assert_eq!(events.len(), 3);
-        let (events, _) = feed(&mut vim, "2x", "abcd", 0);
-        assert_eq!(events.len(), 2);
+        let (_, action) = feed(&mut vim, "2x", "abcd", 0);
+        assert_eq!(
+            action,
+            VimAction::ContentChanged {
+                new_content: "cd".into(),
+                new_cursor: 0
+            }
+        );
+        assert_eq!(vim.register(), "ab");
     }
 
     #[test]
@@ -966,6 +1296,7 @@ mod tests {
                 new_cursor: 0
             }
         );
+        assert_eq!(vim.register(), "第一行\n");
         let (_, action) = feed(&mut vim, "2dd", "a\nb\nc", 0);
         assert_eq!(
             action,
@@ -974,6 +1305,7 @@ mod tests {
                 new_cursor: 0
             }
         );
+        assert_eq!(vim.register(), "a\nb\n");
     }
 
     #[test]
@@ -1051,33 +1383,31 @@ mod tests {
         assert!(
             matches!(&events[0], Event::Key { key: Key::ArrowRight, modifiers, .. } if modifiers.shift)
         );
-        let (events, action) = feed(&mut vim, "d", "hello", 0);
-        assert!(matches!(
-            &events[0],
-            Event::Key {
-                key: Key::Backspace,
-                ..
-            }
-        ));
+        let (_, action) = feed_with_selection(&mut vim, "d", "hello", 1, Some((0, 2)));
         assert_eq!(vim.mode, VimMode::Normal);
-        assert_eq!(action, VimAction::ModeChanged);
+        assert_eq!(
+            action,
+            VimAction::ContentChanged {
+                new_content: "llo".into(),
+                new_cursor: 0
+            }
+        );
+        assert_eq!(vim.register(), "he");
     }
 
     #[test]
     fn visual_yank_and_escape() {
         let mut vim = normal_state();
         feed(&mut vim, "v", "hello", 0);
-        let (events, action) = feed(&mut vim, "y", "hello", 0);
-        assert!(
-            matches!(&events[0], Event::Key { key: Key::C, modifiers, .. } if modifiers.command)
-        );
-        assert_eq!(action, VimAction::ClearSelection);
+        let (_, action) = feed_with_selection(&mut vim, "y", "hello", 2, Some((0, 3)));
+        assert_eq!(action, VimAction::Yank("hel".into()));
+        assert_eq!(vim.register(), "hel");
         assert_eq!(vim.mode, VimMode::Normal);
 
         feed(&mut vim, "v", "hello", 0);
         assert_eq!(vim.mode, VimMode::Visual);
         let mut events = vec![esc_event()];
-        let action = vim.process_events(&mut events, true, "hello", 0);
+        let action = vim.process_events(&mut events, true, "hello", 0, None);
         assert_eq!(action, VimAction::ClearSelection);
         assert_eq!(vim.mode, VimMode::Normal);
     }
@@ -1086,11 +1416,138 @@ mod tests {
     fn paste_and_search_actions() {
         let mut vim = normal_state();
         let (_, action) = feed(&mut vim, "p", "abc", 0);
-        assert_eq!(action, VimAction::Paste { count: 1 });
+        assert_eq!(
+            action,
+            VimAction::Paste {
+                count: 1,
+                before: false
+            }
+        );
         let (_, action) = feed(&mut vim, "3p", "abc", 0);
-        assert_eq!(action, VimAction::Paste { count: 3 });
+        assert_eq!(
+            action,
+            VimAction::Paste {
+                count: 3,
+                before: false
+            }
+        );
+        let (_, action) = feed(&mut vim, "P", "abc", 0);
+        assert_eq!(
+            action,
+            VimAction::Paste {
+                count: 1,
+                before: true
+            }
+        );
         let (_, action) = feed(&mut vim, "/", "abc", 0);
         assert_eq!(action, VimAction::OpenSearch);
+    }
+
+    #[test]
+    fn test_xp_transposition() {
+        let mut vim = normal_state();
+        let (_, action) = feed(&mut vim, "x", "abc", 0);
+        assert_eq!(
+            action,
+            VimAction::ContentChanged {
+                new_content: "bc".into(),
+                new_cursor: 0
+            }
+        );
+        assert_eq!(vim.register(), "a");
+        let (_, action) = feed(&mut vim, "p", "bc", 0);
+        assert_eq!(
+            action,
+            VimAction::ContentChanged {
+                new_content: "bac".into(),
+                new_cursor: 1
+            }
+        );
+    }
+
+    #[test]
+    fn test_yy_and_put() {
+        let mut vim = normal_state();
+        let (_, action) = feed(&mut vim, "yy", "line 1\nline 2", 0);
+        assert_eq!(action, VimAction::Yank("line 1\n".into()));
+        assert_eq!(vim.register(), "line 1\n");
+
+        // 'p' puts line below line 1
+        let (_, action) = feed(&mut vim, "p", "line 1\nline 2", 0);
+        assert_eq!(
+            action,
+            VimAction::ContentChanged {
+                new_content: "line 1\nline 1\nline 2".into(),
+                new_cursor: 7
+            }
+        );
+
+        // 'P' puts line above line 2
+        let (_, action) = feed(&mut vim, "P", "line 1\nline 2", 7);
+        assert_eq!(
+            action,
+            VimAction::ContentChanged {
+                new_content: "line 1\nline 1\nline 2".into(),
+                new_cursor: 7
+            }
+        );
+    }
+
+    #[test]
+    fn test_dd_and_put() {
+        let mut vim = normal_state();
+        let (_, action) = feed(&mut vim, "dd", "line 1\nline 2", 0);
+        assert_eq!(
+            action,
+            VimAction::ContentChanged {
+                new_content: "line 2".into(),
+                new_cursor: 0
+            }
+        );
+        assert_eq!(vim.register(), "line 1\n");
+        let (_, action) = feed(&mut vim, "p", "line 2", 0);
+        assert_eq!(
+            action,
+            VimAction::ContentChanged {
+                new_content: "line 2\nline 1\n".into(),
+                new_cursor: 7
+            }
+        );
+    }
+
+    #[test]
+    fn test_visual_y_and_p() {
+        let mut vim = normal_state();
+        feed(&mut vim, "v", "hello world", 0);
+        let (_, action) = feed_with_selection(&mut vim, "y", "hello world", 5, Some((0, 5)));
+        assert_eq!(action, VimAction::Yank("hello".into()));
+        assert_eq!(vim.register(), "hello");
+        assert_eq!(vim.mode, VimMode::Normal);
+
+        let (_, action) = feed(&mut vim, "p", "abc", 0);
+        assert_eq!(
+            action,
+            VimAction::ContentChanged {
+                new_content: "ahellobc".into(),
+                new_cursor: 1
+            }
+        );
+    }
+
+    #[test]
+    fn test_visual_p_replace_selection() {
+        let mut vim = normal_state();
+        vim.set_register("WORLD".into());
+        feed(&mut vim, "v", "hello there", 0);
+        let (_, action) = feed_with_selection(&mut vim, "p", "hello there", 5, Some((0, 5)));
+        assert_eq!(
+            action,
+            VimAction::ContentChanged {
+                new_content: "WORLD there".into(),
+                new_cursor: 5
+            }
+        );
+        assert_eq!(vim.mode, VimMode::Normal);
     }
 
     #[test]
@@ -1105,7 +1562,7 @@ mod tests {
             key_event(Key::Delete, Modifiers::COMMAND),
             key_event(Key::W, Modifiers::CTRL),
         ];
-        let action = vim.process_events(&mut events, true, "content", 0);
+        let action = vim.process_events(&mut events, true, "content", 0, None);
         assert_eq!(action, VimAction::None);
         assert!(events.is_empty());
     }
@@ -1115,7 +1572,7 @@ mod tests {
         let mut vim = normal_state();
         vim.pending = Some('d');
         let mut events = vec![esc_event()];
-        let action = vim.process_events(&mut events, true, "abc", 0);
+        let action = vim.process_events(&mut events, true, "abc", 0, None);
         assert_eq!(vim.mode, VimMode::Insert);
         assert_eq!(action, VimAction::ModeChanged);
         assert_eq!(vim.pending, None);
@@ -1129,7 +1586,7 @@ mod tests {
         // 1st Esc: Insert -> Normal
         let mut events = vec![esc_event()];
         assert_eq!(
-            vim.process_events(&mut events, true, "abc", 0),
+            vim.process_events(&mut events, true, "abc", 0, None),
             VimAction::ModeChanged
         );
         assert_eq!(vim.mode, VimMode::Normal);
@@ -1137,7 +1594,7 @@ mod tests {
         // 2nd Esc: Normal -> Insert
         let mut events = vec![esc_event()];
         assert_eq!(
-            vim.process_events(&mut events, true, "abc", 0),
+            vim.process_events(&mut events, true, "abc", 0, None),
             VimAction::ModeChanged
         );
         assert_eq!(vim.mode, VimMode::Insert);
@@ -1145,7 +1602,7 @@ mod tests {
         // 3rd Esc: Insert -> Normal
         let mut events = vec![esc_event()];
         assert_eq!(
-            vim.process_events(&mut events, true, "abc", 0),
+            vim.process_events(&mut events, true, "abc", 0, None),
             VimAction::ModeChanged
         );
         assert_eq!(vim.mode, VimMode::Normal);
@@ -1157,14 +1614,14 @@ mod tests {
 
         let mut events = vec![esc_event()];
         assert_eq!(
-            vim.process_events(&mut events, true, "abc", 0),
+            vim.process_events(&mut events, true, "abc", 0, None),
             VimAction::ClearSelection
         );
         assert_eq!(vim.mode, VimMode::Normal);
 
         let mut events = vec![esc_event()];
         assert_eq!(
-            vim.process_events(&mut events, true, "abc", 0),
+            vim.process_events(&mut events, true, "abc", 0, None),
             VimAction::ModeChanged
         );
         assert_eq!(vim.mode, VimMode::Insert);
@@ -1205,7 +1662,7 @@ mod tests {
     fn ctrl_r_redo() {
         let mut vim = normal_state();
         let mut events = vec![key_event(Key::R, Modifiers::CTRL)];
-        vim.process_events(&mut events, true, "abc", 0);
+        vim.process_events(&mut events, true, "abc", 0, None);
         assert!(
             matches!(&events[0], Event::Key { key: Key::Z, modifiers, .. } if modifiers.command && modifiers.shift)
         );

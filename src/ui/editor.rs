@@ -54,6 +54,7 @@ pub struct Editor {
     // Search and replace state
     search_replace: SearchReplaceState,
     vim: VimState,
+    last_synced_clipboard: Option<String>,
     should_focus: bool,
     pub font_size: f32,
     pub line_spacing: f32,
@@ -78,6 +79,7 @@ impl Default for Editor {
             open_comment: None,
             search_replace: SearchReplaceState::default(),
             vim: VimState::default(),
+            last_synced_clipboard: None,
             should_focus: false,
             font_size: 14.0,
             line_spacing: 1.5,
@@ -193,15 +195,37 @@ impl Editor {
             self.ime_composing = false;
         }
         if self.vim.enabled && focused {
-            let cursor = egui::text_edit::TextEditState::load(ui.ctx(), id)
+            let edit_state = egui::text_edit::TextEditState::load(ui.ctx(), id);
+            let selection = edit_state
+                .as_ref()
+                .and_then(|state| state.cursor.char_range())
+                .filter(|r| !r.is_empty())
+                .map(|r| {
+                    (
+                        r.primary.index.min(r.secondary.index),
+                        r.primary.index.max(r.secondary.index),
+                    )
+                })
+                .or(previous_selection);
+
+            let cursor = edit_state
                 .and_then(|state| state.cursor.char_range().map(|r| r.primary.index))
                 .or(self.cursor_index)
                 .unwrap_or(0);
 
             let action = ui.input_mut(|i| {
                 self.vim
-                    .process_events(&mut i.events, focused, &content, cursor)
+                    .process_events(&mut i.events, focused, &content, cursor, selection)
             });
+
+            if self.vim.take_register_updated() {
+                let text = self.vim.register().to_string();
+                if let Ok(mut cb) = arboard::Clipboard::new() {
+                    let _ = cb.set_text(text.clone());
+                }
+                ui.ctx().copy_text(text.clone());
+                self.last_synced_clipboard = Some(text);
+            }
 
             match action {
                 VimAction::ContentChanged {
@@ -213,6 +237,7 @@ impl Editor {
                     self.search_replace.matches.clear();
                     self.search_replace.current_match = None;
                     self.search_replace.match_index = 0;
+                    self.selection = None;
 
                     let mut edit_state =
                         egui::text_edit::TextEditState::load(ui.ctx(), id).unwrap_or_default();
@@ -232,6 +257,7 @@ impl Editor {
                             .set_char_range(Some(egui::text::CCursorRange::one(range.primary)));
                         edit_state.store(ui.ctx(), id);
                     }
+                    self.selection = None;
                     ui.ctx().request_repaint();
                 }
                 VimAction::SetCursor(pos) => {
@@ -245,21 +271,68 @@ impl Editor {
                     edit_state.store(ui.ctx(), id);
                 }
                 VimAction::Yank(text) => {
-                    ui.ctx().copy_text(text);
+                    if let Ok(mut cb) = arboard::Clipboard::new() {
+                        let _ = cb.set_text(text.clone());
+                    }
+                    ui.ctx().copy_text(text.clone());
+                    self.last_synced_clipboard = Some(text);
+                    if let Some(mut edit_state) = egui::text_edit::TextEditState::load(ui.ctx(), id)
+                        && let Some(range) = edit_state.cursor.char_range()
+                    {
+                        edit_state
+                            .cursor
+                            .set_char_range(Some(egui::text::CCursorRange::one(range.primary)));
+                        edit_state.store(ui.ctx(), id);
+                    }
+                    self.selection = None;
+                    ui.ctx().request_repaint();
                 }
-                VimAction::Paste { count } => {
-                    let clipboard = arboard::Clipboard::new()
+                VimAction::Paste { count, before } => {
+                    let sys_clipboard = arboard::Clipboard::new()
                         .ok()
-                        .and_then(|mut cb| cb.get_text().ok())
-                        .unwrap_or_default();
-                    let text = if !clipboard.is_empty() {
-                        clipboard
-                    } else {
+                        .and_then(|mut cb| cb.get_text().ok());
+                    let text = if let Some(sys_text) = &sys_clipboard
+                        && !sys_text.is_empty()
+                        && self.last_synced_clipboard.as_deref() != Some(sys_text)
+                    {
+                        self.vim.set_register(sys_text.clone());
+                        self.last_synced_clipboard = Some(sys_text.clone());
+                        sys_text.clone()
+                    } else if !self.vim.register().is_empty() {
                         self.vim.register().to_string()
+                    } else if let Some(sys_text) = sys_clipboard
+                        && !sys_text.is_empty()
+                    {
+                        self.vim.set_register(sys_text.clone());
+                        self.last_synced_clipboard = Some(sys_text.clone());
+                        sys_text
+                    } else {
+                        String::new()
                     };
+
                     if !text.is_empty() {
-                        let pasted = text.repeat(count.max(1));
-                        ui.input_mut(|i| i.events.push(egui::Event::Paste(pasted)));
+                        let paste_action = self.vim.apply_paste(&content, cursor, count, before);
+                        if let VimAction::ContentChanged {
+                            new_content,
+                            new_cursor,
+                        } = paste_action
+                        {
+                            content = new_content;
+                            self.cached_word_count = None;
+                            self.search_replace.matches.clear();
+                            self.search_replace.current_match = None;
+                            self.search_replace.match_index = 0;
+                            self.selection = None;
+
+                            let mut edit_state = egui::text_edit::TextEditState::load(ui.ctx(), id)
+                                .unwrap_or_default();
+                            edit_state
+                                .cursor
+                                .set_char_range(Some(egui::text::CCursorRange::one(
+                                    egui::text::CCursor::new(new_cursor),
+                                )));
+                            edit_state.store(ui.ctx(), id);
+                        }
                     }
                 }
                 VimAction::OpenSearch => {
@@ -1924,13 +1997,15 @@ mod tests {
     ) -> egui::FullOutput {
         ctx.run(
             egui::RawInput {
+                focused: true,
                 events,
                 ..Default::default()
             },
             |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
+                    let id = ui.make_persistent_id("main_editor");
+                    ui.memory_mut(|memory| memory.request_focus(id));
                     if let Some((start, end)) = selection {
-                        let id = ui.make_persistent_id("main_editor");
                         let mut state =
                             egui::text_edit::TextEditState::load(ctx, id).unwrap_or_default();
                         state
@@ -1940,7 +2015,6 @@ mod tests {
                                 egui::text::CCursor::new(end),
                             )));
                         state.store(ctx, id);
-                        ui.memory_mut(|memory| memory.request_focus(id));
                     }
                     editor.show(ui);
                 });
@@ -2815,5 +2889,183 @@ mod tests {
             output.platform_output.ime.is_some(),
             "Insert mode must restore IME input"
         );
+    }
+
+    #[test]
+    fn test_vim_xp_in_editor() {
+        let ctx = egui::Context::default();
+        let mut editor = Editor::default();
+        editor.set_content("abc".into());
+        editor.set_vim_mode(true);
+        editor.vim.mode = VimMode::Normal;
+        editor.focus();
+
+        let run_frame = |ctx: &egui::Context, editor: &mut Editor, events: Vec<egui::Event>| {
+            let _ = ctx.run(
+                egui::RawInput {
+                    focused: true,
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        editor.show(ui);
+                    });
+                },
+            );
+        };
+
+        // Frame 1: request focus
+        run_frame(&ctx, &mut editor, vec![]);
+        // Frame 2: place cursor at 0
+        let _ = ctx.run(
+            egui::RawInput {
+                focused: true,
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let id = ui.make_persistent_id("main_editor");
+                    let mut state =
+                        egui::text_edit::TextEditState::load(ctx, id).unwrap_or_default();
+                    state
+                        .cursor
+                        .set_char_range(Some(egui::text::CCursorRange::one(
+                            egui::text::CCursor::new(0),
+                        )));
+                    state.store(ctx, id);
+                    editor.show(ui);
+                });
+            },
+        );
+        assert!(editor.is_focused());
+
+        // Frame 3: 'x'
+        run_frame(&ctx, &mut editor, vec![egui::Event::Text("x".into())]);
+        assert_eq!(editor.get_content(), "bc");
+        assert_eq!(editor.vim.register(), "a");
+
+        // Frame 4: 'p'
+        run_frame(&ctx, &mut editor, vec![egui::Event::Text("p".into())]);
+        assert_eq!(editor.get_content(), "bac");
+    }
+
+    #[test]
+    fn test_vim_yy_p_in_editor() {
+        let ctx = egui::Context::default();
+        let mut editor = Editor::default();
+        editor.set_content("line 1\nline 2".into());
+        editor.set_vim_mode(true);
+        editor.vim.mode = VimMode::Normal;
+        editor.focus();
+
+        let run_frame = |ctx: &egui::Context, editor: &mut Editor, events: Vec<egui::Event>| {
+            let _ = ctx.run(
+                egui::RawInput {
+                    focused: true,
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        editor.show(ui);
+                    });
+                },
+            );
+        };
+
+        // Frame 1: request focus
+        run_frame(&ctx, &mut editor, vec![]);
+        // Frame 2: place cursor at 0
+        let _ = ctx.run(
+            egui::RawInput {
+                focused: true,
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let id = ui.make_persistent_id("main_editor");
+                    let mut state =
+                        egui::text_edit::TextEditState::load(ctx, id).unwrap_or_default();
+                    state
+                        .cursor
+                        .set_char_range(Some(egui::text::CCursorRange::one(
+                            egui::text::CCursor::new(0),
+                        )));
+                    state.store(ctx, id);
+                    editor.show(ui);
+                });
+            },
+        );
+        assert!(editor.is_focused());
+
+        // Frame 3: "yy"
+        run_frame(&ctx, &mut editor, vec![egui::Event::Text("yy".into())]);
+        assert_eq!(editor.vim.register(), "line 1\n");
+        assert_eq!(editor.get_content(), "line 1\nline 2");
+
+        // Frame 4: "p"
+        run_frame(&ctx, &mut editor, vec![egui::Event::Text("p".into())]);
+        assert_eq!(editor.get_content(), "line 1\nline 1\nline 2");
+    }
+
+    #[test]
+    fn test_vim_visual_y_p_in_editor() {
+        let ctx = egui::Context::default();
+        let mut editor = Editor::default();
+        editor.set_content("hello world".into());
+        editor.set_vim_mode(true);
+        editor.vim.mode = VimMode::Visual;
+        editor.focus();
+
+        let run_frame = |ctx: &egui::Context, editor: &mut Editor, events: Vec<egui::Event>| {
+            let _ = ctx.run(
+                egui::RawInput {
+                    focused: true,
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        editor.show(ui);
+                    });
+                },
+            );
+        };
+
+        // Frame 1: request focus
+        run_frame(&ctx, &mut editor, vec![]);
+        // Frame 2: select 0..5 ("hello")
+        let _ = ctx.run(
+            egui::RawInput {
+                focused: true,
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let id = ui.make_persistent_id("main_editor");
+                    let mut state =
+                        egui::text_edit::TextEditState::load(ctx, id).unwrap_or_default();
+                    state
+                        .cursor
+                        .set_char_range(Some(egui::text::CCursorRange::two(
+                            egui::text::CCursor::new(0),
+                            egui::text::CCursor::new(5),
+                        )));
+                    state.store(ctx, id);
+                    editor.show(ui);
+                });
+            },
+        );
+        assert!(editor.is_focused());
+
+        // Frame 3: 'y'
+        run_frame(&ctx, &mut editor, vec![egui::Event::Text("y".into())]);
+        assert_eq!(editor.vim.register(), "hello");
+        assert_eq!(editor.get_vim_mode_label(), Some("普通"));
+
+        // Frame 4: 'p'
+        run_frame(&ctx, &mut editor, vec![egui::Event::Text("p".into())]);
+        assert_eq!(editor.get_content(), "hello helloworld");
     }
 }

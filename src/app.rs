@@ -119,6 +119,10 @@ impl Default for PaperShellApp {
             config.settings.external_plugin_settings.clone(),
         );
         let plugin_metadata = plugin_manager.metadata();
+        // Tests must not inherit the user's persisted sidebar layout.
+        #[cfg(test)]
+        let workspace_state = crate::ui::sidebar::WorkspaceState::default();
+        #[cfg(not(test))]
         let workspace_state = crate::ui::sidebar::WorkspaceState::load(&config.data_dir());
         let sidebar = crate::ui::sidebar::Sidebar::new(workspace_state);
 
@@ -1575,12 +1579,7 @@ impl eframe::App for PaperShellApp {
             .frame(
                 egui::Frame::central_panel(&ctx.style())
                     .fill(editor_fill)
-                    .inner_margin(egui::Margin {
-                        left: current_skin.spacing.editor_padding_left as i8,
-                        right: current_skin.spacing.editor_padding_right as i8,
-                        top: current_skin.spacing.editor_padding_top as i8,
-                        bottom: current_skin.spacing.editor_padding_bottom as i8,
-                    }),
+                    .inner_margin(egui::Margin::ZERO),
             )
             .show(ctx, |ui| {
                 if modal_open {
@@ -1590,16 +1589,26 @@ impl eframe::App for PaperShellApp {
                 self.skin_renderer
                     .paint_background(ui, &current_skin, panel_rect);
 
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    ui.vertical_centered(|ui| {
-                        if self.vim_pending_escape {
-                            self.editor.process_pending_vim_escape(ui);
-                            self.vim_pending_escape = false;
-                        }
-                        self.editor
-                            .show_with_paragraph_dots(ui, !self.sidebar.is_expanded());
+                // Pad the writing surface after painting the full-panel background.
+                egui::Frame::NONE
+                    .inner_margin(egui::Margin {
+                        left: current_skin.spacing.editor_padding_left as i8,
+                        right: current_skin.spacing.editor_padding_right as i8,
+                        top: current_skin.spacing.editor_padding_top as i8,
+                        bottom: current_skin.spacing.editor_padding_bottom as i8,
+                    })
+                    .show(ui, |ui| {
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            ui.vertical_centered(|ui| {
+                                if self.vim_pending_escape {
+                                    self.editor.process_pending_vim_escape(ui);
+                                    self.vim_pending_escape = false;
+                                }
+                                self.editor
+                                    .show_with_paragraph_dots(ui, !self.sidebar.is_expanded());
+                            });
+                        });
                     });
-                });
             });
 
         // History Window
@@ -2398,5 +2407,84 @@ mod final_integration_tests {
             has_solid_central_panel,
             "CentralPanel must have solid fill covering the entire area without transparent borders"
         );
+    }
+
+    #[test]
+    fn test_image_background_covers_panel_with_text_padding() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut app = PaperShellApp {
+            skin_manager: crate::skin::SkinManager::new(
+                temp_dir.path().to_path_buf(),
+                "classic_paper".to_string(),
+            ),
+            ..Default::default()
+        };
+        let skin = app
+            .skin_manager
+            .import_from_file(
+                &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("skins/megazone_ride/skin.toml"),
+            )
+            .unwrap();
+        assert!(skin.spacing.editor_padding_left > 0.0);
+        assert!(skin.spacing.editor_padding_top > 0.0);
+        let ctx = egui::Context::default();
+        let texture_id = app
+            .skin_renderer
+            .get_or_load_texture(&ctx, &skin)
+            .unwrap()
+            .id();
+        let mut frame = eframe::Frame::_new_kittest();
+        let fill =
+            crate::config::parse_hex_color(skin.colors.editor_background_color.as_deref().unwrap())
+                .unwrap();
+
+        for size in [egui::vec2(800.0, 600.0), egui::vec2(1200.0, 700.0)] {
+            for expanded in [false, true] {
+                // Construct a clean fixture; toggling would persist test state to disk.
+                app.sidebar =
+                    crate::ui::sidebar::Sidebar::new(crate::ui::sidebar::WorkspaceState {
+                        sidebar_expanded: expanded,
+                        ..Default::default()
+                    });
+                let output = ctx.run(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+                        ..Default::default()
+                    },
+                    |ctx| eframe::App::update(&mut app, ctx, &mut frame),
+                );
+                let panel = output
+                    .shapes
+                    .iter()
+                    .find_map(|clipped| {
+                        if let egui::epaint::Shape::Rect(shape) = &clipped.shape {
+                            (shape.fill == fill && shape.rect.height() > 400.0)
+                                .then_some(shape.rect)
+                        } else {
+                            None
+                        }
+                    })
+                    .expect("editor panel fill");
+                let background = output
+                    .shapes
+                    .iter()
+                    .find(|clipped| {
+                        matches!(&clipped.shape, egui::epaint::Shape::Mesh(mesh)
+                        if mesh.texture_id == texture_id)
+                    })
+                    .expect("background image mesh");
+                assert_eq!(
+                    background.clip_rect, panel,
+                    "background must extend through text padding"
+                );
+                if let egui::epaint::Shape::Mesh(mesh) = &background.shape {
+                    assert!(
+                        mesh.calc_bounds().contains_rect(panel),
+                        "cover must fill the panel"
+                    );
+                }
+            }
+        }
     }
 }

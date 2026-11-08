@@ -2,10 +2,14 @@
 //!
 //! Pure logic only: it rewrites `egui::Event` streams and returns `VimAction`
 //! for side effects the editor must perform (cursor jumps, clipboard, search).
-//! Chinese text motions (`w`/`b`) treat each CJK char as its own word, and
-//! contiguous ASCII alphanumerics/underscore as one word.
+//! Chinese text motions (`w`/`b`) use word segmentation (via `jieba-rs`)
+//! on contiguous CJK segments, and contiguous ASCII alphanumerics/underscore as one word.
 
 use egui::{Event, Key, Modifiers};
+use jieba_rs::Jieba;
+use std::sync::LazyLock;
+
+static JIEBA: LazyLock<Jieba> = LazyLock::new(Jieba::new);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum VimMode {
@@ -62,10 +66,19 @@ fn key_event(key: Key, modifiers: Modifiers) -> Event {
     }
 }
 
-fn is_cjk(c: char) -> bool {
+fn is_cjk_ideograph(c: char) -> bool {
     matches!(c as u32,
-        0x4E00..=0x9FFF | 0x3400..=0x4DBF | 0xF900..=0xFAFF
-        | 0x3000..=0x303F | 0xFF00..=0xFFEF)
+        0x4E00..=0x9FFF
+        | 0x3400..=0x4DBF
+        | 0x20000..=0x2A6DF
+        | 0x2A700..=0x2B73F
+        | 0x2B740..=0x2B81F
+        | 0x2B820..=0x2CEAF
+        | 0x2CEB0..=0x2EBE0
+        | 0x30000..=0x3134F
+        | 0xF900..=0xFAFF
+        | 0x2F800..=0x2FA1F
+    )
 }
 
 fn is_word_char(c: char) -> bool {
@@ -77,31 +90,71 @@ fn char_class(c: char) -> u8 {
         0
     } else if is_word_char(c) {
         1
-    } else if is_cjk(c) {
+    } else if is_cjk_ideograph(c) {
         2
     } else {
         3
     }
 }
 
-/// Start of the next word. ASCII words move as a block; each CJK char and
-/// each punctuation mark is its own word. Whitespace is skipped.
+/// Start of the next word. ASCII words move as a block; CJK segments are
+/// segmented into words using Jieba; contiguous punctuation moves as a block.
+/// Whitespace is skipped.
 pub fn next_word_start(content: &str, cursor: usize) -> usize {
     let chars: Vec<char> = content.chars().collect();
     if cursor >= chars.len() {
         return chars.len();
     }
     let mut i = cursor;
-    match char_class(chars[i]) {
+    let initial_class = char_class(chars[i]);
+    match initial_class {
         0 => {}
         1 => {
             while i < chars.len() && char_class(chars[i]) == 1 {
                 i += 1;
             }
         }
-        _ => i += 1,
+        2 => {
+            // Find contiguous CJK ideograph slice
+            let mut seg_start = i;
+            while seg_start > 0 && char_class(chars[seg_start - 1]) == 2 {
+                seg_start -= 1;
+            }
+            let mut seg_end = i;
+            while seg_end < chars.len() && char_class(chars[seg_end]) == 2 {
+                seg_end += 1;
+            }
+
+            let cjk_text: String = chars[seg_start..seg_end].iter().collect();
+            let words = JIEBA.cut(&cjk_text, false);
+
+            let offset_in_seg = i - seg_start;
+            let mut rel_pos = 0;
+            let mut next_target = None;
+
+            for w in words {
+                let w_len = w.chars().count();
+                let w_end = rel_pos + w_len;
+                if rel_pos > offset_in_seg {
+                    next_target = Some(seg_start + rel_pos);
+                    break;
+                }
+                rel_pos = w_end;
+            }
+
+            if let Some(target) = next_target {
+                i = target;
+            } else {
+                i = seg_end;
+            }
+        }
+        _ => {
+            while i < chars.len() && char_class(chars[i]) == 3 {
+                i += 1;
+            }
+        }
     }
-    while i < chars.len() && chars[i].is_whitespace() {
+    while i < chars.len() && char_class(chars[i]) == 0 {
         i += 1;
     }
     i
@@ -110,23 +163,57 @@ pub fn next_word_start(content: &str, cursor: usize) -> usize {
 /// Start of the previous word.
 pub fn prev_word_start(content: &str, cursor: usize) -> usize {
     let chars: Vec<char> = content.chars().collect();
-    if chars.is_empty() {
+    if chars.is_empty() || cursor == 0 {
         return 0;
     }
     let mut i = cursor.min(chars.len());
-    while i > 0 && (i == chars.len() || chars[i - 1].is_whitespace()) {
+    while i > 0 && (i == chars.len() || char_class(chars[i - 1]) == 0) {
         i -= 1;
     }
     if i == 0 {
         return 0;
     }
-    if char_class(chars[i - 1]) == 1 {
-        while i > 0 && char_class(chars[i - 1]) == 1 {
-            i -= 1;
+    match char_class(chars[i - 1]) {
+        1 => {
+            while i > 0 && char_class(chars[i - 1]) == 1 {
+                i -= 1;
+            }
+            i
         }
-        i
-    } else {
-        i - 1
+        2 => {
+            let mut seg_end = i;
+            while seg_end < chars.len() && char_class(chars[seg_end]) == 2 {
+                seg_end += 1;
+            }
+            let mut seg_start = i - 1;
+            while seg_start > 0 && char_class(chars[seg_start - 1]) == 2 {
+                seg_start -= 1;
+            }
+
+            let cjk_text: String = chars[seg_start..seg_end].iter().collect();
+            let words = JIEBA.cut(&cjk_text, false);
+
+            let target_offset = (i - 1) - seg_start;
+            let mut rel_pos = 0;
+            let mut last_start = 0;
+
+            for w in words {
+                if rel_pos <= target_offset {
+                    last_start = rel_pos;
+                } else {
+                    break;
+                }
+                rel_pos += w.chars().count();
+            }
+
+            seg_start + last_start
+        }
+        _ => {
+            while i > 0 && char_class(chars[i - 1]) == 3 {
+                i -= 1;
+            }
+            i
+        }
     }
 }
 
@@ -819,23 +906,41 @@ mod tests {
     fn chinese_word_motions() {
         let text = "你好 world，再见";
         // 你(0) 好(1) ' '(2) w(3) o r l d ，(8) 再(9) 见(10)
-        assert_eq!(next_word_start(text, 0), 1);
+        // With jieba segmentation: "你好" is a word, "再见" is a word.
+        assert_eq!(next_word_start(text, 0), 3);
         assert_eq!(next_word_start(text, 1), 3);
         assert_eq!(next_word_start(text, 3), 8);
         assert_eq!(next_word_start(text, 8), 9);
+        assert_eq!(next_word_start(text, 9), 11);
+        assert_eq!(prev_word_start(text, 11), 9);
+        assert_eq!(prev_word_start(text, 9), 8);
         assert_eq!(prev_word_start(text, 8), 3);
-        assert_eq!(prev_word_start(text, 3), 1);
+        assert_eq!(prev_word_start(text, 3), 0);
+
+        // Multiple Chinese words in sequence: "你好世界，再见！"
+        // 你(0) 好(1) 世(2) 界(3) ，(4) 再(5) 见(6) ！(7)
+        let multi = "你好世界，再见！";
+        assert_eq!(next_word_start(multi, 0), 2); // "你好" -> "世界"
+        assert_eq!(next_word_start(multi, 2), 4); // "世界" -> "，"
+        assert_eq!(next_word_start(multi, 4), 5); // "，" -> "再见"
+        assert_eq!(next_word_start(multi, 5), 7); // "再见" -> "！"
+        assert_eq!(prev_word_start(multi, 7), 5); // "！" -> "再见"
+        assert_eq!(prev_word_start(multi, 5), 4); // "再见" -> "，"
+        assert_eq!(prev_word_start(multi, 4), 2); // "，" -> "世界"
+        assert_eq!(prev_word_start(multi, 2), 0); // "世界" -> "你好"
     }
 
     #[test]
     fn w_b_return_set_cursor() {
         let mut vim = normal_state();
-        let (_, action) = feed(&mut vim, "w", "你好 world", 0);
-        assert_eq!(action, VimAction::SetCursor(1));
-        let (_, action) = feed(&mut vim, "2w", "你好 world", 0);
-        assert_eq!(action, VimAction::SetCursor(3));
-        let (_, action) = feed(&mut vim, "b", "你好 world", 3);
-        assert_eq!(action, VimAction::SetCursor(1));
+        let (_, action) = feed(&mut vim, "w", "你好世界 world", 0);
+        assert_eq!(action, VimAction::SetCursor(2));
+        let (_, action) = feed(&mut vim, "2w", "你好世界 world", 0);
+        assert_eq!(action, VimAction::SetCursor(5));
+        let (_, action) = feed(&mut vim, "b", "你好世界 world", 5);
+        assert_eq!(action, VimAction::SetCursor(2));
+        let (_, action) = feed(&mut vim, "2b", "你好世界 world", 5);
+        assert_eq!(action, VimAction::SetCursor(0));
     }
 
     #[test]
@@ -883,6 +988,16 @@ mod tests {
             }
         );
 
+        let mut vim = normal_state();
+        let (_, action) = feed(&mut vim, "dw", "你好世界", 0);
+        assert_eq!(
+            action,
+            VimAction::ContentChanged {
+                new_content: "世界".into(),
+                new_cursor: 0
+            }
+        );
+
         let (_, action) = feed(&mut vim, "cw", "hello world", 0);
         assert_eq!(
             action,
@@ -897,6 +1012,11 @@ mod tests {
         let (_, action) = feed(&mut vim, "yw", "hello world", 0);
         assert_eq!(action, VimAction::Yank("hello ".into()));
         assert_eq!(vim.register(), "hello ");
+
+        let mut vim = normal_state();
+        let (_, action) = feed(&mut vim, "yw", "你好世界", 0);
+        assert_eq!(action, VimAction::Yank("你好".into()));
+        assert_eq!(vim.register(), "你好");
     }
 
     #[test]

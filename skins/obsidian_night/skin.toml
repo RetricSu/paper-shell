@@ -1,0 +1,35 @@
+id = "obsidian_night"
+name = "黑曜石夜"
+description = "沉浸式黑曜石深色系，适合夜间专注写作"
+author = "Paper Shell"
+version = "1.0.0"
+
+[typography]
+font_family = "Default"
+font_size = 14.0
+line_spacing = 1.5
+font_color = "#DCDCE0"
+format_use_tabs = false
+
+[spacing]
+window_margin = 0.0
+editor_padding = 24.0
+item_spacing = 8.0
+
+[colors]
+dark_mode = true
+background_color = "#141417"
+editor_background_color = "#1B1B20"
+sidebar_background_color = "#111114"
+titlebar_background_color = "#141417"
+text_color = "#DCDCE0"
+selection_color = "#3B3B4F"
+accent_color = "#7E57C2"
+
+[effects]
+background_image_opacity = 0.20
+background_image_fit = "cover"
+window_opacity = 1.0
+editor_opacity = 0.95
+corner_radius = 2.0
+shadow = false

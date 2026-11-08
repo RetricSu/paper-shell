@@ -1,0 +1,35 @@
+id = "nordic_frost"
+name = "北欧霜雪"
+description = "清冷淡雅的冰霜蓝灰，纯粹克制的北欧极简美学"
+author = "Community"
+version = "1.0.0"
+
+[typography]
+font_family = "Default"
+font_size = 14.0
+line_spacing = 1.5
+font_color = "#2C3E50"
+format_use_tabs = false
+
+[spacing]
+window_margin = 0.0
+editor_padding = 24.0
+item_spacing = 8.0
+
+[colors]
+dark_mode = false
+background_color = "#EDF2F7"
+editor_background_color = "#F7FAFC"
+sidebar_background_color = "#E2E8F0"
+titlebar_background_color = "#EDF2F7"
+text_color = "#2C3E50"
+selection_color = "#CBD5E0"
+accent_color = "#4A90E2"
+
+[effects]
+background_image_opacity = 0.2
+background_image_fit = "cover"
+window_opacity = 1.0
+editor_opacity = 0.98
+corner_radius = 2.0
+shadow = false

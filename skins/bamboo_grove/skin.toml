@@ -1,0 +1,35 @@
+id = "bamboo_grove"
+name = "竹林青韵"
+description = "竹青纸色与墨绿沉香，东方水墨写意风韵"
+author = "Community"
+version = "1.0.0"
+
+[typography]
+font_family = "Default"
+font_size = 14.0
+line_spacing = 1.6
+font_color = "#243D2A"
+format_use_tabs = false
+
+[spacing]
+window_margin = 0.0
+editor_padding = 24.0
+item_spacing = 8.0
+
+[colors]
+dark_mode = false
+background_color = "#F4F6EE"
+editor_background_color = "#FAFBF6"
+sidebar_background_color = "#EAEEDD"
+titlebar_background_color = "#F4F6EE"
+text_color = "#243D2A"
+selection_color = "#D2E2CB"
+accent_color = "#3B7A4C"
+
+[effects]
+background_image_opacity = 0.22
+background_image_fit = "cover"
+window_opacity = 1.0
+editor_opacity = 0.97
+corner_radius = 2.0
+shadow = false

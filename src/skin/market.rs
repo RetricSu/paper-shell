@@ -55,9 +55,9 @@ pub struct SkinMarketClient {
 impl Default for SkinMarketClient {
     fn default() -> Self {
         Self::new(
-            "retricsu/paper-shell-themes".to_string(),
-            "main".to_string(),
-            "skins".to_string(),
+            crate::config::default_skin_market_repo(),
+            crate::config::default_skin_market_branch(),
+            crate::config::default_skin_market_folder(),
         )
     }
 }

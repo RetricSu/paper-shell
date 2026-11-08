@@ -1,0 +1,35 @@
+id = "retro_amber"
+name = "复古琥珀"
+description = "老式 CRT 终端的温润琥珀光泽，极具沉浸复古感"
+author = "Community"
+version = "1.0.0"
+
+[typography]
+font_family = "Default"
+font_size = 14.0
+line_spacing = 1.5
+font_color = "#FFB000"
+format_use_tabs = false
+
+[spacing]
+window_margin = 0.0
+editor_padding = 24.0
+item_spacing = 8.0
+
+[colors]
+dark_mode = true
+background_color = "#15110B"
+editor_background_color = "#1C170F"
+sidebar_background_color = "#100C08"
+titlebar_background_color = "#15110B"
+text_color = "#FFB000"
+selection_color = "#45300B"
+accent_color = "#FFA000"
+
+[effects]
+background_image_opacity = 0.25
+background_image_fit = "cover"
+window_opacity = 1.0
+editor_opacity = 0.95
+corner_radius = 1.0
+shadow = false

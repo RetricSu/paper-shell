@@ -1,0 +1,35 @@
+id = "mint_breeze"
+name = "薄荷清夏"
+description = "清爽淡雅的青浅色调，静心凝神"
+author = "Paper Shell"
+version = "1.0.0"
+
+[typography]
+font_family = "Default"
+font_size = 14.0
+line_spacing = 1.5
+font_color = "#1D3B31"
+format_use_tabs = false
+
+[spacing]
+window_margin = 0.0
+editor_padding = 24.0
+item_spacing = 8.0
+
+[colors]
+dark_mode = false
+background_color = "#EBF5F0"
+editor_background_color = "#F4FAF7"
+sidebar_background_color = "#DFEEE6"
+titlebar_background_color = "#EBF5F0"
+text_color = "#1D3B31"
+selection_color = "#C3E3D4"
+accent_color = "#2E8B57"
+
+[effects]
+background_image_opacity = 0.20
+background_image_fit = "cover"
+window_opacity = 1.0
+editor_opacity = 0.98
+corner_radius = 2.0
+shadow = false

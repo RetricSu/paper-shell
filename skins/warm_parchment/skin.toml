@@ -1,0 +1,35 @@
+id = "warm_parchment"
+name = "古雅羊皮纸"
+description = "温润典雅的宣纸与羊皮质感，柔和护眼"
+author = "Paper Shell"
+version = "1.0.0"
+
+[typography]
+font_family = "Default"
+font_size = 14.5
+line_spacing = 1.6
+font_color = "#382C1E"
+format_use_tabs = false
+
+[spacing]
+window_margin = 12.0
+editor_padding = 20.0
+item_spacing = 9.0
+
+[colors]
+dark_mode = false
+background_color = "#F3ECE0"
+editor_background_color = "#FAF5EC"
+sidebar_background_color = "#ECE3D4"
+titlebar_background_color = "#F3ECE0"
+text_color = "#382C1E"
+selection_color = "#EAD6B8"
+accent_color = "#A26836"
+
+[effects]
+background_image_opacity = 0.18
+background_image_fit = "cover"
+window_opacity = 1.0
+editor_opacity = 0.98
+corner_radius = 1.0
+shadow = false

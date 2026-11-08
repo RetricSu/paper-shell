@@ -1,0 +1,35 @@
+id = "cyberpunk_neon"
+name = "赛博霓虹"
+description = "赛博朋克深紫暗调与霓虹荧光青，充满未来科技感"
+author = "Community"
+version = "1.0.0"
+
+[typography]
+font_family = "Default"
+font_size = 14.0
+line_spacing = 1.55
+font_color = "#00F0FF"
+format_use_tabs = false
+
+[spacing]
+window_margin = 0.0
+editor_padding = 24.0
+item_spacing = 8.0
+
+[colors]
+dark_mode = true
+background_color = "#0A0814"
+editor_background_color = "#120E22"
+sidebar_background_color = "#080610"
+titlebar_background_color = "#0A0814"
+text_color = "#00F0FF"
+selection_color = "#3D144C"
+accent_color = "#FF007F"
+
+[effects]
+background_image_opacity = 0.25
+background_image_fit = "cover"
+window_opacity = 1.0
+editor_opacity = 0.94
+corner_radius = 3.0
+shadow = true

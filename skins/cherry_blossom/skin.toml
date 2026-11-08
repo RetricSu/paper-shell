@@ -1,0 +1,35 @@
+id = "cherry_blossom"
+name = "初樱浅绯"
+description = "柔和温婉的浅粉纸调，若初春落樱之雅致"
+author = "Paper Shell"
+version = "1.0.0"
+
+[typography]
+font_family = "Default"
+font_size = 14.0
+line_spacing = 1.55
+font_color = "#3D2B32"
+format_use_tabs = false
+
+[spacing]
+window_margin = 0.0
+editor_padding = 24.0
+item_spacing = 8.0
+
+[colors]
+dark_mode = false
+background_color = "#FBF2F4"
+editor_background_color = "#FDF7F8"
+sidebar_background_color = "#F5E6E9"
+titlebar_background_color = "#FBF2F4"
+text_color = "#3D2B32"
+selection_color = "#F0D1D8"
+accent_color = "#D46A84"
+
+[effects]
+background_image_opacity = 0.20
+background_image_fit = "cover"
+window_opacity = 1.0
+editor_opacity = 0.98
+corner_radius = 2.0
+shadow = false

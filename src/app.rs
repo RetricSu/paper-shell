@@ -83,6 +83,7 @@ pub struct PaperShellApp {
     vim_pending_escape: bool,
     last_vim_escape: Option<(EscapeSource, std::time::Instant)>,
     root_viewport_focused: bool,
+    settings_window: crate::ui::settings::SettingsWindow,
     skin_manager: crate::skin::SkinManager,
     skin_market_client: crate::skin::SkinMarketClient,
     skin_renderer: crate::skin::SkinRenderer,
@@ -168,6 +169,7 @@ impl Default for PaperShellApp {
             vim_pending_escape: false,
             last_vim_escape: None,
             root_viewport_focused: true,
+            settings_window: crate::ui::settings::SettingsWindow::new(),
             skin_manager,
             skin_market_client,
             skin_renderer,
@@ -836,30 +838,37 @@ impl PaperShellApp {
                 );
             }
             PluginManagerAction::OpenPluginsFolder => self.open_plugins_folder_with_feedback(),
-            PluginManagerAction::Configure(id) => match id.as_str() {
-                "cloud_backup" => {
-                    self.cloud_backup_dialog
-                        .open(ctx, &self.config.settings.cloud_backup);
+            PluginManagerAction::Configure(id) => {
+                self.settings_window.open(
+                    ctx,
+                    Some(crate::ui::settings::SettingsTab::Plugins),
+                    Some(id.clone()),
+                );
+                match id.as_str() {
+                    "cloud_backup" => {
+                        self.cloud_backup_dialog
+                            .open(ctx, &self.config.settings.cloud_backup);
+                    }
+                    "github_publish" => {
+                        self.plugin_config_window
+                            .open(&self.config.settings.github_publish, false);
+                        ctx.send_viewport_cmd_to(
+                            egui::ViewportId::ROOT,
+                            egui::ViewportCommand::Focus,
+                        );
+                    }
+                    _ => {
+                        if let Some(plugin) = self.plugin_manager.find_any(&id) {
+                            let metadata = plugin.metadata();
+                            let definitions = plugin.settings_definitions();
+                            let saved = self.plugin_manager.external_settings_for(&id);
+                            self.external_plugin_config_window
+                                .open(&metadata, definitions, &saved);
+                            ctx.request_repaint_of(self.plugin_manager_window.viewport_id());
+                        }
+                    }
                 }
-                "github_publish" => {
-                    self.plugin_config_window
-                        .open(&self.config.settings.github_publish, false);
-                    ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Focus);
-                }
-                _ => {
-                    let Some(plugin) = self.plugin_manager.find_any(&id) else {
-                        self.plugin_manager_window
-                            .set_status(true, format!("未找到插件“{id}”，请重新扫描"));
-                        return;
-                    };
-                    let metadata = plugin.metadata();
-                    let definitions = plugin.settings_definitions();
-                    let saved = self.plugin_manager.external_settings_for(&id);
-                    self.external_plugin_config_window
-                        .open(&metadata, definitions, &saved);
-                    ctx.request_repaint_of(self.plugin_manager_window.viewport_id());
-                }
-            },
+            }
             PluginManagerAction::Uninstall(id) => {
                 match self.plugin_manager.safe_uninstall_external_plugin(&id) {
                     Ok(removed) => {
@@ -944,6 +953,204 @@ impl PaperShellApp {
                             .set_status(false, format!("已成功安装并应用皮肤“{name}”"));
                     }
                     Err(error) => self.plugin_manager_window.set_status(true, error),
+                }
+            }
+        }
+    }
+
+    fn handle_settings_action(
+        &mut self,
+        ctx: &egui::Context,
+        action: crate::ui::settings::SettingsAction,
+    ) {
+        match action {
+            crate::ui::settings::SettingsAction::ToggleVimMode => {
+                self.config.settings.vim_mode = !self.config.settings.vim_mode;
+                self.editor.set_vim_mode(self.config.settings.vim_mode);
+                if let Err(error) = self.config.save() {
+                    self.file_error = Some(format!("无法保存 Vim 模式设置: {}", error));
+                }
+            }
+            crate::ui::settings::SettingsAction::SetFormatUseTabs(use_tabs) => {
+                self.config.settings.format_use_tabs = use_tabs;
+                if let Err(error) = self.config.save() {
+                    self.file_error = Some(format!("无法保存段落缩进设置: {}", error));
+                }
+            }
+            crate::ui::settings::SettingsAction::SetAutosaveInterval(interval) => {
+                self.config.settings.autosave_interval = interval;
+                if let Err(error) = self.config.save() {
+                    self.file_error = Some(format!("无法保存自动保存间隔: {}", error));
+                }
+            }
+            crate::ui::settings::SettingsAction::FontSizeChange(size) => {
+                let size = size.clamp(10.0, 36.0);
+                self.editor.font_size = size;
+                self.config.settings.font_size = size;
+                if let Err(e) = self.config.save() {
+                    tracing::warn!("Failed to save config: {}", e);
+                }
+                ctx.request_repaint();
+            }
+            crate::ui::settings::SettingsAction::LineSpacingChange(spacing) => {
+                let spacing = spacing.clamp(1.0, 3.0);
+                self.editor.line_spacing = spacing;
+                self.config.settings.line_spacing = spacing;
+                if let Err(e) = self.config.save() {
+                    tracing::warn!("Failed to save config: {}", e);
+                }
+                ctx.request_repaint();
+            }
+            crate::ui::settings::SettingsAction::FontChange(font_name) => {
+                let new_fonts = if font_name == "Default" {
+                    crate::ui::font::setup_fonts()
+                } else {
+                    crate::ui::font::apply_font(&font_name)
+                };
+                ctx.set_fonts(new_fonts);
+                self.current_font = font_name.clone();
+                self.config.settings.font_family = font_name;
+                if let Err(e) = self.config.save() {
+                    tracing::warn!("Failed to save config: {}", e);
+                }
+            }
+            crate::ui::settings::SettingsAction::FontColorChange(hex) => {
+                self.editor.font_color = crate::config::parse_hex_color(&hex);
+                self.config.settings.font_color = hex;
+                if let Err(e) = self.config.save() {
+                    tracing::warn!("Failed to save config: {}", e);
+                }
+                ctx.request_repaint();
+            }
+            crate::ui::settings::SettingsAction::ResetTypography => {
+                self.editor.font_size = 14.0;
+                self.editor.line_spacing = 1.5;
+                self.editor.font_color = None;
+                self.config.settings.font_size = 14.0;
+                self.config.settings.line_spacing = 1.5;
+                self.config.settings.font_family = "Default".to_string();
+                self.config.settings.font_color = "Default".to_string();
+                self.config.settings.format_use_tabs = false;
+                ctx.set_fonts(crate::ui::font::setup_fonts());
+                self.current_font = "Default".to_string();
+                if let Err(e) = self.config.save() {
+                    tracing::warn!("Failed to save config: {}", e);
+                }
+                ctx.request_repaint();
+            }
+            crate::ui::settings::SettingsAction::SelectSkin(id) => {
+                self.apply_skin(ctx, &id);
+            }
+            crate::ui::settings::SettingsAction::ImportSkin => {
+                self.import_skin_dialog(ctx);
+            }
+            crate::ui::settings::SettingsAction::ExportCurrentSkin => {
+                self.export_current_skin_dialog();
+            }
+            crate::ui::settings::SettingsAction::SaveCustomSkin(skin) => {
+                let id = skin.id.clone();
+                match self.skin_manager.save_custom_skin(*skin) {
+                    Ok(_installed) => {
+                        self.apply_skin(ctx, &id);
+                        self.settings_window
+                            .set_status(false, "已保存并应用新皮肤".to_string());
+                    }
+                    Err(e) => {
+                        self.settings_window
+                            .set_status(true, format!("保存皮肤失败：{e}"));
+                    }
+                }
+            }
+            crate::ui::settings::SettingsAction::UpdateMarketSource {
+                repo,
+                branch,
+                folder,
+            } => {
+                self.config.settings.skin_market_repo = repo.clone();
+                self.config.settings.skin_market_branch = branch.clone();
+                self.config.settings.skin_market_folder = folder.clone();
+                self.skin_market_client.repo = repo;
+                self.skin_market_client.branch = branch;
+                self.skin_market_client.folder = folder;
+                if let Err(e) = self.config.save() {
+                    self.settings_window
+                        .set_status(true, format!("保存市场源设置失败：{e}"));
+                } else {
+                    self.settings_window
+                        .set_status(false, "皮肤市场源已保存".to_string());
+                }
+            }
+            crate::ui::settings::SettingsAction::ResetMarketSource => {
+                let repo = crate::config::default_skin_market_repo();
+                let branch = crate::config::default_skin_market_branch();
+                let folder = crate::config::default_skin_market_folder();
+                self.config.settings.skin_market_repo = repo.clone();
+                self.config.settings.skin_market_branch = branch.clone();
+                self.config.settings.skin_market_folder = folder.clone();
+                self.skin_market_client.repo = repo;
+                self.skin_market_client.branch = branch;
+                self.skin_market_client.folder = folder;
+                if let Err(e) = self.config.save() {
+                    self.settings_window
+                        .set_status(true, format!("恢复市场源默认失败：{e}"));
+                } else {
+                    self.settings_window
+                        .set_status(false, "已恢复为官方默认皮肤市场源".to_string());
+                }
+            }
+            crate::ui::settings::SettingsAction::SaveCloudBackupConfig(new_config) => {
+                let previous =
+                    std::mem::replace(&mut self.config.settings.cloud_backup, new_config.clone());
+                match self.config.save() {
+                    Ok(()) => {
+                        self.plugin_manager
+                            .update_builtin_configs(None, Some(new_config));
+                        self.settings_window
+                            .set_status(false, "云端备份配置已保存".to_string());
+                    }
+                    Err(error) => {
+                        self.config.settings.cloud_backup = previous;
+                        self.settings_window
+                            .set_status(true, format!("无法保存云端备份设置：{error}"));
+                    }
+                }
+            }
+            crate::ui::settings::SettingsAction::SaveGithubPublishConfig(new_config) => {
+                let previous =
+                    std::mem::replace(&mut self.config.settings.github_publish, new_config.clone());
+                match self.config.save() {
+                    Ok(()) => {
+                        self.plugin_manager
+                            .update_builtin_configs(Some(new_config), None);
+                        self.settings_window
+                            .set_status(false, "GitHub 发布配置已保存".to_string());
+                    }
+                    Err(error) => {
+                        self.config.settings.github_publish = previous;
+                        self.settings_window
+                            .set_status(true, format!("无法保存插件设置：{error}"));
+                    }
+                }
+            }
+            crate::ui::settings::SettingsAction::SaveExternalPluginConfig { plugin_id, values } => {
+                let previous = self.config.settings.get_external_settings(&plugin_id);
+                self.config
+                    .settings
+                    .set_external_settings(&plugin_id, values.clone());
+                match self.config.save() {
+                    Ok(()) => {
+                        self.plugin_manager
+                            .set_external_settings(&plugin_id, values);
+                        self.settings_window
+                            .set_status(false, "外部插件设置已保存".to_string());
+                    }
+                    Err(error) => {
+                        self.config
+                            .settings
+                            .set_external_settings(&plugin_id, previous);
+                        self.settings_window
+                            .set_status(true, format!("无法保存插件设置：{error}"));
+                    }
                 }
             }
         }
@@ -1409,6 +1616,9 @@ impl eframe::App for PaperShellApp {
                         self.plugin_manager_window
                             .open_tab(ctx, crate::ui::plugins::manager::ManagerTab::Market);
                     }
+                    crate::ui::title_bar::TitleBarAction::OpenSettings(tab) => {
+                        self.settings_window.open(ctx, tab, None);
+                    }
                     crate::ui::title_bar::TitleBarAction::ConfigurePlugin(id) => {
                         if id == "cloud_backup" {
                             self.cloud_backup_dialog
@@ -1497,6 +1707,41 @@ impl eframe::App for PaperShellApp {
         }
         if let Some(action) = self.history_window.take_pending_action() {
             self.handle_history_action(action);
+        }
+
+        // Settings Window (Dedicated unified preferences window)
+        let all_plugins = self.plugin_manager.all_metadata();
+        let mut plugin_definitions = std::collections::BTreeMap::new();
+        for meta in &all_plugins {
+            if let Some(plugin) = self.plugin_manager.find_any(&meta.id) {
+                let defs = plugin.settings_definitions();
+                if !defs.is_empty() {
+                    plugin_definitions.insert(meta.id.clone(), defs);
+                }
+            }
+        }
+        let settings_state = crate::ui::settings::SettingsWindowState {
+            vim_mode: self.config.settings.vim_mode,
+            format_use_tabs: self.config.settings.format_use_tabs,
+            autosave_interval: self.config.settings.autosave_interval,
+            font_size: self.config.settings.font_size,
+            line_spacing: self.config.settings.line_spacing,
+            current_font: &self.current_font,
+            chinese_fonts: &self.available_fonts,
+            font_color: &self.config.settings.font_color,
+            skins: self.skin_manager.all_skins(),
+            current_skin_id: self.skin_manager.current_skin_id(),
+            market_repo: &self.config.settings.skin_market_repo,
+            market_branch: &self.config.settings.skin_market_branch,
+            market_folder: &self.config.settings.skin_market_folder,
+            plugins: &all_plugins,
+            cloud_backup: &self.config.settings.cloud_backup,
+            github_publish: &self.config.settings.github_publish,
+            external_plugin_settings: &self.config.settings.external_plugin_settings,
+            plugin_definitions: &plugin_definitions,
+        };
+        if let Some(action) = self.settings_window.show(ctx, settings_state) {
+            self.handle_settings_action(ctx, action);
         }
 
         // Plugin output and management windows

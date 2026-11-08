@@ -114,15 +114,15 @@ fn default_current_skin() -> String {
     "classic_paper".to_string()
 }
 
-fn default_skin_market_repo() -> String {
-    "retricsu/paper-shell-themes".to_string()
+pub fn default_skin_market_repo() -> String {
+    "RetricSu/paper-shell".to_string()
 }
 
-fn default_skin_market_branch() -> String {
-    "main".to_string()
+pub fn default_skin_market_branch() -> String {
+    "master".to_string()
 }
 
-fn default_skin_market_folder() -> String {
+pub fn default_skin_market_folder() -> String {
     "skins".to_string()
 }
 
@@ -518,5 +518,42 @@ mod tests {
         };
         custom_color.sanitize_typography();
         assert_eq!(custom_color.font_color, "#1E3A5F");
+    }
+
+    #[test]
+    fn skin_market_default_repo_points_to_paper_shell_skins_folder() {
+        let settings = Settings::default();
+        assert_eq!(settings.skin_market_repo, "RetricSu/paper-shell");
+        assert_eq!(settings.skin_market_branch, "master");
+        assert_eq!(settings.skin_market_folder, "skins");
+
+        assert_eq!(default_skin_market_repo(), "RetricSu/paper-shell");
+        assert_eq!(default_skin_market_branch(), "master");
+        assert_eq!(default_skin_market_folder(), "skins");
+    }
+
+    #[test]
+    fn repository_skins_folder_contains_valid_skins() {
+        let repo_skins = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("skins");
+        assert!(repo_skins.is_dir(), "skins folder must exist in repo");
+
+        for skin_id in [
+            "cyberpunk_neon",
+            "nordic_frost",
+            "retro_amber",
+            "bamboo_grove",
+            "warm_parchment",
+            "obsidian_night",
+            "mint_breeze",
+            "deep_sea",
+            "cherry_blossom",
+        ] {
+            let skin_toml = repo_skins.join(skin_id).join("skin.toml");
+            assert!(skin_toml.is_file(), "skin file {:?} must exist", skin_toml);
+            let content = std::fs::read_to_string(&skin_toml).unwrap();
+            let parsed = crate::skin::Skin::from_toml_str(&content).expect("valid skin toml");
+            assert_eq!(parsed.id, skin_id);
+            assert!(parsed.validate().is_ok());
+        }
     }
 }

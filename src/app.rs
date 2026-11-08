@@ -119,6 +119,10 @@ impl Default for PaperShellApp {
             config.settings.external_plugin_settings.clone(),
         );
         let plugin_metadata = plugin_manager.metadata();
+        // Tests must not inherit the user's persisted sidebar layout.
+        #[cfg(test)]
+        let workspace_state = crate::ui::sidebar::WorkspaceState::default();
+        #[cfg(not(test))]
         let workspace_state = crate::ui::sidebar::WorkspaceState::load(&config.data_dir());
         let sidebar = crate::ui::sidebar::Sidebar::new(workspace_state);
 
@@ -2437,9 +2441,12 @@ mod final_integration_tests {
 
         for size in [egui::vec2(800.0, 600.0), egui::vec2(1200.0, 700.0)] {
             for expanded in [false, true] {
-                if app.sidebar.is_expanded() != expanded {
-                    app.sidebar.toggle();
-                }
+                // Construct a clean fixture; toggling would persist test state to disk.
+                app.sidebar =
+                    crate::ui::sidebar::Sidebar::new(crate::ui::sidebar::WorkspaceState {
+                        sidebar_expanded: expanded,
+                        ..Default::default()
+                    });
                 let output = ctx.run(
                     egui::RawInput {
                         screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),

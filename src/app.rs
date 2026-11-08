@@ -1387,6 +1387,8 @@ impl eframe::App for PaperShellApp {
                     has_current_file: self.editor.get_current_file().is_some(),
                     chinese_fonts: &self.available_fonts,
                     current_font: &self.current_font,
+                    skins: self.skin_manager.all_skins(),
+                    current_skin_id: self.skin_manager.current_skin_id(),
                     font_size: self.editor.font_size,
                     line_spacing: self.editor.line_spacing,
                     font_color: &self.config.settings.font_color,
@@ -1534,6 +1536,9 @@ impl eframe::App for PaperShellApp {
                     crate::ui::title_bar::TitleBarAction::About => self.about_window.open(ctx),
                     crate::ui::title_bar::TitleBarAction::OpenSettings(tab) => {
                         self.settings_window.open(ctx, tab);
+                    }
+                    crate::ui::title_bar::TitleBarAction::SelectSkin(id) => {
+                        self.apply_skin(ctx, &id);
                     }
                 }
             }

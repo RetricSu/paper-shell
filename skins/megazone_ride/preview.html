@@ -14,12 +14,12 @@ header p, footer { font-size: 13px; color: #46545e; }
 label { display: flex; gap: 12px; align-items: center; }
 input { accent-color: #427c77; width: 150px; }
 output { font-variant-numeric: tabular-nums; min-width: 3ch; }
-main { position: relative; isolation: isolate; min-height: calc(100vh - 150px); padding: 28px 36px; background: #f1ede6; }
+main { position: relative; isolation: isolate; min-height: calc(100vh - 150px); padding: 6px 6px 6px 2px; background: #f1ede6; }
 main::before { content: ''; position: absolute; z-index: -1; inset: 0; background: url('background.jpg') center / cover no-repeat; opacity: var(--opacity, .24); }
-article { font-size: 16px; line-height: 1.8; white-space: pre-wrap; max-width: 70ch; }
+article { font-size: 16px; line-height: 1.8; white-space: pre-wrap; }
 footer { padding: 16px 28px; line-height: 1.7; }
 a { color: #365e72; }
-@media (max-width: 600px) { main { padding: 24px; } header, footer { padding: 16px 24px; } }
+@media (max-width: 600px) { header, footer { padding: 16px 24px; } }
 </style>
 <header>
   <div><h1>无限地带 · 双人疾驰</h1><p>图片与文字的合成示意。实际效果请导入 skin.toml。</p></div>

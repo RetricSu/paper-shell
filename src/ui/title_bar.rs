@@ -20,6 +20,7 @@ pub enum TitleBarAction {
     FontSizeChange(f32),
     LineSpacingChange(f32),
     ResetTypography,
+    SelectSkin(String),
     SearchReplace,
     /// Run an installed plugin by its id.
     RunPlugin(String),
@@ -44,6 +45,8 @@ pub struct TitleBarState<'a> {
     pub has_current_file: bool,
     pub chinese_fonts: &'a [String],
     pub current_font: &'a str,
+    pub skins: &'a [crate::skin::Skin],
+    pub current_skin_id: &'a str,
     pub font_size: f32,
     pub line_spacing: f32,
     pub font_color: &'a str,
@@ -68,6 +71,8 @@ impl TitleBar {
             has_current_file,
             chinese_fonts,
             current_font,
+            skins,
+            current_skin_id,
             font_size,
             line_spacing,
             font_color,
@@ -310,6 +315,38 @@ impl TitleBar {
                         let menu_width = 196.0;
                         ui.set_width(menu_width);
                         ui.set_max_width(menu_width);
+
+                        egui::containers::menu::SubMenuButton::from_button(
+                            egui::Button::new(format!("{} 皮肤", egui_phosphor::regular::PALETTE))
+                                .right_text("⏵"),
+                        )
+                        .config(
+                            egui::containers::menu::MenuConfig::default()
+                                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside),
+                        )
+                        .ui(ui, |ui| {
+                            ui.set_min_width(menu_width);
+                            egui::ScrollArea::vertical()
+                                .max_height(280.0)
+                                .show(ui, |ui| {
+                                    for skin in skins {
+                                        if ui
+                                            .add_sized(
+                                                [ui.available_width(), 20.0],
+                                                egui::Button::selectable(
+                                                    skin.id == current_skin_id,
+                                                    &skin.name,
+                                                ),
+                                            )
+                                            .clicked()
+                                        {
+                                            action =
+                                                Some(TitleBarAction::SelectSkin(skin.id.clone()));
+                                        }
+                                    }
+                                });
+                        });
+                        ui.separator();
 
                         // 1. 字号调整
                         ui.horizontal(|ui| {
@@ -595,14 +632,6 @@ impl TitleBar {
                                 });
                         });
 
-                        ui.separator();
-
-                        if ui.button("皮肤与外观设置…").clicked() {
-                            action = Some(TitleBarAction::OpenSettings(Some(
-                                crate::ui::settings::SettingsTab::Skin,
-                            )));
-                            ui.close();
-                        }
                         ui.separator();
 
                         ui.horizontal(|ui| {
@@ -977,6 +1006,16 @@ mod tests {
                             has_current_file: true,
                             chinese_fonts: fonts,
                             current_font,
+                            skins: &[
+                                crate::skin::Skin::classic_paper(),
+                                crate::skin::Skin {
+                                    id: "imported_skin".into(),
+                                    name: "Imported Skin".into(),
+                                    builtin: false,
+                                    ..crate::skin::Skin::classic_paper()
+                                },
+                            ],
+                            current_skin_id: "classic_paper",
                             font_size,
                             line_spacing,
                             font_color,
@@ -1157,6 +1196,8 @@ mod tests {
                         has_current_file: true,
                         chinese_fonts: &[],
                         current_font: "Default",
+                        skins: &[],
+                        current_skin_id: "classic_paper",
                         font_size: 14.0,
                         line_spacing: 1.5,
                         font_color: "Default",
@@ -1204,6 +1245,8 @@ mod tests {
                             has_current_file: true,
                             chinese_fonts: &[],
                             current_font: "Default",
+                            skins: &[],
+                            current_skin_id: "classic_paper",
                             font_size: 14.0,
                             line_spacing: 1.5,
                             font_color: "Default",
@@ -1310,6 +1353,8 @@ mod tests {
                         has_current_file: true,
                         chinese_fonts: &fonts,
                         current_font: "PingFang SC",
+                        skins: &[],
+                        current_skin_id: "classic_paper",
                         font_size: 16.0,
                         line_spacing: 1.8,
                         font_color: "Default",
@@ -1347,6 +1392,8 @@ mod tests {
                         has_current_file: true,
                         chinese_fonts: &fonts,
                         current_font: "PingFang SC",
+                        skins: &[],
+                        current_skin_id: "classic_paper",
                         font_size: 16.0,
                         line_spacing: 1.8,
                         font_color: "Default",
@@ -1381,6 +1428,8 @@ mod tests {
                         has_current_file: true,
                         chinese_fonts: &fonts,
                         current_font: "PingFang SC",
+                        skins: &[],
+                        current_skin_id: "classic_paper",
                         font_size: 16.0,
                         line_spacing: 1.8,
                         font_color: "Default",
@@ -1493,6 +1542,25 @@ mod tests {
         );
         assert!(has_text(&menu, "字号"));
         assert!(has_text(&menu, "Tab"));
+    }
+
+    #[test]
+    fn skin_submenu_is_first_and_selects_installed_skin_directly() {
+        let ctx = egui::Context::default();
+        crate::style::configure_style(&ctx);
+        let fonts = [];
+        let (initial, _) = render_typography_title_bar(&ctx, vec![], &fonts, "Default", 14.0, 1.5);
+        let _ = click_text(&ctx, &initial, "排版", &fonts, "Default", 14.0, 1.5);
+        let (menu, _) = render_typography_title_bar(&ctx, vec![], &fonts, "Default", 14.0, 1.5);
+        assert!(text_position(&menu, "皮肤").unwrap().y < text_position(&menu, "字号").unwrap().y);
+        assert!(!has_text(&menu, "皮肤与外观设置"));
+
+        let _ = click_text(&ctx, &menu, "皮肤", &fonts, "Default", 14.0, 1.5);
+        let (skins, _) = render_typography_title_bar(&ctx, vec![], &fonts, "Default", 14.0, 1.5);
+        assert!(has_text(&skins, "经典白纸"));
+        assert!(has_text(&skins, "Imported Skin"));
+        let (_, action) = click_text(&ctx, &skins, "Imported Skin", &fonts, "Default", 14.0, 1.5);
+        assert!(matches!(action, Some(TitleBarAction::SelectSkin(id)) if id == "imported_skin"));
     }
 
     #[test]
@@ -1736,6 +1804,8 @@ mod tests {
                                     has_current_file: true,
                                     chinese_fonts: &[],
                                     current_font: "Default",
+                                    skins: &[],
+                                    current_skin_id: "classic_paper",
                                     font_size: 14.0,
                                     line_spacing: 1.5,
                                     font_color: "Default",

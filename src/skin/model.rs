@@ -835,6 +835,23 @@ impl Skin {
                     }
                 }
 
+                // A loose TOML manifest may refer to an image alongside it.
+                if skin.effects.background_image_data.is_none()
+                    && let Some(image_name) = &skin.effects.background_image
+                {
+                    let source_image = source_path
+                        .parent()
+                        .unwrap_or(Path::new("."))
+                        .join(image_name);
+                    let metadata = std::fs::metadata(&source_image)
+                        .map_err(|e| format!("读取背景图片 {image_name} 失败: {e}"))?;
+                    if !metadata.is_file() || metadata.len() > 10 * 1024 * 1024 {
+                        return Err("背景图片必须是小于 10MB 的文件".to_string());
+                    }
+                    std::fs::copy(&source_image, target_dir.join(image_name))
+                        .map_err(|e| format!("导入背景图片失败: {e}"))?;
+                }
+
                 skin.dir = Some(target_dir);
                 skin.builtin = false;
                 Ok(skin)

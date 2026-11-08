@@ -156,7 +156,7 @@ separate copy of the password for recovery on another device or after losing loc
 On macOS, **打印当前文档** opens the native print panel with automatic wrapping, pagination,
 and PDF export. Other platforms use their existing print-command flow.
 
-### Custom skin plugins & marketplace (自定义皮肤插件与市场)
+### Appearance & skin library (外观与皮肤库)
 
 Paper Shell supports custom skin plugins, fine-grained visual tuning, and theme sharing:
 
@@ -164,7 +164,9 @@ Paper Shell supports custom skin plugins, fine-grained visual tuning, and theme 
 - **Custom skin plugins:** Customize fonts, line spacing, text color, element spacing, editor padding, background images, image opacity, editor transparency, and corner radii.
 - **Import and export:** Export your current layout and typography to portable `.toml` manifests or `.paperskin` / `.zip` packages, and import skin packages with a single click.
 - **GitHub marketplace:** Browse and install community themes directly pulled from a remote GitHub repository directory (configurable in settings or the UI), with pre-seeded offline community templates for instant preview and installation.
-- Access via **排版 → 皮肤风格 ⏵** or **插件 → 皮肤市场与管理…**.
+- Access via **设置 → 皮肤与外观** (also linked from **排版 → 皮肤与外观设置…**). Switch skins immediately, or open **管理与微调…** / **浏览皮肤市场…**. Market source configuration is under **高级：皮肤市场源**.
+- **设置** groups writing/autosave, typography, and appearance. Changes apply immediately; market source edits require saving.
+- **插件** lists enabled plugin commands. Use **插件 → 管理插件…** to enable, disable, rescan, uninstall, or open an individual plugin's settings. Skin management is separate from executable plugins.
 
 > **Plugin security:** external plugins run local commands with the same permissions as
 > Paper Shell and are not sandboxed. Install only plugins you trust and review their

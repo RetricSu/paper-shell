@@ -153,8 +153,12 @@ impl PluginManagerWindow {
             viewport_id,
             egui::ViewportBuilder::default()
                 .with_title(format!(
-                    "{} 插件与皮肤 · {}",
-                    egui_phosphor::regular::PUZZLE_PIECE,
+                    "{} · {}",
+                    if self.current_tab == ManagerTab::Plugins {
+                        "插件管理"
+                    } else {
+                        "皮肤库"
+                    },
                     crate::constant::DEFAULT_WINDOW_TITLE
                 ))
                 .with_inner_size(Vec2::new(DEFAULT_MANAGER_WIDTH, DEFAULT_MANAGER_HEIGHT))
@@ -277,9 +281,8 @@ impl PluginManagerWindow {
         }
 
         let available_w = ui.available_width();
-        let show_summary = available_w >= 560.0;
+        let show_summary = available_w >= 680.0 && self.current_tab == ManagerTab::Plugins;
         let show_actions = available_w >= 480.0;
-        let is_compact = available_w < 500.0;
         let enabled_count = plugins.iter().filter(|p| p.enabled).count();
 
         egui::MenuBar::new().ui(ui, |ui| {
@@ -335,28 +338,19 @@ impl PluginManagerWindow {
 
                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                     let title_color = ui.visuals().text_color().gamma_multiply(0.82);
-                    let title_text = if is_compact {
-                        "插件".to_string()
+                    let title_text = if self.current_tab == ManagerTab::Plugins {
+                        "插件管理"
                     } else {
-                        format!("{} 插件与皮肤", egui_phosphor::regular::PUZZLE_PIECE)
+                        "皮肤库"
                     };
                     ui.label(RichText::new(title_text).strong().color(title_color));
                     ui.add_space(6.0);
 
-                    // Tab bar
-                    let (p_label, s_label, m_label) = if is_compact {
-                        ("插件".to_string(), "皮肤".to_string(), "市场".to_string())
-                    } else {
-                        (
-                            format!("{} 基础插件", egui_phosphor::regular::PUZZLE_PIECE),
-                            format!("{} 皮肤插件", egui_phosphor::regular::PALETTE),
-                            format!("{} 皮肤市场", egui_phosphor::regular::STOREFRONT),
-                        )
-                    };
-
-                    ui.selectable_value(&mut self.current_tab, ManagerTab::Plugins, p_label);
-                    ui.selectable_value(&mut self.current_tab, ManagerTab::Skins, s_label);
-                    ui.selectable_value(&mut self.current_tab, ManagerTab::Market, m_label);
+                    // Themes are reached from Appearance, never from plugin management.
+                    if self.current_tab != ManagerTab::Plugins {
+                        ui.selectable_value(&mut self.current_tab, ManagerTab::Skins, "已安装");
+                        ui.selectable_value(&mut self.current_tab, ManagerTab::Market, "皮肤市场");
+                    }
 
                     if show_actions {
                         ui.add_space(6.0);

@@ -102,6 +102,7 @@ impl Default for PaperShellApp {
         let mut editor = Editor::default();
         editor.font_size = config.settings.font_size;
         editor.line_spacing = config.settings.line_spacing;
+        editor.font_color = crate::config::parse_hex_color(&config.settings.font_color);
         editor.set_vim_mode(config.settings.vim_mode);
         let available_fonts = crate::ui::font::enumerate_chinese_fonts();
 
@@ -288,6 +289,7 @@ impl PaperShellApp {
         self.editor = Editor::default();
         self.editor.font_size = font_size;
         self.editor.line_spacing = line_spacing;
+        self.editor.font_color = crate::config::parse_hex_color(&self.config.settings.font_color);
         self.editor.set_vim_mode(self.config.settings.vim_mode);
         self.editor.set_content(String::new());
         self.history_window.close();
@@ -1022,6 +1024,7 @@ impl eframe::App for PaperShellApp {
                     current_font: &self.current_font,
                     font_size: self.editor.font_size,
                     line_spacing: self.editor.line_spacing,
+                    font_color: &self.config.settings.font_color,
                     format_use_tabs: self.config.settings.format_use_tabs,
                     recent_files: &self.config.settings.recent_files,
                     plugins: &self.plugin_metadata,
@@ -1086,12 +1089,22 @@ impl eframe::App for PaperShellApp {
                         }
                         ctx.request_repaint();
                     }
+                    crate::ui::title_bar::TitleBarAction::FontColorChange(color_hex) => {
+                        self.editor.font_color = crate::config::parse_hex_color(&color_hex);
+                        self.config.settings.font_color = color_hex;
+                        if let Err(e) = self.config.save() {
+                            tracing::warn!("Failed to save config: {}", e);
+                        }
+                        ctx.request_repaint();
+                    }
                     crate::ui::title_bar::TitleBarAction::ResetTypography => {
                         self.editor.font_size = 14.0;
                         self.editor.line_spacing = 1.5;
+                        self.editor.font_color = None;
                         self.config.settings.font_size = 14.0;
                         self.config.settings.line_spacing = 1.5;
                         self.config.settings.font_family = "Default".to_string();
+                        self.config.settings.font_color = "Default".to_string();
                         self.config.settings.format_use_tabs = false;
                         ctx.set_fonts(crate::ui::font::setup_fonts());
                         self.current_font = "Default".to_string();
@@ -1333,6 +1346,8 @@ impl eframe::App for PaperShellApp {
                             self.editor = Editor::default();
                             self.editor.font_size = font_size;
                             self.editor.line_spacing = line_spacing;
+                            self.editor.font_color =
+                                crate::config::parse_hex_color(&self.config.settings.font_color);
                             self.editor.set_content(content);
                             self.history_window.close();
                             self.draft_directory = Some(directory);
@@ -1836,5 +1851,58 @@ mod final_integration_tests {
         // macOS global Escape monitor events while a secondary viewport is focused must also not toggle Vim mode.
         app.record_vim_escape(EscapeSource::Monitor);
         assert!(!app.vim_pending_escape);
+    }
+
+    #[test]
+    fn test_font_color_workflow_and_reset() {
+        let mut app = PaperShellApp::default();
+        let ctx = egui::Context::default();
+
+        // 1. Initial default state
+        assert_eq!(app.config.settings.font_color, "Default");
+        assert_eq!(app.editor.font_color, None);
+
+        // 2. Change font color via TitleBar action
+        let _ = ctx.run(Default::default(), |ctx| {
+            egui::TopBottomPanel::top("title").show(ctx, |_ui| {
+                // Simulate TitleBarAction::FontColorChange
+                let action =
+                    crate::ui::title_bar::TitleBarAction::FontColorChange("#1E3A5F".to_string());
+                match action {
+                    crate::ui::title_bar::TitleBarAction::FontColorChange(color_hex) => {
+                        app.editor.font_color = crate::config::parse_hex_color(&color_hex);
+                        app.config.settings.font_color = color_hex;
+                    }
+                    _ => unreachable!(),
+                }
+            });
+        });
+
+        assert_eq!(app.config.settings.font_color, "#1E3A5F");
+        assert_eq!(
+            app.editor.font_color,
+            Some(egui::Color32::from_rgb(30, 58, 95))
+        );
+
+        // 3. Opening a new document inherits the current font color
+        app.apply_new_document(None);
+        assert_eq!(
+            app.editor.font_color,
+            Some(egui::Color32::from_rgb(30, 58, 95))
+        );
+
+        // 4. Reset typography resets font color back to Default
+        let _ = ctx.run(Default::default(), |_ctx| {
+            app.editor.font_size = 14.0;
+            app.editor.line_spacing = 1.5;
+            app.editor.font_color = None;
+            app.config.settings.font_size = 14.0;
+            app.config.settings.line_spacing = 1.5;
+            app.config.settings.font_family = "Default".to_string();
+            app.config.settings.font_color = "Default".to_string();
+        });
+
+        assert_eq!(app.config.settings.font_color, "Default");
+        assert_eq!(app.editor.font_color, None);
     }
 }

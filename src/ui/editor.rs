@@ -57,6 +57,7 @@ pub struct Editor {
     should_focus: bool,
     pub font_size: f32,
     pub line_spacing: f32,
+    pub font_color: Option<egui::Color32>,
 }
 
 impl Default for Editor {
@@ -80,6 +81,7 @@ impl Default for Editor {
             should_focus: false,
             font_size: 14.0,
             line_spacing: 1.5,
+            font_color: None,
         }
     }
 }
@@ -287,7 +289,12 @@ impl Editor {
                 1.5
             };
             let font_id = egui::FontId::new(font_size, egui::FontFamily::Proportional);
-            let text_color = ui.visuals().text_color();
+            let text_color = self.font_color.unwrap_or_else(|| ui.visuals().text_color());
+
+            if let Some(color) = self.font_color {
+                ui.visuals_mut().override_text_color = Some(color);
+                ui.visuals_mut().text_cursor.stroke.color = color;
+            }
 
             let mut layouter = |ui: &Ui, text: &dyn egui::TextBuffer, wrap_width: f32| {
                 let text_str = text.as_str();
@@ -345,7 +352,7 @@ impl Editor {
                 // Visual-mode motions must bypass IME too, otherwise Pinyin consumes them.
                 ui.ctx().output_mut(|o| o.ime = None);
                 if self.vim.mode == VimMode::Normal {
-                    Self::draw_vim_block_cursor(&output, ui);
+                    self.draw_vim_block_cursor(&output, ui);
                 }
             } else {
                 Self::fix_macos_ime(&output, ui);
@@ -904,7 +911,7 @@ impl Editor {
         // =========================================================
     }
 
-    fn draw_vim_block_cursor(output: &egui::text_edit::TextEditOutput, ui: &mut Ui) {
+    fn draw_vim_block_cursor(&self, output: &egui::text_edit::TextEditOutput, ui: &mut Ui) {
         if !output.response.has_focus() {
             return;
         }
@@ -923,7 +930,10 @@ impl Editor {
                 (height * 0.5).max(8.0)
             };
             let rect = egui::Rect::from_min_size(screen_min, egui::vec2(width, height));
-            let color = ui.visuals().text_color().gamma_multiply(0.4);
+            let color = self
+                .font_color
+                .unwrap_or_else(|| ui.visuals().text_color())
+                .gamma_multiply(0.4);
             ui.painter().rect_filled(rect, 0.0, color);
         }
     }
@@ -2634,6 +2644,41 @@ mod tests {
         assert!(galley2.size().y > galley1.size().y);
         // 20pt * 1.5 should be taller than 14pt * 1.0
         assert!(galley3.size().y > galley1.size().y);
+    }
+
+    #[test]
+    fn font_color_applies_to_editor_text() {
+        let ctx = egui::Context::default();
+        let target_color = egui::Color32::from_rgb(30, 58, 95);
+        let mut editor = Editor {
+            font_color: Some(target_color),
+            ..Default::default()
+        };
+        editor.set_content("Color test content".to_string());
+
+        let output = ctx.run(Default::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                editor.show(ui);
+            });
+        });
+
+        // The galley must have been produced
+        assert!(editor.last_galley.is_some());
+        // Check that shapes or mesh in the output contains target_color
+        let has_target_color = output.shapes.iter().any(|shape| match &shape.shape {
+            egui::Shape::Text(text) => text
+                .galley
+                .job
+                .sections
+                .iter()
+                .any(|s| s.format.color == target_color),
+            egui::Shape::Mesh(mesh) => mesh.vertices.iter().any(|v| v.color == target_color),
+            _ => false,
+        });
+        assert!(
+            has_target_color,
+            "Editor output should render with custom font color"
+        );
     }
 
     #[test]

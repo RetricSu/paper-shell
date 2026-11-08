@@ -715,15 +715,6 @@ impl TitleBar {
                             },
                         );
                     }
-
-                    if ui.available_width() >= 60.0
-                        && ui
-                            .button(format!("{} 设置", egui_phosphor::regular::GEAR))
-                            .on_hover_text("首选项与设置 (⌘,)")
-                            .clicked()
-                    {
-                        action = Some(TitleBarAction::OpenSettings(None));
-                    }
                 });
             });
         });
@@ -1092,6 +1083,22 @@ mod tests {
         assert!(!has_text(&menu, "配置云端备份"));
         let (_, action) = click_text(&ctx, &menu, "管理插件…", &[], "Default", 14.0, 1.5);
         assert!(matches!(action, Some(TitleBarAction::ManagePlugins)));
+    }
+
+    #[test]
+    fn title_bar_has_no_top_level_settings_and_file_menu_dispatches_settings() {
+        let ctx = egui::Context::default();
+        crate::style::configure_style(&ctx);
+        let fonts = [];
+        let (initial, _) = render_typography_title_bar(&ctx, vec![], &fonts, "Default", 14.0, 1.5);
+        assert!(!has_text(&initial, "设置"));
+
+        let _ = click_text(&ctx, &initial, "文件", &fonts, "Default", 14.0, 1.5);
+        let (menu, _) = render_typography_title_bar(&ctx, vec![], &fonts, "Default", 14.0, 1.5);
+        assert!(has_text(&menu, "设置…"));
+
+        let (_, action) = click_text(&ctx, &menu, "设置…", &fonts, "Default", 14.0, 1.5);
+        assert!(matches!(action, Some(TitleBarAction::OpenSettings(None))));
     }
 
     #[test]

@@ -131,9 +131,14 @@ Statistics compare saved versions rather than keystrokes, so imports, pasted tex
 restored versions count as changes. Unsaved drafts are excluded. Focus time is the existing
 editor focus timer, not a measure of active typing.
 
-### Plugins and printing
+### Export and printing
 
-Paper Shell includes **Print**, **Cloud Backup**, and **GitHub Publish** plugins. Open
+Use **文件 → 导出** to export the current document into common formats:
+- **PDF 文档 (.pdf)**: Generates a paginated vector PDF with native macOS typography, automatic wrapping, and standard margins.
+- **HTML 文档 (.html)**: Creates a clean, standalone HTML document styled with reader-friendly typography, code formatting, and light/dark theme support.
+- **Markdown (.md)** / **纯文本 (.txt)**: Exports plain text or markdown directly to disk.
+
+Paper Shell also includes **Print**, **Cloud Backup**, and **GitHub Publish** plugins. Open
 **插件 → 管理插件…** to enable or configure built-ins, discover external plugins, or inspect
 manifest errors. External plugins can be installed by placing a folder containing a
 `plugin.toml` manifest and its command in the plugin directory, then choosing **重新扫描**.

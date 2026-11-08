@@ -1,3 +1,4 @@
+use crate::export::ExportFormat;
 use crate::plugin::PluginMetadata;
 use egui::{Align, Layout, Ui};
 use std::path::PathBuf;
@@ -7,6 +8,7 @@ pub enum TitleBarAction {
     ToggleSidebar,
     ToggleVimMode,
     Save,
+    Export(ExportFormat),
     Open,
     OpenFile(PathBuf),
     History,
@@ -233,6 +235,20 @@ impl TitleBar {
                                 action = Some(TitleBarAction::Save);
                                 ui.close();
                             }
+                            ui.menu_button("导出", |ui| {
+                                ui.set_min_width(180.0);
+                                for format in [
+                                    ExportFormat::Pdf,
+                                    ExportFormat::Html,
+                                    ExportFormat::Markdown,
+                                    ExportFormat::PlainText,
+                                ] {
+                                    if ui.button(format.menu_label()).clicked() {
+                                        action = Some(TitleBarAction::Export(format));
+                                        ui.close();
+                                    }
+                                }
+                            });
                             if ui
                                 .add_enabled(has_current_file, egui::Button::new("版本历史…"))
                                 .on_disabled_hover_text("保存文档后可查看版本历史")
@@ -850,6 +866,39 @@ mod tests {
     }
 
     #[test]
+    fn file_menu_export_submenu_shows_and_dispatches_actions() {
+        let ctx = egui::Context::default();
+        crate::style::configure_style(&ctx);
+        let fonts = [];
+        let (initial, _) = render_typography_title_bar(&ctx, vec![], &fonts, "Default", 14.0, 1.5);
+        let _ = click_text(&ctx, &initial, "文件", &fonts, "Default", 14.0, 1.5);
+        let (menu, _) = render_typography_title_bar(&ctx, vec![], &fonts, "Default", 14.0, 1.5);
+        assert!(has_text(&menu, "导出"));
+
+        let _ = click_text(&ctx, &menu, "导出", &fonts, "Default", 14.0, 1.5);
+        let (export_menu, _) =
+            render_typography_title_bar(&ctx, vec![], &fonts, "Default", 14.0, 1.5);
+        assert!(has_text(&export_menu, "PDF 文档 (.pdf)…"));
+        assert!(has_text(&export_menu, "HTML 文档 (.html)…"));
+        assert!(has_text(&export_menu, "Markdown (.md)…"));
+        assert!(has_text(&export_menu, "纯文本 (.txt)…"));
+
+        let (_, action) = click_text(
+            &ctx,
+            &export_menu,
+            "PDF 文档 (.pdf)…",
+            &fonts,
+            "Default",
+            14.0,
+            1.5,
+        );
+        assert!(matches!(
+            action,
+            Some(TitleBarAction::Export(ExportFormat::Pdf))
+        ));
+    }
+
+    #[test]
     fn clicking_title_word_count_opens_statistics() {
         let ctx = egui::Context::default();
         let fonts = [];
@@ -1463,6 +1512,10 @@ mod tests {
         assert!(
             has_text(&output3, "保存"),
             "File menu should contain '保存'"
+        );
+        assert!(
+            has_text(&output3, "导出"),
+            "File menu should contain '导出'"
         );
         assert!(
             has_text(&output3, "版本历史…"),

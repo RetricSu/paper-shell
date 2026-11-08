@@ -156,6 +156,16 @@ separate copy of the password for recovery on another device or after losing loc
 On macOS, **打印当前文档** opens the native print panel with automatic wrapping, pagination,
 and PDF export. Other platforms use their existing print-command flow.
 
+### Custom skin plugins & marketplace (自定义皮肤插件与市场)
+
+Paper Shell supports custom skin plugins, fine-grained visual tuning, and theme sharing:
+
+- **Built-in skins:** Classic Paper (经典白纸), Warm Parchment (古雅羊皮纸), Obsidian Night (黑曜石夜), Mint Breeze (薄荷清夏), Deep Sea (深海墨蓝), and Cherry Blossom (春日樱粉).
+- **Custom skin plugins:** Customize fonts, line spacing, text color, element spacing, editor padding, background images, image opacity, editor transparency, and corner radii.
+- **Import and export:** Export your current layout and typography to portable `.toml` manifests or `.paperskin` / `.zip` packages, and import skin packages with a single click.
+- **GitHub marketplace:** Browse and install community themes directly pulled from a remote GitHub repository directory (configurable in settings or the UI), with pre-seeded offline community templates for instant preview and installation.
+- Access via **排版 → 皮肤风格 ⏵** or **插件 → 皮肤市场与管理…**.
+
 > **Plugin security:** external plugins run local commands with the same permissions as
 > Paper Shell and are not sandboxed. Install only plugins you trust and review their
 > manifests before enabling them. External password settings are masked in the UI but are

@@ -110,6 +110,22 @@ fn default_font_color() -> String {
     "Default".to_string()
 }
 
+fn default_current_skin() -> String {
+    "classic_paper".to_string()
+}
+
+fn default_skin_market_repo() -> String {
+    "retricsu/paper-shell-themes".to_string()
+}
+
+fn default_skin_market_branch() -> String {
+    "main".to_string()
+}
+
+fn default_skin_market_folder() -> String {
+    "skins".to_string()
+}
+
 pub const FONT_COLOR_PRESETS: &[(&str, &str, egui::Color32)] = &[
     ("墨黑", "#1A1A1A", egui::Color32::from_rgb(26, 26, 26)),
     ("深灰", "#4A4A4A", egui::Color32::from_rgb(74, 74, 74)),
@@ -217,6 +233,22 @@ pub struct Settings {
     #[serde(default)]
     pub external_plugin_settings:
         std::collections::BTreeMap<String, std::collections::BTreeMap<String, String>>,
+
+    /// Currently active skin / theme ID
+    #[serde(default = "default_current_skin")]
+    pub current_skin: String,
+
+    /// Remote GitHub repo for skin marketplace
+    #[serde(default = "default_skin_market_repo")]
+    pub skin_market_repo: String,
+
+    /// Remote GitHub branch for skin marketplace
+    #[serde(default = "default_skin_market_branch")]
+    pub skin_market_branch: String,
+
+    /// Remote GitHub folder path for skin marketplace
+    #[serde(default = "default_skin_market_folder")]
+    pub skin_market_folder: String,
 }
 
 impl Default for Settings {
@@ -237,6 +269,10 @@ impl Default for Settings {
             cloud_backup: crate::plugin::builtin::cloud_backup::CloudBackupConfig::default(),
             disabled_plugins: Vec::new(),
             external_plugin_settings: std::collections::BTreeMap::new(),
+            current_skin: default_current_skin(),
+            skin_market_repo: default_skin_market_repo(),
+            skin_market_branch: default_skin_market_branch(),
+            skin_market_folder: default_skin_market_folder(),
         }
     }
 }

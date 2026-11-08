@@ -15,5 +15,8 @@ pub enum ResponseMessage {
         name: String,
         result: Result<String, String>,
     },
+    MarketSkinsFetched {
+        result: Result<Vec<crate::skin::MarketSkin>, String>,
+    },
     VimEscape,
 }

@@ -83,6 +83,9 @@ pub struct PaperShellApp {
     vim_pending_escape: bool,
     last_vim_escape: Option<(EscapeSource, std::time::Instant)>,
     root_viewport_focused: bool,
+    skin_manager: crate::skin::SkinManager,
+    skin_market_client: crate::skin::SkinMarketClient,
+    skin_renderer: crate::skin::SkinRenderer,
     #[cfg(target_os = "macos")]
     print_requested: bool,
 }
@@ -117,6 +120,18 @@ impl Default for PaperShellApp {
         let plugin_metadata = plugin_manager.metadata();
         let workspace_state = crate::ui::sidebar::WorkspaceState::load(&config.data_dir());
         let sidebar = crate::ui::sidebar::Sidebar::new(workspace_state);
+
+        let skins_dir = config.data_dir().join("skins");
+        let skin_manager = crate::skin::SkinManager::new(
+            skins_dir,
+            config.settings.current_skin.clone(),
+        );
+        let skin_market_client = crate::skin::SkinMarketClient::new(
+            config.settings.skin_market_repo.clone(),
+            config.settings.skin_market_branch.clone(),
+            config.settings.skin_market_folder.clone(),
+        );
+        let skin_renderer = crate::skin::SkinRenderer::new();
 
         Self {
             editor,
@@ -155,6 +170,9 @@ impl Default for PaperShellApp {
             vim_pending_escape: false,
             last_vim_escape: None,
             root_viewport_focused: true,
+            skin_manager,
+            skin_market_client,
+            skin_renderer,
             #[cfg(target_os = "macos")]
             print_requested: false,
         }
@@ -166,6 +184,10 @@ impl PaperShellApp {
         configure_style(&cc.egui_ctx);
 
         let mut app = Self::default();
+        let current_skin = app.skin_manager.current_skin();
+        crate::style::set_active_skin(current_skin.clone());
+        crate::skin::SkinRenderer::apply_to_context(&cc.egui_ctx, &current_skin);
+
         if app.current_font != "Default" {
             let fonts = crate::ui::font::apply_font(&app.current_font);
             cc.egui_ctx.set_fonts(fonts);
@@ -573,6 +595,20 @@ impl PaperShellApp {
                     }
                     self.plugin_output.finish(name, result);
                 }
+                ResponseMessage::MarketSkinsFetched { result } => match result {
+                    Ok(skins) => {
+                        let count = skins.len();
+                        self.skin_market_client.cached_skins = skins;
+                        self.skin_market_client.last_error = None;
+                        self.plugin_manager_window
+                            .set_status(false, format!("已成功从 GitHub 仓库拉取 {} 款皮肤", count));
+                    }
+                    Err(err) => {
+                        self.skin_market_client.last_error = Some(err.clone());
+                        self.plugin_manager_window
+                            .set_status(true, format!("从 GitHub 拉取失败：{err}"));
+                    }
+                },
                 ResponseMessage::VimEscape => {
                     self.record_vim_escape(EscapeSource::Monitor);
                 }
@@ -842,6 +878,187 @@ impl PaperShellApp {
                     Err(error) => self.plugin_manager_window.set_status(true, error),
                 }
             }
+            PluginManagerAction::SelectSkin(id) => {
+                self.apply_skin(ctx, &id);
+            }
+            PluginManagerAction::ImportSkin => {
+                self.import_skin_dialog(ctx);
+            }
+            PluginManagerAction::ExportSkin(id) => {
+                self.export_skin_dialog(&id);
+            }
+            PluginManagerAction::ExportCurrentSettingsAsSkin => {
+                self.export_current_skin_dialog();
+            }
+            PluginManagerAction::UninstallSkin(id) => {
+                match self.skin_manager.uninstall_skin(&id) {
+                    Ok(()) => {
+                        let current_id = self.skin_manager.current_skin_id().to_string();
+                        self.apply_skin(ctx, &current_id);
+                        self.plugin_manager_window
+                            .set_status(false, format!("皮肤“{id}”已卸载"));
+                    }
+                    Err(error) => self.plugin_manager_window.set_status(true, error),
+                }
+            }
+            PluginManagerAction::SaveCustomSkin(skin) => {
+                let skin_name = skin.name.clone();
+                match self.skin_manager.save_custom_skin(skin) {
+                    Ok(saved) => {
+                        self.apply_skin(ctx, &saved.id);
+                        self.plugin_manager_window
+                            .set_status(false, format!("自定义皮肤“{skin_name}”已保存并应用"));
+                    }
+                    Err(error) => self.plugin_manager_window.set_status(true, error),
+                }
+            }
+            PluginManagerAction::FetchMarketSkins => {
+                let sender = self.response_sender.clone();
+                let mut client = self.skin_market_client.clone();
+                let installed_ids: Vec<String> = self
+                    .skin_manager
+                    .all_skins()
+                    .iter()
+                    .map(|s| s.id.clone())
+                    .collect();
+                self.plugin_manager_window
+                    .set_status(false, "正在从 GitHub 仓库拉取皮肤列表…".to_string());
+                std::thread::spawn(move || {
+                    let skins = client.fetch_skins(&installed_ids);
+                    let result = if let Some(err) = client.last_error {
+                        Err(err)
+                    } else {
+                        Ok(skins)
+                    };
+                    let _ = sender.send(ResponseMessage::MarketSkinsFetched { result });
+                });
+            }
+            PluginManagerAction::InstallMarketSkin(market_skin) => {
+                let name = market_skin.name.clone();
+                match self.skin_market_client.download_and_install(
+                    &market_skin,
+                    self.skin_manager.skins_dir(),
+                ) {
+                    Ok(installed) => {
+                        self.skin_manager.rescan();
+                        self.apply_skin(ctx, &installed.id);
+                        self.plugin_manager_window
+                            .set_status(false, format!("已成功安装并应用皮肤“{name}”"));
+                    }
+                    Err(error) => self.plugin_manager_window.set_status(true, error),
+                }
+            }
+        }
+    }
+
+    pub fn apply_skin(&mut self, ctx: &egui::Context, id: &str) {
+        if self.skin_manager.set_current_skin(id) {
+            let skin = self.skin_manager.current_skin();
+
+            self.editor.font_size = skin.typography.font_size;
+            self.editor.line_spacing = skin.typography.line_spacing;
+            self.editor.font_color = crate::config::parse_hex_color(&skin.typography.font_color);
+            self.config.settings.font_size = skin.typography.font_size;
+            self.config.settings.line_spacing = skin.typography.line_spacing;
+            self.config.settings.font_color = skin.typography.font_color.clone();
+            self.config.settings.font_family = skin.typography.font_family.clone();
+            self.config.settings.format_use_tabs = skin.typography.format_use_tabs;
+            self.config.settings.current_skin = skin.id.clone();
+            let _ = self.config.save();
+
+            let new_fonts = if skin.typography.font_family == "Default" {
+                crate::ui::font::setup_fonts()
+            } else {
+                crate::ui::font::apply_font(&skin.typography.font_family)
+            };
+            ctx.set_fonts(new_fonts);
+            self.current_font = skin.typography.font_family.clone();
+
+            crate::style::set_active_skin(skin.clone());
+            crate::skin::SkinRenderer::apply_to_context(ctx, &skin);
+            ctx.request_repaint();
+        }
+    }
+
+    fn import_skin_dialog(&mut self, ctx: &egui::Context) {
+        if let Some(path) = rfd::FileDialog::new()
+            .set_title("选择导入皮肤文件")
+            .add_filter("皮肤文件", &["toml", "json", "zip", "paperskin"])
+            .pick_file()
+        {
+            match self.skin_manager.import_from_file(&path) {
+                Ok(skin) => {
+                    self.apply_skin(ctx, &skin.id);
+                    self.plugin_manager_window
+                        .set_status(false, format!("成功导入并应用皮肤“{}”", skin.name));
+                }
+                Err(e) => {
+                    self.plugin_manager_window
+                        .set_status(true, format!("导入皮肤失败: {e}"));
+                }
+            }
+        }
+    }
+
+    fn export_skin_dialog(&mut self, id: &str) {
+        if let Some(path) = rfd::FileDialog::new()
+            .set_title("导出皮肤")
+            .set_file_name(format!("{id}.toml"))
+            .add_filter("皮肤配置文件 (*.toml)", &["toml"])
+            .add_filter("皮肤安装包 (*.paperskin)", &["paperskin", "zip"])
+            .save_file()
+        {
+            match self.skin_manager.export_skin_to_file(id, &path) {
+                Ok(()) => {
+                    self.plugin_manager_window
+                        .set_status(false, format!("皮肤已成功导出到 {:?}", path));
+                }
+                Err(e) => {
+                    self.plugin_manager_window
+                        .set_status(true, format!("导出皮肤失败: {e}"));
+                }
+            }
+        }
+    }
+
+    fn export_current_skin_dialog(&mut self) {
+        if let Some(path) = rfd::FileDialog::new()
+            .set_title("导出当前排版与外观为皮肤")
+            .set_file_name("custom_skin.toml")
+            .add_filter("皮肤配置文件 (*.toml)", &["toml"])
+            .add_filter("皮肤安装包 (*.paperskin)", &["paperskin", "zip"])
+            .save_file()
+        {
+            let current = self.skin_manager.current_skin();
+            let skin = crate::skin::Skin {
+                id: "custom_exported_skin".to_string(),
+                name: "自定义导出皮肤".to_string(),
+                description: "从纸壳当前排版与外观设置导出的皮肤".to_string(),
+                author: "我".to_string(),
+                version: "1.0.0".to_string(),
+                builtin: false,
+                dir: current.dir.clone(),
+                typography: crate::skin::SkinTypography {
+                    font_family: self.current_font.clone(),
+                    font_size: self.editor.font_size,
+                    line_spacing: self.editor.line_spacing,
+                    font_color: self.config.settings.font_color.clone(),
+                    format_use_tabs: self.config.settings.format_use_tabs,
+                },
+                spacing: current.spacing.clone(),
+                colors: current.colors.clone(),
+                effects: current.effects.clone(),
+            };
+            match skin.export_to_file(&path) {
+                Ok(()) => {
+                    self.plugin_manager_window
+                        .set_status(false, format!("当前外观已成功导出到 {:?}", path));
+                }
+                Err(e) => {
+                    self.plugin_manager_window
+                        .set_status(true, format!("导出失败: {e}"));
+                }
+            }
         }
     }
 
@@ -996,10 +1213,20 @@ impl eframe::App for PaperShellApp {
             None
         };
         let (total_words, cursor_words) = self.editor.get_stats();
+        let current_skin = self.skin_manager.current_skin();
+
         // Title Bar
-        let title_bar = egui::TopBottomPanel::top("title_bar_panel")
+        let mut title_bar = egui::TopBottomPanel::top("title_bar_panel")
             // This panel has one explicit border painted below.
             .show_separator_line(false);
+        if let Some(color) = current_skin
+            .colors
+            .titlebar_background_color
+            .as_deref()
+            .and_then(crate::config::parse_hex_color)
+        {
+            title_bar = title_bar.frame(egui::Frame::side_top_panel(&ctx.style()).fill(color));
+        }
         let title_bar_panel = title_bar.show(ctx, |ui| {
             if modal_open {
                 ui.disable();
@@ -1031,6 +1258,8 @@ impl eframe::App for PaperShellApp {
                     sidebar_expanded: self.sidebar.is_expanded(),
                     vim_mode: self.config.settings.vim_mode,
                     vim_mode_label: self.editor.get_vim_mode_label(),
+                    skins: self.skin_manager.all_skins(),
+                    current_skin_id: self.skin_manager.current_skin_id(),
                 },
             )
             .or(shortcut_action)
@@ -1169,6 +1398,19 @@ impl eframe::App for PaperShellApp {
                         self.plugin_manager_window.open(ctx);
                     }
                     crate::ui::title_bar::TitleBarAction::About => self.about_window.open(ctx),
+                    crate::ui::title_bar::TitleBarAction::SelectSkin(id) => {
+                        self.apply_skin(ctx, &id);
+                    }
+                    crate::ui::title_bar::TitleBarAction::ImportSkin => {
+                        self.import_skin_dialog(ctx);
+                    }
+                    crate::ui::title_bar::TitleBarAction::ExportCurrentSkin => {
+                        self.export_current_skin_dialog();
+                    }
+                    crate::ui::title_bar::TitleBarAction::OpenSkinMarket => {
+                        self.plugin_manager_window
+                            .open_tab(ctx, crate::ui::plugins::manager::ManagerTab::Market);
+                    }
                     crate::ui::title_bar::TitleBarAction::ConfigurePlugin(id) => {
                         if id == "cloud_backup" {
                             self.cloud_backup_dialog
@@ -1203,20 +1445,28 @@ impl eframe::App for PaperShellApp {
             });
         }
 
+        let current_skin = self.skin_manager.current_skin();
+
         // Main Content
         egui::CentralPanel::default()
             .frame(
-                egui::Frame::central_panel(&ctx.style()).inner_margin(egui::Margin {
-                    left: 2,
-                    right: 6,
-                    top: 6,
-                    bottom: 6,
-                }),
+                egui::Frame::central_panel(&ctx.style())
+                    .fill(egui::Color32::TRANSPARENT)
+                    .inner_margin(egui::Margin {
+                        left: current_skin.spacing.editor_padding_left as i8,
+                        right: current_skin.spacing.editor_padding_right as i8,
+                        top: current_skin.spacing.editor_padding_top as i8,
+                        bottom: current_skin.spacing.editor_padding_bottom as i8,
+                    }),
             )
             .show(ctx, |ui| {
                 if modal_open {
                     ui.disable();
                 }
+                let panel_rect = ui.max_rect();
+                self.skin_renderer
+                    .paint_background(ui, &current_skin, panel_rect);
+
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     ui.vertical_centered(|ui| {
                         if self.vim_pending_escape {
@@ -1247,6 +1497,8 @@ impl eframe::App for PaperShellApp {
             &all_plugins,
             self.plugin_manager.load_errors(),
             &mut self.external_plugin_config_window,
+            Some(&mut self.skin_manager),
+            Some(&mut self.skin_market_client),
         );
         if let Some(action) = manager_action {
             self.handle_plugin_manager_action(ctx, action);
@@ -1904,5 +2156,53 @@ mod final_integration_tests {
 
         assert_eq!(app.config.settings.font_color, "Default");
         assert_eq!(app.editor.font_color, None);
+    }
+
+    #[test]
+    fn test_skin_workflow_apply_and_custom_save() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut app = PaperShellApp::default();
+        app.skin_manager = crate::skin::SkinManager::new(
+            temp_dir.path().to_path_buf(),
+            "classic_paper".to_string(),
+        );
+        let ctx = egui::Context::default();
+
+        // 1. Initial skin is classic_paper
+        assert_eq!(app.skin_manager.current_skin_id(), "classic_paper");
+
+        // 2. Apply warm_parchment
+        app.apply_skin(&ctx, "warm_parchment");
+        assert_eq!(app.skin_manager.current_skin_id(), "warm_parchment");
+        assert_eq!(app.config.settings.current_skin, "warm_parchment");
+        assert_eq!(app.editor.font_size, 14.5);
+        assert_eq!(app.editor.line_spacing, 1.6);
+        assert_eq!(app.config.settings.font_color, "#382C1E");
+
+        // 3. Apply obsidian_night (dark mode)
+        app.apply_skin(&ctx, "obsidian_night");
+        assert_eq!(app.skin_manager.current_skin_id(), "obsidian_night");
+        assert_eq!(app.config.settings.current_skin, "obsidian_night");
+        assert_eq!(app.config.settings.font_color, "#DCDCE0");
+        assert!(ctx.style().visuals.dark_mode);
+
+        // 4. Save and apply custom skin
+        let mut custom = crate::skin::Skin::mint_breeze();
+        custom.id = "user_summer_skin".to_string();
+        custom.name = "盛夏清凉".to_string();
+        custom.typography.font_size = 18.0;
+        custom.typography.line_spacing = 1.8;
+        custom.spacing.editor_padding_left = 16.0;
+
+        let saved = app.skin_manager.save_custom_skin(custom).unwrap();
+        app.apply_skin(&ctx, &saved.id);
+
+        assert_eq!(app.skin_manager.current_skin_id(), "user_summer_skin");
+        assert_eq!(app.editor.font_size, 18.0);
+        assert_eq!(app.editor.line_spacing, 1.8);
+
+        // 5. Uninstall custom skin reverts to default
+        assert!(app.skin_manager.uninstall_skin("user_summer_skin").is_ok());
+        assert_eq!(app.skin_manager.current_skin_id(), "classic_paper");
     }
 }

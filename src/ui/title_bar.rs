@@ -30,6 +30,10 @@ pub enum TitleBarAction {
     /// Open the unified plugin management window.
     ManagePlugins,
     About,
+    SelectSkin(String),
+    ImportSkin,
+    ExportCurrentSkin,
+    OpenSkinMarket,
 }
 
 pub struct TitleBar;
@@ -54,6 +58,8 @@ pub struct TitleBarState<'a> {
     pub plugins: &'a [PluginMetadata],
     pub vim_mode: bool,
     pub vim_mode_label: Option<&'a str>,
+    pub skins: &'a [crate::skin::Skin],
+    pub current_skin_id: &'a str,
 }
 
 impl TitleBar {
@@ -78,6 +84,8 @@ impl TitleBar {
             plugins,
             vim_mode,
             vim_mode_label,
+            skins,
+            current_skin_id,
         } = state;
 
         let mut action = None;
@@ -595,6 +603,78 @@ impl TitleBar {
 
                         ui.separator();
 
+                        // 5. 皮肤风格 (Skin Style)
+                        let current_skin_name = skins
+                            .iter()
+                            .find(|s| s.id == current_skin_id)
+                            .map(|s| s.name.as_str())
+                            .unwrap_or("默认");
+
+                        egui::containers::menu::SubMenuButton::from_button(
+                            egui::Button::new(format!(
+                                "{} 皮肤风格",
+                                egui_phosphor::regular::PALETTE
+                            ))
+                            .right_text(format!("{current_skin_name} ⏵")),
+                        )
+                        .config(
+                            egui::containers::menu::MenuConfig::default()
+                                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside),
+                        )
+                        .ui(ui, |ui| {
+                            let skin_menu_width = 180.0;
+                            ui.set_width(skin_menu_width);
+                            ui.set_max_width(skin_menu_width);
+
+                            for skin in skins {
+                                let is_selected = skin.id == current_skin_id;
+                                let label = if is_selected {
+                                    format!("{} {}", egui_phosphor::regular::CHECK, skin.name)
+                                } else {
+                                    format!("   {}", skin.name)
+                                };
+                                let mut response = ui.selectable_label(is_selected, label);
+                                if !skin.description.is_empty() {
+                                    response = response.on_hover_text(&skin.description);
+                                }
+                                if response.clicked() {
+                                    action = Some(TitleBarAction::SelectSkin(skin.id.clone()));
+                                }
+                            }
+
+                            ui.separator();
+
+                            if ui
+                                .button(format!(
+                                    "{} 导入皮肤…",
+                                    egui_phosphor::regular::DOWNLOAD_SIMPLE
+                                ))
+                                .clicked()
+                            {
+                                action = Some(TitleBarAction::ImportSkin);
+                            }
+                            if ui
+                                .button(format!(
+                                    "{} 导出当前皮肤…",
+                                    egui_phosphor::regular::EXPORT
+                                ))
+                                .clicked()
+                            {
+                                action = Some(TitleBarAction::ExportCurrentSkin);
+                            }
+                            if ui
+                                .button(format!(
+                                    "{} 皮肤市场与管理…",
+                                    egui_phosphor::regular::STOREFRONT
+                                ))
+                                .clicked()
+                            {
+                                action = Some(TitleBarAction::OpenSkinMarket);
+                            }
+                        });
+
+                        ui.separator();
+
                         ui.horizontal(|ui| {
                             if ui
                                 .button("整理段落缩进")
@@ -684,6 +764,14 @@ impl TitleBar {
                                 .clicked()
                             {
                                 action = Some(TitleBarAction::ManagePlugins);
+                                ui.close();
+                            }
+                            if ui
+                                .button(format!("{} 皮肤市场与管理…", egui_phosphor::regular::PALETTE))
+                                .on_hover_text("管理皮肤、从 GitHub 市场安装或导入导出")
+                                .clicked()
+                            {
+                                action = Some(TitleBarAction::OpenSkinMarket);
                                 ui.close();
                             }
                             if ui
@@ -986,6 +1074,8 @@ mod tests {
                             sidebar_expanded: true,
                             vim_mode: false,
                             vim_mode_label: None,
+                            skins: &[],
+                            current_skin_id: "classic_paper",
                         },
                     );
                 });
@@ -1150,6 +1240,8 @@ mod tests {
                         sidebar_expanded: false,
                         vim_mode: false,
                         vim_mode_label: None,
+                        skins: &[],
+                        current_skin_id: "classic_paper",
                     });
                     assert!(ui.min_rect().width() <= available + 1.0, "title overflow at {width}");
                     assert!(ui.min_rect().height() <= 24.0, "title bar must remain a single compact row");
@@ -1197,6 +1289,8 @@ mod tests {
                             sidebar_expanded: false,
                             vim_mode: false,
                             vim_mode_label: None,
+                            skins: &[],
+                            current_skin_id: "classic_paper",
                         },
                     );
                 });
@@ -1296,6 +1390,8 @@ mod tests {
                         sidebar_expanded: true,
                         vim_mode: false,
                         vim_mode_label: None,
+                        skins: &[],
+                        current_skin_id: "classic_paper",
                     },
                 );
             });
@@ -1333,6 +1429,8 @@ mod tests {
                         sidebar_expanded: true,
                         vim_mode: false,
                         vim_mode_label: None,
+                        skins: &[],
+                        current_skin_id: "classic_paper",
                     },
                 );
             });
@@ -1367,6 +1465,8 @@ mod tests {
                         sidebar_expanded: true,
                         vim_mode: false,
                         vim_mode_label: None,
+                        skins: &[],
+                        current_skin_id: "classic_paper",
                     },
                 );
             });
@@ -1722,6 +1822,8 @@ mod tests {
                                     sidebar_expanded: false,
                                     vim_mode: false,
                                     vim_mode_label: None,
+                                    skins: &[],
+                                    current_skin_id: "classic_paper",
                                 },
                             );
                         });

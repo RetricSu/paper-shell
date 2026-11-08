@@ -175,10 +175,19 @@ impl Sidebar {
         }
         let mut action = None;
         let max_width = (ctx.content_rect().width() * 0.45).clamp(140.0, 400.0);
-        egui::SidePanel::left("workspace_tree")
+        let mut side_panel = egui::SidePanel::left("workspace_tree")
             .default_width(230.0)
-            .width_range(140.0..=max_width)
-            .show(ctx, |ui| {
+            .width_range(140.0..=max_width);
+        if let Some(skin) = crate::style::get_active_skin()
+            && let Some(color) = skin
+                .colors
+                .sidebar_background_color
+                .as_deref()
+                .and_then(crate::config::parse_hex_color)
+        {
+            side_panel = side_panel.frame(egui::Frame::side_top_panel(&ctx.style()).fill(color));
+        }
+        side_panel.show(ctx, |ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(4.0, 3.0);
                 ui.spacing_mut().indent = 12.0;
                 ui.visuals_mut().indent_has_left_vline = false;

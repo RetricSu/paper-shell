@@ -1,9 +1,10 @@
+use crate::config::parse_hex_color;
 use crate::plugin::external::{SettingDefinition, SettingType};
 use crate::plugin::{PluginLoadError, PluginMetadata, PluginSource};
 use crate::style::STATUS_GREEN;
 use crate::ui::dialog::{ModalConfig, modal_button, show_modal};
 use crate::ui::title_bar::TitleBar;
-use egui::{Align, Color32, Context, Layout, RichText, Ui, Vec2};
+use egui::{Align, Color32, Context, Layout, RichText, Stroke, Ui, Vec2};
 use std::collections::BTreeMap;
 
 // Restrained semantic palette aligned with HistoryWindow and dialog.rs.
@@ -17,13 +18,30 @@ const DEFAULT_MANAGER_HEIGHT: f32 = 520.0;
 const MIN_MANAGER_WIDTH: f32 = 520.0;
 const MIN_MANAGER_HEIGHT: f32 = 360.0;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ManagerTab {
+    #[default]
+    Plugins,
+    Skins,
+    Market,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum PluginManagerAction {
     SetEnabled { id: String, enabled: bool },
     Rescan,
     OpenPluginsFolder,
     Configure(String),
     Uninstall(String),
+    // Skin actions
+    SelectSkin(String),
+    ImportSkin,
+    ExportSkin(String),
+    ExportCurrentSettingsAsSkin,
+    UninstallSkin(String),
+    SaveCustomSkin(crate::skin::Skin),
+    FetchMarketSkins,
+    InstallMarketSkin(crate::skin::MarketSkin),
 }
 
 pub struct PluginManagerWindow {
@@ -31,6 +49,22 @@ pub struct PluginManagerWindow {
     viewport_id: egui::ViewportId,
     status: Option<(bool, String)>,
     confirm_uninstall: Option<(String, String)>,
+    confirm_uninstall_skin: Option<(String, String)>,
+    current_tab: ManagerTab,
+    skin_search: String,
+    market_search: String,
+    custom_skin_tuning: bool,
+    tune_name: String,
+    tune_id: String,
+    tune_font_size: f32,
+    tune_line_spacing: f32,
+    tune_font_color: String,
+    tune_item_spacing: f32,
+    tune_editor_padding: f32,
+    tune_bg_opacity: f32,
+    tune_editor_opacity: f32,
+    tune_corner_radius: f32,
+    tune_dark_mode: bool,
 }
 
 impl Default for PluginManagerWindow {
@@ -46,7 +80,28 @@ impl PluginManagerWindow {
             viewport_id: egui::ViewportId::from_hash_of("plugin_manager_window"),
             status: None,
             confirm_uninstall: None,
+            confirm_uninstall_skin: None,
+            current_tab: ManagerTab::Plugins,
+            skin_search: String::new(),
+            market_search: String::new(),
+            custom_skin_tuning: false,
+            tune_name: "我的自定义皮肤".to_string(),
+            tune_id: "custom_skin".to_string(),
+            tune_font_size: 14.0,
+            tune_line_spacing: 1.5,
+            tune_font_color: "#1A1A1A".to_string(),
+            tune_item_spacing: 8.0,
+            tune_editor_padding: 8.0,
+            tune_bg_opacity: 0.25,
+            tune_editor_opacity: 1.0,
+            tune_corner_radius: 0.0,
+            tune_dark_mode: false,
         }
+    }
+
+    pub fn open_tab(&mut self, ctx: &Context, tab: ManagerTab) {
+        self.current_tab = tab;
+        self.open(ctx);
     }
 
     pub fn viewport_id(&self) -> egui::ViewportId {
@@ -83,6 +138,8 @@ impl PluginManagerWindow {
         plugins: &[PluginMetadata],
         load_errors: &[PluginLoadError],
         config_window: &mut ExternalPluginConfigWindow,
+        mut skin_manager: Option<&mut crate::skin::SkinManager>,
+        mut market_client: Option<&mut crate::skin::SkinMarketClient>,
     ) -> (Option<PluginManagerAction>, Option<ExternalPluginSettings>) {
         if !self.open {
             return (None, None);
@@ -96,7 +153,7 @@ impl PluginManagerWindow {
             viewport_id,
             egui::ViewportBuilder::default()
                 .with_title(format!(
-                    "{} 插件管理 · {}",
+                    "{} 插件与皮肤 · {}",
                     egui_phosphor::regular::PUZZLE_PIECE,
                     crate::constant::DEFAULT_WINDOW_TITLE
                 ))
@@ -106,9 +163,14 @@ impl PluginManagerWindow {
                 .with_resizable(true)
                 .with_transparent(true),
             |ctx, _class| {
-                crate::style::configure_style(ctx);
+                if let Some(mgr) = skin_manager.as_deref() {
+                    crate::skin::SkinRenderer::apply_to_context(ctx, &mgr.current_skin());
+                } else {
+                    crate::style::configure_style(ctx);
+                }
 
                 let had_modal = self.confirm_uninstall.is_some()
+                    || self.confirm_uninstall_skin.is_some()
                     || (ctx.embed_viewports() && config_window.is_open());
 
                 let title_bar_panel = egui::TopBottomPanel::top("plugin_manager_title_bar")
@@ -131,8 +193,22 @@ impl PluginManagerWindow {
                         if had_modal {
                             ui.disable();
                         }
-                        if let Some(body_action) = self.show_content(ui, plugins, load_errors) {
-                            action = Some(body_action);
+                        match self.current_tab {
+                            ManagerTab::Plugins => {
+                                if let Some(body_action) = self.show_content(ui, plugins, load_errors) {
+                                    action = Some(body_action);
+                                }
+                            }
+                            ManagerTab::Skins => {
+                                if let Some(body_action) = self.show_skins_content(ui, skin_manager.as_deref_mut()) {
+                                    action = Some(body_action);
+                                }
+                            }
+                            ManagerTab::Market => {
+                                if let Some(body_action) = self.show_market_content(ui, skin_manager.as_deref_mut(), market_client.as_deref_mut()) {
+                                    action = Some(body_action);
+                                }
+                            }
                         }
                     });
 
@@ -142,6 +218,10 @@ impl PluginManagerWindow {
 
                 if let Some(uninstall_action) = self.show_uninstall_modal(ctx) {
                     action = Some(uninstall_action);
+                }
+
+                if let Some(uninstall_skin_action) = self.show_uninstall_skin_modal(ctx) {
+                    action = Some(uninstall_skin_action);
                 }
 
                 let close_requested = ctx.input(|i| i.viewport().close_requested())
@@ -156,6 +236,7 @@ impl PluginManagerWindow {
 
                 if !self.open {
                     self.confirm_uninstall = None;
+                    self.confirm_uninstall_skin = None;
                     config_window.close();
                 }
             },
@@ -187,7 +268,10 @@ impl PluginManagerWindow {
                 .send_viewport_cmd(egui::ViewportCommand::Maximized(!is_maximized));
         }
 
-        let show_summary = ui.available_width() >= 480.0;
+        let available_w = ui.available_width();
+        let show_summary = available_w >= 560.0;
+        let show_actions = available_w >= 480.0;
+        let is_compact = available_w < 500.0;
         let enabled_count = plugins.iter().filter(|p| p.enabled).count();
 
         egui::MenuBar::new().ui(ui, |ui| {
@@ -243,29 +327,92 @@ impl PluginManagerWindow {
 
                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                     let title_color = ui.visuals().text_color().gamma_multiply(0.82);
-                    ui.label(
-                        RichText::new(format!("{} 插件管理", egui_phosphor::regular::PUZZLE_PIECE))
-                            .strong()
-                            .color(title_color),
-                    );
+                    let title_text = if is_compact {
+                        "插件".to_string()
+                    } else {
+                        format!("{} 插件与皮肤", egui_phosphor::regular::PUZZLE_PIECE)
+                    };
+                    ui.label(RichText::new(title_text).strong().color(title_color));
                     ui.add_space(6.0);
-                    if quiet_button(
-                        ui,
-                        format!("{} 重新扫描", egui_phosphor::regular::ARROW_CLOCKWISE),
-                    )
-                    .on_hover_text("重新读取插件目录，加载新插件并显示配置错误")
-                    .clicked()
-                    {
-                        action = Some(PluginManagerAction::Rescan);
-                    }
-                    if quiet_button(
-                        ui,
-                        format!("{} 打开插件目录", egui_phosphor::regular::FOLDER_OPEN),
-                    )
-                    .on_hover_text("将外部插件文件夹放入此目录后点击“重新扫描”")
-                    .clicked()
-                    {
-                        action = Some(PluginManagerAction::OpenPluginsFolder);
+
+                    // Tab bar
+                    let (p_label, s_label, m_label) = if is_compact {
+                        ("插件".to_string(), "皮肤".to_string(), "市场".to_string())
+                    } else {
+                        (
+                            format!("{} 基础插件", egui_phosphor::regular::PUZZLE_PIECE),
+                            format!("{} 皮肤插件", egui_phosphor::regular::PALETTE),
+                            format!("{} 皮肤市场", egui_phosphor::regular::STOREFRONT),
+                        )
+                    };
+
+                    ui.selectable_value(&mut self.current_tab, ManagerTab::Plugins, p_label);
+                    ui.selectable_value(&mut self.current_tab, ManagerTab::Skins, s_label);
+                    ui.selectable_value(&mut self.current_tab, ManagerTab::Market, m_label);
+
+                    if show_actions {
+                        ui.add_space(6.0);
+                        match self.current_tab {
+                            ManagerTab::Plugins => {
+                                if quiet_button(
+                                    ui,
+                                    format!("{} 重新扫描", egui_phosphor::regular::ARROW_CLOCKWISE),
+                                )
+                                .on_hover_text("重新读取插件目录，加载新插件并显示配置错误")
+                                .clicked()
+                                {
+                                    action = Some(PluginManagerAction::Rescan);
+                                }
+                                if quiet_button(
+                                    ui,
+                                    format!("{} 打开插件目录", egui_phosphor::regular::FOLDER_OPEN),
+                                )
+                                .on_hover_text("将外部插件文件夹放入此目录后点击“重新扫描”")
+                                .clicked()
+                                {
+                                    action = Some(PluginManagerAction::OpenPluginsFolder);
+                                }
+                            }
+                            ManagerTab::Skins => {
+                                if quiet_button(
+                                    ui,
+                                    format!("{} 导入皮肤…", egui_phosphor::regular::DOWNLOAD_SIMPLE),
+                                )
+                                .on_hover_text("从 .toml, .paperskin 或 .zip 文件导入皮肤")
+                                .clicked()
+                                {
+                                    action = Some(PluginManagerAction::ImportSkin);
+                                }
+                                if quiet_button(
+                                    ui,
+                                    format!("{} 导出当前配置…", egui_phosphor::regular::EXPORT),
+                                )
+                                .on_hover_text("将当前字号、间距、字体及效果导出为新皮肤")
+                                .clicked()
+                                {
+                                    action = Some(PluginManagerAction::ExportCurrentSettingsAsSkin);
+                                }
+                                let tuning_label = if self.custom_skin_tuning {
+                                    format!("{} 收起微调", egui_phosphor::regular::CARET_UP)
+                                } else {
+                                    format!("{} 新建/微调皮肤", egui_phosphor::regular::SLIDERS)
+                                };
+                                if quiet_button(ui, tuning_label).clicked() {
+                                    self.custom_skin_tuning = !self.custom_skin_tuning;
+                                }
+                            }
+                            ManagerTab::Market => {
+                                if quiet_button(
+                                    ui,
+                                    format!("{} 从 GitHub 刷新", egui_phosphor::regular::ARROW_CLOCKWISE),
+                                )
+                                .on_hover_text("从远程 GitHub 仓库文件夹拉取最新皮肤列表")
+                                .clicked()
+                                {
+                                    action = Some(PluginManagerAction::FetchMarketSkins);
+                                }
+                            }
+                        }
                     }
                 });
             });
@@ -637,6 +784,584 @@ impl PluginManagerWindow {
             None
         }
     }
+
+    fn show_uninstall_skin_modal(&mut self, ctx: &Context) -> Option<PluginManagerAction> {
+        let (id, name) = self.confirm_uninstall_skin.clone()?;
+        let message = format!("确定永久删除自定义皮肤“{name}”吗？此操作无法撤销。");
+        let config = ModalConfig {
+            id: "skin_confirm_uninstall",
+            title: "确认卸载皮肤",
+            icon: egui_phosphor::regular::WARNING,
+            icon_color: WARNING_ICON_COLOR,
+            message: &message,
+            width: 340.0,
+        };
+
+        let mut confirmed = false;
+        let mut cancelled = false;
+
+        let response = show_modal(ctx, config, |ui| {
+            ui.horizontal(|ui| {
+                if modal_button(
+                    ui,
+                    RichText::new(format!("{} 永久删除", egui_phosphor::regular::TRASH))
+                        .color(ERROR_TEXT_COLOR),
+                )
+                .clicked()
+                {
+                    confirmed = true;
+                }
+
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if modal_button(ui, RichText::new("取消").strong()).clicked() {
+                        cancelled = true;
+                    }
+                });
+            });
+        });
+
+        if confirmed {
+            self.confirm_uninstall_skin = None;
+            Some(PluginManagerAction::UninstallSkin(id))
+        } else if cancelled || response.escape_pressed {
+            self.confirm_uninstall_skin = None;
+            None
+        } else {
+            None
+        }
+    }
+
+    fn show_skins_content(
+        &mut self,
+        ui: &mut Ui,
+        skin_manager: Option<&mut crate::skin::SkinManager>,
+    ) -> Option<PluginManagerAction> {
+        let mut action = None;
+        let text_color = ui.visuals().text_color();
+
+        // 1. Status / Notice
+        egui::Frame::new()
+            .inner_margin(egui::Margin::symmetric(20, 10))
+            .show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 6.0;
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new("自定义皮肤插件支持字体、间距调节与背景图片/透明度效果，支持导入与导出。")
+                            .small()
+                            .color(text_color.gamma_multiply(0.58)),
+                    );
+
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.skin_search)
+                                .hint_text("搜索皮肤…")
+                                .desired_width(140.0),
+                        );
+                    });
+                });
+
+                if let Some((is_error, message)) = self.status.clone() {
+                    let (icon, color) = if is_error {
+                        (egui_phosphor::regular::WARNING_CIRCLE, ERROR_TEXT_COLOR)
+                    } else {
+                        (egui_phosphor::regular::CHECK_CIRCLE, SUCCESS_TEXT_COLOR)
+                    };
+                    let mut dismiss = false;
+                    ui.horizontal(|ui| {
+                        ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
+                            if ui
+                                .add_sized(
+                                    [20.0, 20.0],
+                                    egui::Button::new(
+                                        RichText::new(egui_phosphor::regular::X)
+                                            .small()
+                                            .color(text_color.gamma_multiply(0.55)),
+                                    )
+                                    .frame(false),
+                                )
+                                .on_hover_text("关闭提示")
+                                .clicked()
+                            {
+                                dismiss = true;
+                            }
+                            ui.with_layout(Layout::left_to_right(Align::Min), |ui| {
+                                ui.add(
+                                    egui::Label::new(
+                                        RichText::new(format!("{icon} {message}"))
+                                            .size(12.5)
+                                            .color(color),
+                                    )
+                                    .wrap(),
+                                );
+                            });
+                        });
+                    });
+                    if dismiss {
+                        self.status = None;
+                    }
+                }
+            });
+
+        hairline_separator(ui);
+
+        // 2. Custom skin tuner panel (if active)
+        if self.custom_skin_tuning {
+            egui::Frame::new()
+                .fill(ui.visuals().widgets.inactive.bg_fill)
+                .inner_margin(egui::Margin::symmetric(20, 12))
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.y = 8.0;
+                    ui.label(RichText::new("新建 / 微调自定义皮肤").strong());
+
+                    ui.horizontal(|ui| {
+                        ui.label("皮肤名称:");
+                        ui.text_edit_singleline(&mut self.tune_name);
+                        ui.add_space(8.0);
+                        ui.label("皮肤 ID:");
+                        ui.text_edit_singleline(&mut self.tune_id);
+                        ui.add_space(8.0);
+                        ui.checkbox(&mut self.tune_dark_mode, "深色模式");
+                    });
+
+                    ui.horizontal(|ui| {
+                        ui.label("字体大小:");
+                        ui.add(egui::Slider::new(&mut self.tune_font_size, 10.0..=32.0).suffix(" pt"));
+                        ui.add_space(8.0);
+                        ui.label("行间距:");
+                        ui.add(egui::Slider::new(&mut self.tune_line_spacing, 1.0..=2.5).step_by(0.1).suffix(" x"));
+                        ui.add_space(8.0);
+                        ui.label("字体颜色:");
+                        ui.text_edit_singleline(&mut self.tune_font_color);
+                    });
+
+                    ui.horizontal(|ui| {
+                        ui.label("元素间距:");
+                        ui.add(egui::Slider::new(&mut self.tune_item_spacing, 4.0..=20.0).suffix(" px"));
+                        ui.add_space(8.0);
+                        ui.label("编辑边距:");
+                        ui.add(egui::Slider::new(&mut self.tune_editor_padding, 2.0..=24.0).suffix(" px"));
+                    });
+
+                    ui.horizontal(|ui| {
+                        ui.label("编辑器透明度:");
+                        ui.add(egui::Slider::new(&mut self.tune_editor_opacity, 0.2..=1.0).step_by(0.05));
+                        ui.add_space(8.0);
+                        ui.label("背景图透明度:");
+                        ui.add(egui::Slider::new(&mut self.tune_bg_opacity, 0.0..=1.0).step_by(0.05));
+                        ui.add_space(8.0);
+                        ui.label("圆角:");
+                        ui.add(egui::Slider::new(&mut self.tune_corner_radius, 0.0..=12.0).suffix(" px"));
+                    });
+
+                    ui.horizontal(|ui| {
+                        if action_button(ui, "保存为自定义皮肤并应用").clicked() {
+                            let new_skin = crate::skin::Skin {
+                                id: self.tune_id.trim().to_string(),
+                                name: self.tune_name.trim().to_string(),
+                                description: "用户自定义皮肤".to_string(),
+                                author: "我".to_string(),
+                                version: "1.0.0".to_string(),
+                                builtin: false,
+                                dir: None,
+                                typography: crate::skin::SkinTypography {
+                                    font_family: "Default".to_string(),
+                                    font_size: self.tune_font_size,
+                                    line_spacing: self.tune_line_spacing,
+                                    font_color: self.tune_font_color.clone(),
+                                    format_use_tabs: false,
+                                },
+                                spacing: crate::skin::SkinSpacing {
+                                    item_spacing_x: self.tune_item_spacing,
+                                    item_spacing_y: self.tune_item_spacing,
+                                    editor_padding_left: self.tune_editor_padding,
+                                    editor_padding_right: self.tune_editor_padding,
+                                    editor_padding_top: self.tune_editor_padding,
+                                    editor_padding_bottom: self.tune_editor_padding,
+                                    ..Default::default()
+                                },
+                                colors: crate::skin::SkinColors {
+                                    dark_mode: self.tune_dark_mode,
+                                    background_color: Some(if self.tune_dark_mode { "#16161A".to_string() } else { "#FAFAFA".to_string() }),
+                                    editor_background_color: Some(if self.tune_dark_mode { "#1F1F24".to_string() } else { "#FFFFFF".to_string() }),
+                                    text_color: Some(self.tune_font_color.clone()),
+                                    ..Default::default()
+                                },
+                                effects: crate::skin::SkinEffects {
+                                    background_image_opacity: self.tune_bg_opacity,
+                                    editor_opacity: self.tune_editor_opacity,
+                                    corner_radius: self.tune_corner_radius,
+                                    ..Default::default()
+                                },
+                            };
+                            action = Some(PluginManagerAction::SaveCustomSkin(new_skin));
+                            self.custom_skin_tuning = false;
+                        }
+                        if quiet_button(ui, "取消").clicked() {
+                            self.custom_skin_tuning = false;
+                        }
+                    });
+                });
+            hairline_separator(ui);
+        }
+
+        // 3. Scrollable skins list
+        let current_skin_id = skin_manager
+            .as_ref()
+            .map(|m| m.current_skin_id().to_string())
+            .unwrap_or_else(|| "classic_paper".to_string());
+
+        let skins_to_show: Vec<crate::skin::Skin> = if let Some(mgr) = skin_manager {
+            mgr.all_skins()
+                .iter()
+                .filter(|s| {
+                    if self.skin_search.trim().is_empty() {
+                        true
+                    } else {
+                        let query = self.skin_search.to_lowercase();
+                        s.name.to_lowercase().contains(&query)
+                            || s.id.to_lowercase().contains(&query)
+                            || s.description.to_lowercase().contains(&query)
+                    }
+                })
+                .cloned()
+                .collect()
+        } else {
+            crate::skin::Skin::builtins()
+        };
+
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                egui::Frame::new()
+                    .inner_margin(egui::Margin::symmetric(20, 12))
+                    .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing.y = 12.0;
+
+                        for skin in &skins_to_show {
+                            let is_current = skin.id == current_skin_id;
+
+                            ui.group(|ui| {
+                                ui.spacing_mut().item_spacing.y = 6.0;
+
+                                // Row 1: dot, name, tags, action buttons
+                                ui.horizontal(|ui| {
+                                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                        if !skin.builtin {
+                                            if quiet_button(
+                                                ui,
+                                                RichText::new(format!("{} 卸载", egui_phosphor::regular::TRASH))
+                                                    .color(ERROR_TEXT_COLOR),
+                                            )
+                                            .on_hover_text("永久删除该自定义皮肤")
+                                            .clicked()
+                                            {
+                                                self.confirm_uninstall_skin =
+                                                    Some((skin.id.clone(), skin.name.clone()));
+                                            }
+                                        }
+
+                                        if quiet_button(
+                                            ui,
+                                            format!("{} 导出", egui_phosphor::regular::EXPORT),
+                                        )
+                                        .on_hover_text("导出该皮肤为 .toml 或 .paperskin")
+                                        .clicked()
+                                        {
+                                            action = Some(PluginManagerAction::ExportSkin(skin.id.clone()));
+                                        }
+
+                                        if is_current {
+                                            ui.add_enabled(
+                                                false,
+                                                egui::Button::new(
+                                                    RichText::new("✓ 当前使用")
+                                                        .color(STATUS_GREEN)
+                                                        .strong(),
+                                                ),
+                                            );
+                                        } else {
+                                            if action_button(ui, "应用皮肤").clicked() {
+                                                action = Some(PluginManagerAction::SelectSkin(skin.id.clone()));
+                                            }
+                                        }
+
+                                        ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                                            // Active indicator dot
+                                            let (dot_rect, _) = ui.allocate_exact_size(
+                                                egui::vec2(10.0, 20.0),
+                                                egui::Sense::hover(),
+                                            );
+                                            let dot_center =
+                                                egui::pos2(dot_rect.left() + 3.5, dot_rect.center().y);
+                                            let dot_color = STATUS_GREEN.gamma_multiply(if is_current {
+                                                0.95
+                                            } else {
+                                                0.35
+                                            });
+                                            if is_current {
+                                                ui.painter().circle_filled(dot_center, 3.0, dot_color);
+                                            } else {
+                                                ui.painter().circle_stroke(
+                                                    dot_center,
+                                                    2.5,
+                                                    egui::Stroke::new(1.0, dot_color),
+                                                );
+                                            }
+
+                                            ui.label(RichText::new(&skin.name).size(14.0).strong());
+                                            ui.add_space(4.0);
+
+                                            let type_label = if skin.builtin { "内置" } else { "自定义" };
+                                            ui.label(RichText::new(type_label).small().color(text_color.gamma_multiply(0.55)));
+
+                                            let mode_label = if skin.colors.dark_mode { "深色" } else { "浅色" };
+                                            ui.label(RichText::new(mode_label).small().color(text_color.gamma_multiply(0.55)));
+
+                                            ui.label(RichText::new(format!("v{}", skin.version)).small().color(text_color.gamma_multiply(0.45)));
+                                        });
+                                    });
+                                });
+
+                                // Row 2: Description
+                                if !skin.description.is_empty() {
+                                    ui.label(RichText::new(&skin.description).color(text_color.gamma_multiply(0.72)));
+                                }
+
+                                // Row 3: Meta chips & color swatches
+                                ui.horizontal(|ui| {
+                                    ui.spacing_mut().item_spacing.x = 8.0;
+
+                                    let font_desc = format!(
+                                        "字号 {}pt · 行距 {}x",
+                                        skin.typography.font_size, skin.typography.line_spacing
+                                    );
+                                    ui.label(RichText::new(font_desc).small().color(text_color.gamma_multiply(0.60)));
+
+                                    let padding_desc = format!(
+                                        "内边距 {}px",
+                                        skin.spacing.editor_padding_left
+                                    );
+                                    ui.label(RichText::new(padding_desc).small().color(text_color.gamma_multiply(0.60)));
+
+                                    if skin.effects.background_image.is_some() || skin.effects.background_image_data.is_some() {
+                                        ui.label(RichText::new(format!("背景图 (透明度 {:.0}%)", skin.effects.background_image_opacity * 100.0)).small().color(STATUS_GREEN));
+                                    }
+
+                                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                        Self::paint_color_swatches(ui, &skin.colors);
+                                    });
+                                });
+                            });
+                        }
+                    });
+            });
+
+        action
+    }
+
+    fn show_market_content(
+        &mut self,
+        ui: &mut Ui,
+        skin_manager: Option<&mut crate::skin::SkinManager>,
+        mut market_client: Option<&mut crate::skin::SkinMarketClient>,
+    ) -> Option<PluginManagerAction> {
+        let mut action = None;
+        let text_color = ui.visuals().text_color();
+
+        // 1. Remote repo configuration bar
+        egui::Frame::new()
+            .inner_margin(egui::Margin::symmetric(20, 10))
+            .show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 6.0;
+
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("GitHub 仓库:").small());
+                    if let Some(client) = market_client.as_deref_mut() {
+                        ui.add(egui::TextEdit::singleline(&mut client.repo).desired_width(180.0));
+                        ui.label(RichText::new("分支:").small());
+                        ui.add(egui::TextEdit::singleline(&mut client.branch).desired_width(50.0));
+                        ui.label(RichText::new("目录:").small());
+                        ui.add(egui::TextEdit::singleline(&mut client.folder).desired_width(60.0));
+                    }
+
+                    if quiet_button(
+                        ui,
+                        format!("{} 从仓库拉取", egui_phosphor::regular::ARROW_CLOCKWISE),
+                    )
+                    .on_hover_text("从远程 GitHub 仓库指定文件夹加载皮肤列表")
+                    .clicked()
+                    {
+                        action = Some(PluginManagerAction::FetchMarketSkins);
+                    }
+
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.market_search)
+                                .hint_text("搜索市场…")
+                                .desired_width(130.0),
+                        );
+                    });
+                });
+
+                if let Some(client) = market_client.as_deref()
+                    && let Some(ref err) = client.last_error
+                {
+                    ui.label(
+                        RichText::new(format!("远程仓库连接提示：{}（已展示精选社区模版）", err))
+                            .small()
+                            .color(WARNING_ICON_COLOR),
+                    );
+                }
+            });
+
+        hairline_separator(ui);
+
+        // 2. Market skins listing
+        let installed_ids: Vec<String> = skin_manager
+            .as_ref()
+            .map(|m| m.all_skins().iter().map(|s| s.id.clone()).collect())
+            .unwrap_or_default();
+
+        let market_skins: Vec<crate::skin::MarketSkin> = if let Some(client) = market_client {
+            if client.cached_skins.is_empty() {
+                let mut templates = crate::skin::SkinMarketClient::community_templates();
+                for t in &mut templates {
+                    t.is_installed = installed_ids.contains(&t.id);
+                }
+                templates
+            } else {
+                client.cached_skins.clone()
+            }
+        } else {
+            crate::skin::SkinMarketClient::community_templates()
+        };
+
+        let filtered_skins: Vec<crate::skin::MarketSkin> = market_skins
+            .into_iter()
+            .filter(|m| {
+                if self.market_search.trim().is_empty() {
+                    true
+                } else {
+                    let query = self.market_search.to_lowercase();
+                    m.name.to_lowercase().contains(&query)
+                        || m.id.to_lowercase().contains(&query)
+                        || m.description.to_lowercase().contains(&query)
+                }
+            })
+            .collect();
+
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                egui::Frame::new()
+                    .inner_margin(egui::Margin::symmetric(20, 12))
+                    .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing.y = 12.0;
+
+                        if filtered_skins.is_empty() {
+                            ui.label("暂未找到匹配的皮肤。");
+                        }
+
+                        for market_skin in &filtered_skins {
+                            let is_installed = installed_ids.contains(&market_skin.id);
+
+                            ui.group(|ui| {
+                                ui.spacing_mut().item_spacing.y = 6.0;
+
+                                ui.horizontal(|ui| {
+                                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                        if is_installed {
+                                            ui.label(RichText::new("✓ 已安装").color(STATUS_GREEN).strong());
+                                            if quiet_button(ui, "重新下载").clicked() {
+                                                action = Some(PluginManagerAction::InstallMarketSkin(market_skin.clone()));
+                                            }
+                                        } else {
+                                            if action_button(
+                                                ui,
+                                                format!("{} 安装皮肤", egui_phosphor::regular::DOWNLOAD_SIMPLE),
+                                            )
+                                            .clicked()
+                                            {
+                                                action = Some(PluginManagerAction::InstallMarketSkin(market_skin.clone()));
+                                            }
+                                        }
+
+                                        ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                                            ui.label(RichText::new(&market_skin.name).size(14.0).strong());
+                                            ui.add_space(6.0);
+                                            ui.label(
+                                                RichText::new(format!(
+                                                    "v{} · {}",
+                                                    market_skin.version, market_skin.author
+                                                ))
+                                                .small()
+                                                .color(text_color.gamma_multiply(0.55)),
+                                            );
+                                            let mode_label = if market_skin.skin.colors.dark_mode {
+                                                "深色"
+                                            } else {
+                                                "浅色"
+                                            };
+                                            ui.label(RichText::new(mode_label).small().color(text_color.gamma_multiply(0.50)));
+                                        });
+                                    });
+                                });
+
+                                if !market_skin.description.is_empty() {
+                                    ui.label(RichText::new(&market_skin.description).color(text_color.gamma_multiply(0.72)));
+                                }
+
+                                ui.horizontal(|ui| {
+                                    ui.spacing_mut().item_spacing.x = 8.0;
+
+                                    let font_desc = format!(
+                                        "字号 {}pt · 行距 {}x",
+                                        market_skin.skin.typography.font_size, market_skin.skin.typography.line_spacing
+                                    );
+                                    ui.label(RichText::new(font_desc).small().color(text_color.gamma_multiply(0.60)));
+
+                                    if market_skin.skin.effects.background_image.is_some() || market_skin.skin.effects.background_image_data.is_some() {
+                                        ui.label(RichText::new("含背景图").small().color(STATUS_GREEN));
+                                    }
+
+                                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                        Self::paint_color_swatches(ui, &market_skin.skin.colors);
+                                    });
+                                });
+                            });
+                        }
+                    });
+            });
+
+        action
+    }
+
+    fn paint_color_swatches(ui: &mut Ui, colors: &crate::skin::SkinColors) {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            let swatches = [
+                colors.background_color.as_deref(),
+                colors.editor_background_color.as_deref(),
+                colors.text_color.as_deref(),
+                colors.accent_color.as_deref(),
+            ];
+            for hex_opt in swatches {
+                if let Some(hex) = hex_opt
+                    && let Some(color) = parse_hex_color(hex)
+                {
+                    let (rect, _) =
+                        ui.allocate_exact_size(Vec2::new(13.0, 13.0), egui::Sense::hover());
+                    ui.painter().rect(
+                        rect,
+                        2.0,
+                        color,
+                        Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color),
+                        egui::epaint::StrokeKind::Inside,
+                    );
+                }
+            }
+        });
+    }
 }
 
 pub struct ExternalPluginSettings {
@@ -924,6 +1649,10 @@ fn quiet_button(ui: &mut Ui, text: impl Into<egui::WidgetText>) -> egui::Respons
     )
 }
 
+fn action_button(ui: &mut Ui, text: impl Into<egui::WidgetText>) -> egui::Response {
+    ui.add(egui::Button::new(text).min_size(egui::vec2(0.0, 20.0)))
+}
+
 /// Gives checkboxes a crisp square paper box while global button backgrounds stay transparent.
 fn paper_checkbox(
     ui: &mut Ui,
@@ -1059,6 +1788,10 @@ mod tests {
         positions
     }
 
+    fn has_text(output: &egui::FullOutput, target: &str) -> bool {
+        !exact_text_positions(output, target).is_empty()
+    }
+
     fn any_rect<F>(shape: &egui::Shape, predicate: &F) -> bool
     where
         F: Fn(&egui::epaint::RectShape) -> bool,
@@ -1116,28 +1849,28 @@ mod tests {
         );
         let mut saved = None;
         let _ = ctx.run(egui::RawInput::default(), |ctx| {
-            saved = manager.show(ctx, &plugins, &[], &mut settings).1;
+            saved = manager.show(ctx, &plugins, &[], &mut settings, None, None).1;
         });
         assert!(saved.is_none());
         assert!(settings.is_open());
         settings.values.insert("token".into(), "secret".into());
         stage.set(1);
         let _ = ctx.run(egui::RawInput::default(), |ctx| {
-            saved = manager.show(ctx, &plugins, &[], &mut settings).1;
+            saved = manager.show(ctx, &plugins, &[], &mut settings, None, None).1;
         });
         assert_eq!(saved.unwrap().values["token"], "secret");
         // A failed persistence attempt keeps the draft in its own window.
         settings.notify_save_error("保存失败".into());
         stage.set(2);
         let _ = ctx.run(egui::RawInput::default(), |ctx| {
-            assert!(manager.show(ctx, &plugins, &[], &mut settings).1.is_none());
+            assert!(manager.show(ctx, &plugins, &[], &mut settings, None, None).1.is_none());
         });
         assert!(!settings.is_open());
         assert!(manager.is_open());
         settings.notify_save_error("重试".into());
         stage.set(3);
         let _ = ctx.run(egui::RawInput::default(), |ctx| {
-            assert!(manager.show(ctx, &plugins, &[], &mut settings).1.is_none());
+            assert!(manager.show(ctx, &plugins, &[], &mut settings, None, None).1.is_none());
         });
         assert!(!settings.is_open());
         assert!(manager.is_open());
@@ -1163,7 +1896,7 @@ mod tests {
                 ..Default::default()
             },
             |ctx| {
-                let _ = manager.show(ctx, &plugins, &[], &mut config_win);
+                let _ = manager.show(ctx, &plugins, &[], &mut config_win, None, None);
             },
         );
 
@@ -1189,7 +1922,7 @@ mod tests {
                 ..Default::default()
             },
             |ctx| {
-                let _ = manager.show(ctx, &plugins, &[], &mut config_win);
+                let _ = manager.show(ctx, &plugins, &[], &mut config_win, None, None);
             },
         );
         assert!(
@@ -1210,7 +1943,7 @@ mod tests {
                 ..Default::default()
             },
             |ctx| {
-                let (action, _) = manager.show(ctx, &plugins, &[], &mut config_win);
+                let (action, _) = manager.show(ctx, &plugins, &[], &mut config_win, None, None);
                 assert!(action.is_none());
             },
         );
@@ -1228,7 +1961,7 @@ mod tests {
                 ..Default::default()
             },
             |ctx| {
-                let _ = manager.show(ctx, &plugins, &[], &mut config_win);
+                let _ = manager.show(ctx, &plugins, &[], &mut config_win, None, None);
             },
         );
         assert!(!manager.is_open());
@@ -1250,10 +1983,10 @@ mod tests {
             ..Default::default()
         };
         let _ = ctx.run(input.clone(), |ctx| {
-            let _ = manager.show(ctx, &plugins, &[], &mut config_win);
+            let _ = manager.show(ctx, &plugins, &[], &mut config_win, None, None);
         });
         let output = ctx.run(input, |ctx| {
-            let _ = manager.show(ctx, &plugins, &[], &mut config_win);
+            let _ = manager.show(ctx, &plugins, &[], &mut config_win, None, None);
         });
 
         let generic_button_fill = Color32::from_gray(230);
@@ -1310,7 +2043,7 @@ mod tests {
                         ..Default::default()
                     },
                     |ctx| {
-                        let _ = manager.show(ctx, &plugins, &errors, &mut config_win);
+                        let _ = manager.show(ctx, &plugins, &errors, &mut config_win, None, None);
                     },
                 );
                 for clipped in &output.shapes {
@@ -1347,7 +2080,7 @@ mod tests {
                     ..Default::default()
                 },
                 |ctx| {
-                    result = manager.show(ctx, &plugins, &[], config_win);
+                    result = manager.show(ctx, &plugins, &[], config_win, None, None);
                 },
             );
             (output, result.0, result.1)
@@ -1437,5 +2170,73 @@ mod tests {
             saved.values.get("token").map(String::as_str),
             Some("secret-123")
         );
+    }
+
+    #[test]
+    fn plugin_manager_skins_tab_and_market_tab_render_and_dispatch() {
+        let ctx = Context::default();
+        let mut manager = PluginManagerWindow::new();
+        let mut config_win = ExternalPluginConfigWindow::new();
+        let plugins = sample_plugins();
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut skin_mgr = crate::skin::SkinManager::new(
+            temp_dir.path().to_path_buf(),
+            "classic_paper".to_string(),
+        );
+        let mut market_client = crate::skin::SkinMarketClient::default();
+
+        manager.open(&ctx);
+        manager.open_tab(&ctx, ManagerTab::Skins);
+
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(720.0, 520.0));
+        let mut render = |manager: &mut PluginManagerWindow,
+                          skin_mgr: &mut crate::skin::SkinManager,
+                          market_client: &mut crate::skin::SkinMarketClient,
+                          events: Vec<egui::Event>| {
+            let mut result = (None, None);
+            let output = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    result = manager.show(
+                        ctx,
+                        &plugins,
+                        &[],
+                        &mut config_win,
+                        Some(skin_mgr),
+                        Some(market_client),
+                    );
+                },
+            );
+            (output, result.0)
+        };
+
+        // Frame 1: render skins tab
+        let (output, _) = render(&mut manager, &mut skin_mgr, &mut market_client, vec![]);
+        assert!(has_text(&output, "经典白纸"));
+        assert!(has_text(&output, "古雅羊皮纸"));
+        assert!(has_text(&output, "✓ 当前使用"));
+
+        // Click apply on "古雅羊皮纸"
+        let apply_label = "应用皮肤";
+        let apply_positions = exact_text_positions(&output, apply_label);
+        assert!(!apply_positions.is_empty());
+        let (_, action) = render(
+            &mut manager,
+            &mut skin_mgr,
+            &mut market_client,
+            click_events(apply_positions[0]),
+        );
+        assert!(matches!(action, Some(PluginManagerAction::SelectSkin(_))));
+
+        // Switch to market tab
+        manager.open_tab(&ctx, ManagerTab::Market);
+        let (market_output, _) = render(&mut manager, &mut skin_mgr, &mut market_client, vec![]);
+        assert!(has_text(&market_output, "GitHub 仓库:"));
+        assert!(has_text(&market_output, "赛博霓虹") || has_text(&market_output, "北欧霜雪"));
     }
 }

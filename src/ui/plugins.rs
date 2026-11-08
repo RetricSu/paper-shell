@@ -60,42 +60,40 @@ impl PluginOutputWindow {
         }
 
         let mut open = self.open;
-        egui::Window::new(format!(
-            "{} 插件 · {}",
-            egui_phosphor::regular::PUZZLE_PIECE,
-            self.title
-        ))
-        .open(&mut open)
-        .collapsible(false)
-        .resizable(true)
-        .default_width(360.0)
-        .show(ctx, |ui| {
-            if self.running {
-                ui.horizontal(|ui| {
-                    ui.spinner();
-                    ui.label("正在运行…");
-                });
-                return;
-            }
+        crate::ui::viewport::show_tool_window(
+            ctx,
+            "plugin_output_window",
+            &self.title,
+            [420.0, 260.0],
+            &mut open,
+            |ui| {
+                if self.running {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label("正在运行…");
+                    });
+                    return;
+                }
 
-            let (icon, color) = if self.is_error {
-                (
-                    egui_phosphor::regular::WARNING_CIRCLE,
-                    Color32::from_rgb(200, 80, 80),
-                )
-            } else {
-                (
-                    egui_phosphor::regular::CHECK_CIRCLE,
-                    ui.visuals().text_color(),
-                )
-            };
+                let (icon, color) = if self.is_error {
+                    (
+                        egui_phosphor::regular::WARNING_CIRCLE,
+                        Color32::from_rgb(200, 80, 80),
+                    )
+                } else {
+                    (
+                        egui_phosphor::regular::CHECK_CIRCLE,
+                        ui.visuals().text_color(),
+                    )
+                };
 
-            egui::ScrollArea::vertical()
-                .max_height(320.0)
-                .show(ui, |ui| {
-                    ui.label(RichText::new(format!("{} {}", icon, self.body)).color(color));
-                });
-        });
+                egui::ScrollArea::vertical()
+                    .max_height(ui.available_height())
+                    .show(ui, |ui| {
+                        ui.label(RichText::new(format!("{} {}", icon, self.body)).color(color));
+                    });
+            },
+        );
 
         self.open = open;
     }
@@ -171,110 +169,124 @@ impl GithubPublishConfigWindow {
         let mut open = self.open;
         let mut saved = None;
 
-        egui::Window::new(format!(
-            "{} 配置 GitHub 发布",
-            egui_phosphor::regular::GITHUB_LOGO
-        ))
-        .open(&mut open)
-        .collapsible(false)
-        .resizable(false)
-        .default_width(420.0)
-        .show(ctx, |ui| {
-            if let Some(err) = &self.save_error {
-                ui.label(
-                    RichText::new(format!("保存失败: {}", err))
-                        .color(Color32::from_rgb(220, 70, 70)),
-                );
-                ui.add_space(8.0);
-            }
+        crate::ui::viewport::show_tool_window(
+            ctx,
+            "github_publish_config_window",
+            "配置 GitHub 发布",
+            [480.0, 600.0],
+            &mut open,
+            |ui| {
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    if let Some(err) = &self.save_error {
+                        ui.label(
+                            RichText::new(format!("保存失败: {}", err))
+                                .color(Color32::from_rgb(220, 70, 70)),
+                        );
+                        ui.add_space(8.0);
+                    }
 
-            if self.show_hint {
-                ui.label(
-                    RichText::new("请先配置博客仓库地址（格式：owner/repo，例如 RetricSu/blog）")
-                        .color(Color32::YELLOW),
-                );
-                ui.add_space(8.0);
-            }
+                    if self.show_hint {
+                        ui.label(
+                            RichText::new(
+                                "请先配置博客仓库地址（格式：owner/repo，例如 RetricSu/blog）",
+                            )
+                            .color(Color32::YELLOW),
+                        );
+                        ui.add_space(8.0);
+                    }
 
-            ui.label("仓库地址 (owner/repo)");
-            ui.add(egui::TextEdit::singleline(&mut self.repo));
-            ui.add_space(8.0);
+                    ui.label("仓库地址 (owner/repo)");
+                    ui.add(egui::TextEdit::singleline(&mut self.repo));
+                    ui.add_space(8.0);
 
-            ui.label("目标分支");
-            ui.add(egui::TextEdit::singleline(&mut self.base_branch));
-            ui.add_space(8.0);
+                    ui.label("目标分支");
+                    ui.add(egui::TextEdit::singleline(&mut self.base_branch));
+                    ui.add_space(8.0);
 
-            ui.label("提交信息模板 ({filename} 会被替换)");
-            ui.add(egui::TextEdit::singleline(&mut self.commit_message));
-            ui.add_space(8.0);
+                    ui.label("提交信息模板 ({filename} 会被替换)");
+                    ui.add(egui::TextEdit::singleline(&mut self.commit_message));
+                    ui.add_space(8.0);
 
-            ui.label("PR 标题模板 ({filename} 会被替换)");
-            ui.add(egui::TextEdit::singleline(&mut self.pr_title));
-            ui.add_space(8.0);
+                    ui.label("PR 标题模板 ({filename} 会被替换)");
+                    ui.add(egui::TextEdit::singleline(&mut self.pr_title));
+                    ui.add_space(8.0);
 
-            ui.label("默认目录（无分类时使用，空 = 仓库根目录）");
-            ui.add(egui::TextEdit::singleline(&mut self.base_dir));
-            ui.add_space(8.0);
+                    ui.label("默认目录（无分类时使用，空 = 仓库根目录）");
+                    ui.add(egui::TextEdit::singleline(&mut self.base_dir));
+                    ui.add_space(8.0);
 
-            ui.label("分类目录（可选）");
-            ui.add_space(4.0);
-            let mut remove_idx = None;
-            for (i, entry) in self.collections.iter_mut().enumerate() {
-                ui.horizontal(|ui| {
-                    ui.text_edit_singleline(&mut entry.label);
-                    ui.text_edit_singleline(&mut entry.dir);
+                    ui.label("分类目录（可选）");
+                    ui.add_space(4.0);
+                    let mut remove_idx = None;
+                    for (i, entry) in self.collections.iter_mut().enumerate() {
+                        ui.horizontal(|ui| {
+                            let field_width = ((ui.available_width() - 48.0) / 2.0).max(60.0);
+                            ui.add(
+                                egui::TextEdit::singleline(&mut entry.label)
+                                    .desired_width(field_width),
+                            );
+                            ui.add(
+                                egui::TextEdit::singleline(&mut entry.dir)
+                                    .desired_width(field_width),
+                            );
+                            if ui
+                                .button(egui_phosphor::regular::TRASH)
+                                .on_hover_text("删除此分类")
+                                .clicked()
+                            {
+                                remove_idx = Some(i);
+                            }
+                        });
+                    }
+                    if let Some(i) = remove_idx {
+                        self.collections.remove(i);
+                    }
                     if ui
-                        .button(egui_phosphor::regular::TRASH)
-                        .on_hover_text("删除此分类")
+                        .button(format!("{} 添加分类", egui_phosphor::regular::PLUS))
                         .clicked()
                     {
-                        remove_idx = Some(i);
+                        self.collections.push(
+                            crate::plugin::builtin::github_publish::CollectionConfig {
+                                label: String::new(),
+                                dir: String::new(),
+                            },
+                        );
                     }
-                });
-            }
-            if let Some(i) = remove_idx {
-                self.collections.remove(i);
-            }
-            if ui
-                .button(format!("{} 添加分类", egui_phosphor::regular::PLUS))
-                .clicked()
-            {
-                self.collections
-                    .push(crate::plugin::builtin::github_publish::CollectionConfig {
-                        label: String::new(),
-                        dir: String::new(),
+                    ui.add_space(8.0);
+
+                    ui.separator();
+
+                    ui.horizontal(|ui| {
+                        if ui
+                            .add_enabled(
+                                !self.repo.trim().is_empty(),
+                                egui::Button::new(format!(
+                                    "{} 保存",
+                                    egui_phosphor::regular::CHECK
+                                )),
+                            )
+                            .clicked()
+                        {
+                            saved = Some(
+                                crate::plugin::builtin::github_publish::GithubPublishConfig {
+                                    repo: self.repo.clone(),
+                                    base_branch: self.base_branch.clone(),
+                                    commit_message: self.commit_message.clone(),
+                                    pr_title: self.pr_title.clone(),
+                                    base_dir: self.base_dir.clone(),
+                                    collections: self.collections.clone(),
+                                },
+                            );
+                        }
+
+                        if ui.button("取消").clicked() {
+                            self.open = false;
+                            self.save_error = None;
+                        }
                     });
-            }
-            ui.add_space(8.0);
-
-            ui.separator();
-
-            ui.horizontal(|ui| {
-                if ui
-                    .add_enabled(
-                        !self.repo.trim().is_empty(),
-                        egui::Button::new(format!("{} 保存", egui_phosphor::regular::CHECK)),
-                    )
-                    .clicked()
-                {
-                    saved = Some(
-                        crate::plugin::builtin::github_publish::GithubPublishConfig {
-                            repo: self.repo.clone(),
-                            base_branch: self.base_branch.clone(),
-                            commit_message: self.commit_message.clone(),
-                            pr_title: self.pr_title.clone(),
-                            base_dir: self.base_dir.clone(),
-                            collections: self.collections.clone(),
-                        },
-                    );
-                }
-
-                if ui.button("取消").clicked() {
-                    self.open = false;
-                    self.save_error = None;
-                }
-            });
-        });
+                });
+            },
+        );
 
         self.open = self.open && open;
         saved
@@ -499,62 +511,63 @@ impl PublishDialog {
         let mut open = self.open;
         let mut published = None;
 
-        egui::Window::new(format!(
-            "{} 发布到博客",
-            egui_phosphor::regular::PAPER_PLANE_TILT
-        ))
-        .open(&mut open)
-        .collapsible(false)
-        .resizable(false)
-        .default_width(420.0)
-        .show(ctx, |ui| {
-            ui.label("标题（必填）");
-            ui.add(egui::TextEdit::singleline(&mut self.title));
-            ui.add_space(8.0);
+        crate::ui::viewport::show_tool_window(
+            ctx,
+            "github_publish_window",
+            "发布到博客",
+            [460.0, 300.0],
+            &mut open,
+            |ui| {
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    ui.label("标题（必填）");
+                    ui.add(egui::TextEdit::singleline(&mut self.title));
+                    ui.add_space(8.0);
 
-            ui.label("描述（可选）");
-            ui.add(egui::TextEdit::singleline(&mut self.description));
-            ui.add_space(8.0);
+                    ui.label("描述（可选）");
+                    ui.add(egui::TextEdit::singleline(&mut self.description));
+                    ui.add_space(8.0);
 
-            ui.label("分类");
-            egui::ComboBox::from_label("")
-                .selected_text(self.options[self.collection].0.as_str())
-                .show_ui(ui, |ui| {
-                    for (index, (label, _)) in self.options.iter().enumerate() {
-                        ui.selectable_value(&mut self.collection, index, label.as_str());
-                    }
-                });
+                    ui.label("分类");
+                    egui::ComboBox::from_label("")
+                        .selected_text(self.options[self.collection].0.as_str())
+                        .show_ui(ui, |ui| {
+                            for (index, (label, _)) in self.options.iter().enumerate() {
+                                ui.selectable_value(&mut self.collection, index, label.as_str());
+                            }
+                        });
 
-            ui.separator();
+                    ui.separator();
 
-            ui.horizontal(|ui| {
-                if ui
-                    .add_enabled(
-                        !self.title.trim().is_empty(),
-                        egui::Button::new(format!(
-                            "{} 发布",
-                            egui_phosphor::regular::PAPER_PLANE_TILT
-                        )),
-                    )
-                    .clicked()
-                {
-                    published = Some(PublishParams {
-                        title: self.title.trim().to_string(),
-                        description: if self.description.trim().is_empty() {
-                            None
-                        } else {
-                            Some(self.description.trim().to_string())
-                        },
-                        collection_dir: self.options[self.collection].1.clone(),
+                    ui.horizontal(|ui| {
+                        if ui
+                            .add_enabled(
+                                !self.title.trim().is_empty(),
+                                egui::Button::new(format!(
+                                    "{} 发布",
+                                    egui_phosphor::regular::PAPER_PLANE_TILT
+                                )),
+                            )
+                            .clicked()
+                        {
+                            published = Some(PublishParams {
+                                title: self.title.trim().to_string(),
+                                description: if self.description.trim().is_empty() {
+                                    None
+                                } else {
+                                    Some(self.description.trim().to_string())
+                                },
+                                collection_dir: self.options[self.collection].1.clone(),
+                            });
+                            self.open = false;
+                        }
+
+                        if ui.button("取消").clicked() {
+                            self.open = false;
+                        }
                     });
-                    self.open = false;
-                }
-
-                if ui.button("取消").clicked() {
-                    self.open = false;
-                }
-            });
-        });
+                });
+            },
+        );
 
         self.open = self.open && open;
         published
@@ -563,3 +576,63 @@ impl PublishDialog {
 
 pub mod cloud_backup;
 pub mod manager;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{cell::RefCell, rc::Rc};
+
+    #[test]
+    fn tool_windows_use_distinct_native_viewports_and_close_independently() {
+        let ctx = Context::default();
+        ctx.set_embed_viewports(false);
+        let rendered = Rc::new(RefCell::new(Vec::new()));
+        let seen = rendered.clone();
+        Context::set_immediate_viewport_renderer(move |ctx, mut viewport| {
+            assert_ne!(viewport.ids.this, egui::ViewportId::ROOT);
+            seen.borrow_mut().push(viewport.ids.this);
+            let mut input = egui::RawInput {
+                viewport_id: viewport.ids.this,
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    viewport.builder.inner_size.unwrap(),
+                )),
+                ..Default::default()
+            };
+            input.viewports.entry(viewport.ids.this).or_default().events =
+                vec![egui::ViewportEvent::Close];
+            let _ = ctx.run(input, |ctx| (viewport.viewport_ui_cb)(ctx));
+        });
+
+        let config = crate::plugin::builtin::github_publish::GithubPublishConfig::default();
+        let mut output = PluginOutputWindow::new();
+        let mut settings = GithubPublishConfigWindow::new();
+        let mut publish = PublishDialog::new();
+        output.finish("导出 HTML".into(), Ok("已导出".into()));
+        settings.open(&config, false);
+        publish.open(&config);
+        let root = ctx.run(egui::RawInput::default(), |ctx| {
+            output.show(ctx);
+            assert!(settings.show(ctx).is_none());
+            assert!(publish.show(ctx).is_none());
+        });
+        assert!(!output.open);
+        assert!(!settings.open);
+        assert!(!publish.open);
+        let mut ids = rendered.borrow().clone();
+        ids.sort();
+        ids.dedup();
+        assert_eq!(ids.len(), 3);
+        assert!(
+            !root.viewport_output[&egui::ViewportId::ROOT]
+                .commands
+                .contains(&egui::ViewportCommand::Close)
+        );
+
+        output.start("测试插件");
+        let _ = ctx.run(egui::RawInput::default(), |ctx| output.show(ctx));
+        assert!(!output.open, "a dismissed window can be opened again");
+        output.finish("测试插件".into(), Err("失败".into()));
+        assert!(output.open && output.is_error && !output.running);
+    }
+}

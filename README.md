@@ -143,6 +143,10 @@ Paper Shell also includes **Print**, **Cloud Backup**, and **GitHub Publish** pl
 manifest errors. External plugins can be installed by placing a folder containing a
 `plugin.toml` manifest and its command in the plugin directory, then choosing **重新扫描**.
 
+Export results, plugin output, GitHub configuration and publishing, and external plugin
+settings open in separate resizable desktop windows. Use the window's close button or
+**Esc** to dismiss them. Long results and configuration forms can be scrolled.
+
 Cloud Backup remembers the encryption password in the local app configuration (plaintext)
 after **保存配置**, and reloads it on restart. After upgrading from a version that kept the
 password only for the session, enter your existing password once and save. Existing backups

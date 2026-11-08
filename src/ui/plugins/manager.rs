@@ -108,7 +108,8 @@ impl PluginManagerWindow {
             |ctx, _class| {
                 crate::style::configure_style(ctx);
 
-                let had_modal = self.confirm_uninstall.is_some() || config_window.is_open();
+                let had_modal = self.confirm_uninstall.is_some()
+                    || (ctx.embed_viewports() && config_window.is_open());
 
                 let title_bar_panel = egui::TopBottomPanel::top("plugin_manager_title_bar")
                     .show_separator_line(false)
@@ -709,32 +710,6 @@ impl ExternalPluginConfigWindow {
             return None;
         }
 
-        let screen_rect = ctx.input(|i| i.content_rect());
-        let outer_width = 420.0_f32.min((screen_rect.width() - 32.0).max(220.0));
-        let max_body_height = (screen_rect.height() - 150.0).max(120.0);
-        let panel_fill = ctx.style().visuals.panel_fill;
-        let text_color = ctx.style().visuals.text_color();
-        let modal_frame = egui::Frame::window(&ctx.style())
-            .fill(panel_fill)
-            .stroke(egui::Stroke::new(1.0_f32, text_color.gamma_multiply(0.18)))
-            .corner_radius(egui::CornerRadius::ZERO)
-            .inner_margin(egui::Margin::ZERO)
-            .shadow(egui::epaint::Shadow::NONE);
-        let content_width = outer_width
-            - f32::from(modal_frame.inner_margin.left + modal_frame.inner_margin.right)
-            - modal_frame.stroke.width * 2.0;
-
-        // Dim background inside the Plugin Manager viewport.
-        egui::Area::new(egui::Id::new("external_plugin_config_scrim"))
-            .order(egui::Order::Middle)
-            .fixed_pos(screen_rect.min)
-            .show(ctx, |ui| {
-                let (rect, _) =
-                    ui.allocate_exact_size(screen_rect.size(), egui::Sense::click_and_drag());
-                ui.painter()
-                    .rect_filled(rect, 0.0, Color32::from_black_alpha(45));
-            });
-
         let complete = self.definitions.iter().all(|definition| {
             !definition.required
                 || self
@@ -746,19 +721,18 @@ impl ExternalPluginConfigWindow {
         let mut save_clicked = false;
         let mut cancel_clicked = false;
 
-        egui::Window::new(format!("插件设置 · {}", self.name))
-            .id(egui::Id::new("external_plugin_config_modal_window"))
-            .order(egui::Order::Foreground)
-            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
-            .fade_in(false)
-            .fade_out(false)
-            .fixed_size(egui::vec2(content_width, 0.0))
-            .collapsible(false)
-            .resizable(false)
-            .movable(false)
-            .title_bar(false)
-            .frame(modal_frame)
-            .show(ctx, |ui| {
+        let mut open = self.open;
+        let mut enter_pressed = false;
+        let title = format!("插件设置 · {}", self.name);
+        crate::ui::viewport::show_tool_window(
+            ctx,
+            "external_plugin_config_window",
+            &title,
+            [460.0, 520.0],
+            &mut open,
+            |ui| {
+                let text_color = ui.visuals().text_color();
+                let max_body_height = (ui.available_height() - 100.0).max(60.0);
                 ui.vertical(|ui| {
                     ui.spacing_mut().item_spacing = egui::vec2(4.0, 0.0);
                     ui.spacing_mut().interact_size.y = 20.0;
@@ -909,15 +883,15 @@ impl ExternalPluginConfigWindow {
                             });
                         });
                 });
-            });
+                let ctx = ui.ctx();
+                let ime_active =
+                    ctx.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Ime(_))));
+                enter_pressed = !ime_active
+                    && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
+            },
+        );
 
-        let ime_active = ctx.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Ime(_))));
-        let escape_pressed =
-            ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
-        let enter_pressed = !ime_active
-            && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
-
-        if cancel_clicked || escape_pressed {
+        if cancel_clicked || !open {
             self.close();
             None
         } else if save_clicked || (enter_pressed && complete) {
@@ -1094,6 +1068,79 @@ mod tests {
             egui::Shape::Vec(shapes) => shapes.iter().any(|s| any_rect(s, predicate)),
             _ => false,
         }
+    }
+
+    #[test]
+    fn native_settings_validate_save_and_dismiss_without_closing_manager() {
+        use std::{cell::Cell, rc::Rc};
+        let ctx = Context::default();
+        ctx.set_embed_viewports(false);
+        let stage = Rc::new(Cell::new(0));
+        let current_stage = stage.clone();
+        Context::set_immediate_viewport_renderer(move |ctx, mut viewport| {
+            let mut input = egui::RawInput {
+                viewport_id: viewport.ids.this,
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    viewport.builder.inner_size.unwrap(),
+                )),
+                ..Default::default()
+            };
+            let info = input.viewports.entry(viewport.ids.this).or_default();
+            info.parent = Some(viewport.ids.parent);
+            if viewport.ids.this == egui::ViewportId::from_hash_of("external_plugin_config_window")
+            {
+                match current_stage.get() {
+                    0 | 1 => input.events = key_press(egui::Key::Enter),
+                    2 => input.events = key_press(egui::Key::Escape),
+                    _ => info.events.push(egui::ViewportEvent::Close),
+                }
+            }
+            let _ = ctx.run(input, |ctx| (viewport.viewport_ui_cb)(ctx));
+        });
+        let mut manager = PluginManagerWindow::new();
+        manager.open(&ctx);
+        let mut settings = ExternalPluginConfigWindow::new();
+        let plugins = sample_plugins();
+        settings.open(
+            &plugins[2],
+            vec![SettingDefinition {
+                key: "token".into(),
+                label: "令牌".into(),
+                description: String::new(),
+                setting_type: SettingType::Password,
+                required: true,
+                default: String::new(),
+            }],
+            &BTreeMap::new(),
+        );
+        let mut saved = None;
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            saved = manager.show(ctx, &plugins, &[], &mut settings).1;
+        });
+        assert!(saved.is_none());
+        assert!(settings.is_open());
+        settings.values.insert("token".into(), "secret".into());
+        stage.set(1);
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            saved = manager.show(ctx, &plugins, &[], &mut settings).1;
+        });
+        assert_eq!(saved.unwrap().values["token"], "secret");
+        // A failed persistence attempt keeps the draft in its own window.
+        settings.notify_save_error("保存失败".into());
+        stage.set(2);
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            assert!(manager.show(ctx, &plugins, &[], &mut settings).1.is_none());
+        });
+        assert!(!settings.is_open());
+        assert!(manager.is_open());
+        settings.notify_save_error("重试".into());
+        stage.set(3);
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            assert!(manager.show(ctx, &plugins, &[], &mut settings).1.is_none());
+        });
+        assert!(!settings.is_open());
+        assert!(manager.is_open());
     }
 
     #[test]

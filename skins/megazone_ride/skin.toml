@@ -1,0 +1,40 @@
+id = "megazone_ride"
+name = "无限地带 · 双人疾驰"
+description = "《无限地带23》省吾载唯骑乘红色摩托的剧照。背景铺满编辑区，暖灰底与青绿点缀，保留清晰的写作文字。"
+author = "Paper Shell · 剧照版权归原权利人所有"
+version = "1.0.0"
+
+[typography]
+font_family = "Default"
+font_size = 16.0
+line_spacing = 1.8
+font_color = "#273536"
+format_use_tabs = false
+
+[spacing]
+window_margin = 0.0
+editor_padding_left = 36.0
+editor_padding_right = 36.0
+editor_padding_top = 28.0
+editor_padding_bottom = 28.0
+item_spacing_x = 8.0
+item_spacing_y = 8.0
+
+[colors]
+dark_mode = false
+background_color = "#F1EDE6"
+editor_background_color = "#F1EDE6"
+sidebar_background_color = "#E4E4DC"
+titlebar_background_color = "#E4E4DC"
+text_color = "#273536"
+selection_color = "#BDCFCA"
+accent_color = "#427C77"
+
+[effects]
+background_image = "background.jpg"
+background_image_opacity = 0.24
+background_image_fit = "cover"
+window_opacity = 1.0
+editor_opacity = 1.0
+corner_radius = 2.0
+shadow = false

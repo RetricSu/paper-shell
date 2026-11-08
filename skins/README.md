@@ -29,3 +29,8 @@ skins/
 `summer_platform/` 使用 1993 年《听到涛声》的官方剧照，包含 JPG 背景、配色和排版。
 在应用中导入该目录的 `skin.toml` 即可试用，详见 [素材来源和使用说明](summer_platform/README.md)。
 升级会将最早默认的 `retricsu/paper-shell-themes · main · skins` 迁移到上述官方源，其他自定义源保留。
+
+## 图片背景示例：无限地带 · 双人疾驰
+
+`megazone_ride/` 使用《无限地带23》省吾载唯骑乘红色摩托的剧照，暖灰底、深色文字与青绿点缀。
+背景铺满编辑区，文字保留独立边距。导入方法与素材说明见 [皮肤说明](megazone_ride/README.md)。

@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>无限地带 · 双人疾驰 · 皮肤效果预览</title>
+<style>
+:root { color-scheme: light; font-family: system-ui, sans-serif; color: #273536; background: #e4e4dc; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+header { padding: 18px 28px; border-bottom: 1px solid #b8bdba; display: flex; gap: 14px 28px; flex-wrap: wrap; align-items: center; }
+h1 { font-size: 18px; margin: 0 0 5px; }
+p { margin: 0; }
+header p, footer { font-size: 13px; color: #46545e; }
+label { display: flex; gap: 12px; align-items: center; }
+input { accent-color: #427c77; width: 150px; }
+output { font-variant-numeric: tabular-nums; min-width: 3ch; }
+main { position: relative; isolation: isolate; min-height: calc(100vh - 150px); padding: 28px 36px; background: #f1ede6; }
+main::before { content: ''; position: absolute; z-index: -1; inset: 0; background: url('background.jpg') center / cover no-repeat; opacity: var(--opacity, .24); }
+article { font-size: 16px; line-height: 1.8; white-space: pre-wrap; max-width: 70ch; }
+footer { padding: 16px 28px; line-height: 1.7; }
+a { color: #365e72; }
+@media (max-width: 600px) { main { padding: 24px; } header, footer { padding: 16px 24px; } }
+</style>
+<header>
+  <div><h1>无限地带 · 双人疾驰</h1><p>图片与文字的合成示意。实际效果请导入 skin.toml。</p></div>
+  <label for="opacity">背景强度 <input id="opacity" type="range" min="0" max="100" value="24"><output id="value" for="opacity">24%</output></label>
+</header>
+<main id="canvas"><article>无限地带 · 双人疾驰
+
+发动机的声音穿过街道，风从肩后掠过。
+她坐在后座，和他一起驶向城市的另一端。
+
+把此刻写下来。
+让故事沿着这条路，继续往前。</article></main>
+<footer>《无限地带23》原作剧照，图片版权归原权利人所有。<br>
+<a href="https://www.primevideo.com/-/it/detail/Megazone-23-english-Dub/0FSBQHB7GCRZOXQ63KMATYMHL0">图片展示来源</a> · 合成示意，实际效果请导入 skin.toml。</footer>
+<script>
+const slider = document.querySelector('#opacity');
+slider.addEventListener('input', () => {
+  document.querySelector('#canvas').style.setProperty('--opacity', slider.value / 100);
+  document.querySelector('#value').value = slider.value + '%';
+});
+</script>
+</html>

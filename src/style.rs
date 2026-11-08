@@ -1,9 +1,30 @@
 use egui::{Color32, Context, Stroke, Style, Visuals};
+use std::sync::RwLock;
 
 /// Shared accent for the sidebar state and the active paragraph indicator.
 pub const STATUS_GREEN: Color32 = Color32::from_rgb(46, 151, 83);
 
+static ACTIVE_SKIN: RwLock<Option<crate::skin::Skin>> = RwLock::new(None);
+
+pub fn set_active_skin(skin: crate::skin::Skin) {
+    if let Ok(mut lock) = ACTIVE_SKIN.write() {
+        *lock = Some(skin);
+    }
+}
+
+pub fn get_active_skin() -> Option<crate::skin::Skin> {
+    ACTIVE_SKIN.read().ok().and_then(|lock| lock.clone())
+}
+
 pub fn configure_style(ctx: &Context) {
+    if let Some(skin) = get_active_skin() {
+        crate::skin::SkinRenderer::apply_to_context(ctx, &skin);
+    } else {
+        configure_default_style(ctx);
+    }
+}
+
+pub fn configure_default_style(ctx: &Context) {
     let mut style = Style::default();
 
     // Elegant visual settings

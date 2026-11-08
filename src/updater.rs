@@ -781,15 +781,12 @@ mod tests {
             .get(format!("http://127.0.0.1:{port}/asset.zip"))
             .call()
             .unwrap();
-        let mut reader_exact = response_exact
-            .body_mut()
-            .with_config()
-            .limit(size)
-            .reader();
-        let err = download_verified(&mut reader_exact, Vec::new(), size, &hash, |_, _| {})
-            .unwrap_err();
+        let mut reader_exact = response_exact.body_mut().with_config().limit(size).reader();
+        let err =
+            download_verified(&mut reader_exact, Vec::new(), size, &hash, |_, _| {}).unwrap_err();
         assert!(
-            err.to_string().contains("the response body is larger than request limit"),
+            err.to_string()
+                .contains("the response body is larger than request limit"),
             "expected limit error, got: {err}"
         );
 

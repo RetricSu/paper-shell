@@ -313,7 +313,7 @@ fn prepare_update(
         let mut reader = response
             .body_mut()
             .with_config()
-            .limit(release.asset.size)
+            .limit(MAX_DOWNLOAD + 1)
             .reader();
         download_verified(
             &mut reader,
@@ -735,6 +735,78 @@ mod tests {
                     .is_err()
             );
         }
+    }
+
+    #[test]
+    fn download_via_ureq_stream_succeeds_when_body_equals_asset_size() {
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let data = b"verified release archive payload";
+        let hash = Sha256::digest(data)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        let size = data.len() as u64;
+
+        let server = std::thread::spawn(move || {
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut header_buf = Vec::new();
+                let mut byte = [0u8; 1];
+                while let Ok(1) = stream.read(&mut byte) {
+                    header_buf.push(byte[0]);
+                    if header_buf.ends_with(b"\r\n\r\n") {
+                        break;
+                    }
+                }
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {size}\r\nConnection: close\r\n\r\n"
+                );
+                stream.write_all(resp.as_bytes()).unwrap();
+                stream.write_all(data).unwrap();
+            }
+        });
+
+        let agent = ureq::Agent::new_with_config(
+            ureq::config::Config::builder()
+                .timeout_global(Some(Duration::from_secs(5)))
+                .build(),
+        );
+
+        // 1. Confirm that limiting to exact size reproduces the bug:
+        // ureq's LimitReader returns BodyExceedsLimit on the EOF read.
+        let mut response_exact = agent
+            .get(format!("http://127.0.0.1:{port}/asset.zip"))
+            .call()
+            .unwrap();
+        let mut reader_exact = response_exact
+            .body_mut()
+            .with_config()
+            .limit(size)
+            .reader();
+        let err = download_verified(&mut reader_exact, Vec::new(), size, &hash, |_, _| {})
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("the response body is larger than request limit"),
+            "expected limit error, got: {err}"
+        );
+
+        // 2. Confirm that limit(MAX_DOWNLOAD + 1) fixes the issue:
+        let mut response_fixed = agent
+            .get(format!("http://127.0.0.1:{port}/asset.zip"))
+            .call()
+            .unwrap();
+        let mut reader_fixed = response_fixed
+            .body_mut()
+            .with_config()
+            .limit(MAX_DOWNLOAD + 1)
+            .reader();
+        let mut output = Vec::new();
+        download_verified(&mut reader_fixed, &mut output, size, &hash, |_, _| {}).unwrap();
+        assert_eq!(output, data);
+        server.join().unwrap();
     }
 
     fn make_zip(path: &Path, name: &str, symlink: bool) {

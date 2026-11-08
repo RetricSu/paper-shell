@@ -47,13 +47,29 @@ Letter, and landscape paper without sending anything to a printer. Set
 `PAPER_SHELL_KEEP_PRINT_PDFS=1` to keep the generated temporary PDFs for visual review;
 the test prints their paths.
 
-## Bundle on macOS
+## Bundle and install on macOS
 
-Install the same `cargo-bundle` version used by the release workflow, then create the app:
+To build, bundle, and install/replace `Paper Shell.app` locally on macOS in one command:
 
 ```bash
-cargo install cargo-bundle --version 0.9.0
-cargo bundle --release
+./scripts/install-mac.sh
+```
+
+This bundles `--format osx` directly, ad-hoc signs the `.app` bundle, safely replaces
+the existing `/Applications/Paper Shell.app`, clears quarantine flags, and touches the
+bundle to update Finder and LaunchServices.
+
+Common options:
+
+- `./scripts/install-mac.sh -r`: Gracefully quit running app, replace, and reopen.
+- `./scripts/install-mac.sh --debug -r`: Debug build for fastest local compile iteration.
+- `./scripts/install-mac.sh --user`: Install to `~/Applications/Paper Shell.app`.
+- `./scripts/install-mac.sh --skip-build`: Re-install an existing bundle without rebuilding.
+
+To create only the bundle without installing:
+
+```bash
+cargo bundle --release --format osx
 ```
 
 The bundled app is created at:

@@ -2,12 +2,14 @@
 //! Never send plain text through CUPS: its text filter has different layout rules.
 
 use objc2::rc::Retained;
+use objc2::runtime::ProtocolObject;
 use objc2::{MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
-    NSColor, NSFont, NSPrintInfo, NSPrintOperation, NSPrintPanelOptions, NSPrintingPaginationMode,
-    NSTextView,
+    NSColor, NSFont, NSPrintInfo, NSPrintJobSavingURL, NSPrintOperation, NSPrintPanelOptions,
+    NSPrintSaveJob, NSPrintingPaginationMode, NSTextView,
 };
-use objc2_foundation::{NSCopying, NSPoint, NSRect, NSSize, NSString};
+use objc2_foundation::{NSCopying, NSPoint, NSRect, NSSize, NSString, NSURL};
+use std::path::Path;
 
 pub fn print(content: &str, document_name: &str) -> Result<String, String> {
     let mtm = MainThreadMarker::new().ok_or("系统打印面板必须在主线程打开")?;
@@ -79,4 +81,33 @@ pub(super) fn print_view(
     view.setBackgroundColor(&NSColor::whiteColor());
     view.sizeToFit();
     view
+}
+
+/// Renders the document directly to a PDF file at the specified path without
+/// showing interactive print panels.
+#[allow(dead_code)]
+pub fn export_pdf_to_path(content: &str, path: &Path, document_name: &str) -> Result<(), String> {
+    let mtm = MainThreadMarker::new().ok_or("PDF 渲染必须在主线程执行")?;
+    let info = print_info();
+    let view = print_view(mtm, content, &info);
+    let path_str = path.to_str().ok_or("无效的文件路径")?;
+    let url = NSURL::fileURLWithPath(&NSString::from_str(path_str));
+
+    // SAFETY: NSPrintJobSavingURL expects an NSURL in the print settings dictionary.
+    unsafe {
+        info.setJobDisposition(NSPrintSaveJob);
+        info.dictionary()
+            .setObject_forKey(&url, ProtocolObject::from_ref(NSPrintJobSavingURL));
+    }
+
+    let operation = NSPrintOperation::printOperationWithView_printInfo(&view, &info);
+    operation.setJobTitle(Some(&NSString::from_str(document_name)));
+    operation.setShowsPrintPanel(false);
+    operation.setShowsProgressPanel(false);
+
+    if operation.runOperation() {
+        Ok(())
+    } else {
+        Err("PDF 生成失败".to_string())
+    }
 }

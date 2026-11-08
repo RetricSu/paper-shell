@@ -93,6 +93,31 @@ fn main() {
             std::fs::remove_file(path).unwrap();
         }
     }
+
+    // Verify paper_shell::export::export_document works on the main thread
+    let export_path = std::env::temp_dir().join(format!(
+        "paper-shell-export-test-{}.pdf",
+        std::process::id()
+    ));
+    let export_result = paper_shell::export::export_document(
+        paper_shell::export::ExportFormat::Pdf,
+        &content,
+        &export_path,
+        "测试导出",
+    );
+    assert!(
+        export_result.is_ok(),
+        "Direct export_document to PDF failed: {:?}",
+        export_result
+    );
+    let exported_bytes = std::fs::read(&export_path).unwrap();
+    assert!(
+        exported_bytes.starts_with(b"%PDF-"),
+        "Exported file must start with PDF header"
+    );
+    if std::env::var_os("PAPER_SHELL_KEEP_PRINT_PDFS").is_none() {
+        let _ = std::fs::remove_file(export_path);
+    }
 }
 
 #[cfg(not(target_os = "macos"))]

@@ -451,6 +451,58 @@ impl PaperShellApp {
         }
     }
 
+    fn export_document(&mut self, format: crate::export::ExportFormat) {
+        let content = self.editor.get_content();
+        if content.trim().is_empty() {
+            self.file_error = Some("当前文档为空，无法导出".to_string());
+            return;
+        }
+
+        let default_name = crate::export::suggested_file_name(
+            self.editor
+                .get_current_file()
+                .map(std::path::PathBuf::as_path),
+            format,
+        );
+        let filter_name = format.filter_name();
+        let filter_ext = format.extension();
+
+        let Some(path) = rfd::FileDialog::new()
+            .set_directory(self.document_directory())
+            .add_filter(filter_name, &[filter_ext])
+            .set_file_name(&default_name)
+            .save_file()
+        else {
+            return;
+        };
+
+        let path = if path.extension().is_none() {
+            path.with_extension(filter_ext)
+        } else {
+            path
+        };
+
+        let title = self
+            .editor
+            .get_current_file()
+            .and_then(|path| path.file_stem())
+            .and_then(|name| name.to_str())
+            .unwrap_or("未命名文档");
+
+        match crate::export::export_document(format, &content, &path, title) {
+            Ok(()) => {
+                let label = format.label();
+                self.plugin_output.finish(
+                    format!("导出 {}", label),
+                    Ok(format!("已成功导出为 {}：\n{}", label, path.display())),
+                );
+            }
+            Err(error) => {
+                self.file_error = Some(format!("导出失败: {}", error));
+            }
+        }
+    }
+
     fn apply_load_file_data(&mut self, data: FileData) {
         self.draft_directory = None;
         self.history_window.close();
@@ -992,6 +1044,9 @@ impl eframe::App for PaperShellApp {
                     }
                     crate::ui::title_bar::TitleBarAction::Save => {
                         self.save_file();
+                    }
+                    crate::ui::title_bar::TitleBarAction::Export(format) => {
+                        self.export_document(format);
                     }
                     crate::ui::title_bar::TitleBarAction::Open => {
                         self.try_open_file_from_selector()

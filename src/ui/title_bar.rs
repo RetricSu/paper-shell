@@ -16,6 +16,7 @@ pub enum TitleBarAction {
     Format,
     SetFormatUseTabs(bool),
     FontChange(String),
+    FontColorChange(String),
     FontSizeChange(f32),
     LineSpacingChange(f32),
     ResetTypography,
@@ -47,6 +48,7 @@ pub struct TitleBarState<'a> {
     pub current_font: &'a str,
     pub font_size: f32,
     pub line_spacing: f32,
+    pub font_color: &'a str,
     pub format_use_tabs: bool,
     pub recent_files: &'a [PathBuf],
     pub plugins: &'a [PluginMetadata],
@@ -70,6 +72,7 @@ impl TitleBar {
             current_font,
             font_size,
             line_spacing,
+            font_color,
             format_use_tabs,
             recent_files,
             plugins,
@@ -476,6 +479,122 @@ impl TitleBar {
 
                         ui.separator();
 
+                        // 4. 字体颜色选择 (子菜单)
+                        let current_color_label =
+                            crate::config::font_color_display_name(font_color);
+                        egui::containers::menu::SubMenuButton::from_button(
+                            egui::Button::new(format!(
+                                "{} 字体颜色",
+                                egui_phosphor::regular::PALETTE
+                            ))
+                            .right_text(format!("{current_color_label} ⏵")),
+                        )
+                        .config(
+                            egui::containers::menu::MenuConfig::default()
+                                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside),
+                        )
+                        .ui(ui, |ui| {
+                            let sub_width = 196.0;
+                            ui.set_width(sub_width);
+                            ui.set_max_width(sub_width);
+
+                            let is_default = font_color == "Default" || font_color.is_empty();
+                            if ui
+                                .add_sized(
+                                    [ui.available_width(), 20.0],
+                                    egui::Button::selectable(is_default, "系统默认"),
+                                )
+                                .on_hover_text("跟随主题/系统默认文字颜色")
+                                .clicked()
+                            {
+                                action =
+                                    Some(TitleBarAction::FontColorChange("Default".to_string()));
+                            }
+
+                            ui.separator();
+
+                            egui::ScrollArea::vertical()
+                                .max_height(280.0)
+                                .show(ui, |ui| {
+                                    for (name, hex, color) in crate::config::FONT_COLOR_PRESETS {
+                                        let is_selected = font_color.eq_ignore_ascii_case(hex);
+                                        ui.horizontal(|ui| {
+                                            ui.spacing_mut().item_spacing.x = 6.0;
+                                            let (rect, swatch_resp) = ui.allocate_exact_size(
+                                                egui::vec2(14.0, 14.0),
+                                                egui::Sense::click(),
+                                            );
+                                            ui.painter().rect_filled(rect, 2.0, *color);
+                                            ui.painter().rect_stroke(
+                                                rect,
+                                                2.0,
+                                                egui::Stroke::new(
+                                                    1.0,
+                                                    ui.visuals()
+                                                        .widgets
+                                                        .noninteractive
+                                                        .bg_stroke
+                                                        .color,
+                                                ),
+                                                egui::StrokeKind::Inside,
+                                            );
+                                            if swatch_resp.clicked() {
+                                                action = Some(TitleBarAction::FontColorChange(
+                                                    hex.to_string(),
+                                                ));
+                                            }
+                                            if ui
+                                                .add_sized(
+                                                    [ui.available_width(), 20.0],
+                                                    egui::Button::selectable(
+                                                        is_selected,
+                                                        format!("{name}  {hex}"),
+                                                    ),
+                                                )
+                                                .clicked()
+                                            {
+                                                action = Some(TitleBarAction::FontColorChange(
+                                                    hex.to_string(),
+                                                ));
+                                            }
+                                        });
+                                    }
+
+                                    ui.separator();
+
+                                    ui.horizontal(|ui| {
+                                        ui.label(egui::RichText::new("自定义").small());
+                                        let mut custom_srgb = if let Some(c) =
+                                            crate::config::parse_hex_color(font_color)
+                                        {
+                                            [c.r(), c.g(), c.b()]
+                                        } else {
+                                            let dc = ui.visuals().text_color();
+                                            [dc.r(), dc.g(), dc.b()]
+                                        };
+                                        if ui.color_edit_button_srgb(&mut custom_srgb).changed() {
+                                            let hex = crate::config::color_to_hex(
+                                                egui::Color32::from_rgb(
+                                                    custom_srgb[0],
+                                                    custom_srgb[1],
+                                                    custom_srgb[2],
+                                                ),
+                                            );
+                                            action = Some(TitleBarAction::FontColorChange(hex));
+                                        }
+                                        if !is_default
+                                            && !crate::config::FONT_COLOR_PRESETS
+                                                .iter()
+                                                .any(|(_, h, _)| font_color.eq_ignore_ascii_case(h))
+                                        {
+                                            ui.monospace(font_color);
+                                        }
+                                    });
+                                });
+                        });
+
+                        ui.separator();
+
                         ui.horizontal(|ui| {
                             if ui
                                 .button("整理段落缩进")
@@ -772,13 +891,34 @@ mod tests {
         font_size: f32,
         line_spacing: f32,
     ) -> (egui::FullOutput, Option<TitleBarAction>) {
-        render_typography_title_bar_with_indent(
+        render_typography_title_bar_with_color(
             ctx,
             events,
             fonts,
             current_font,
             font_size,
             line_spacing,
+            "Default",
+        )
+    }
+
+    fn render_typography_title_bar_with_color(
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+        fonts: &[String],
+        current_font: &str,
+        font_size: f32,
+        line_spacing: f32,
+        font_color: &str,
+    ) -> (egui::FullOutput, Option<TitleBarAction>) {
+        render_typography_title_bar_with_options(
+            ctx,
+            events,
+            fonts,
+            current_font,
+            font_size,
+            line_spacing,
+            font_color,
             false,
         )
     }
@@ -790,6 +930,29 @@ mod tests {
         current_font: &str,
         font_size: f32,
         line_spacing: f32,
+        format_use_tabs: bool,
+    ) -> (egui::FullOutput, Option<TitleBarAction>) {
+        render_typography_title_bar_with_options(
+            ctx,
+            events,
+            fonts,
+            current_font,
+            font_size,
+            line_spacing,
+            "Default",
+            format_use_tabs,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_typography_title_bar_with_options(
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+        fonts: &[String],
+        current_font: &str,
+        font_size: f32,
+        line_spacing: f32,
+        font_color: &str,
         format_use_tabs: bool,
     ) -> (egui::FullOutput, Option<TitleBarAction>) {
         let mut action = None;
@@ -816,6 +979,7 @@ mod tests {
                             current_font,
                             font_size,
                             line_spacing,
+                            font_color,
                             format_use_tabs,
                             recent_files: &[],
                             plugins: &[],
@@ -839,15 +1003,39 @@ mod tests {
         font_size: f32,
         line_spacing: f32,
     ) -> (egui::FullOutput, Option<TitleBarAction>) {
+        click_text_with_color(
+            ctx,
+            output,
+            needle,
+            fonts,
+            current_font,
+            font_size,
+            line_spacing,
+            "Default",
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn click_text_with_color(
+        ctx: &egui::Context,
+        output: &egui::FullOutput,
+        needle: &str,
+        fonts: &[String],
+        current_font: &str,
+        font_size: f32,
+        line_spacing: f32,
+        font_color: &str,
+    ) -> (egui::FullOutput, Option<TitleBarAction>) {
         let pos = text_position(output, needle)
             .unwrap_or_else(|| panic!("expected visible text containing {needle:?}"));
-        render_typography_title_bar(
+        render_typography_title_bar_with_color(
             ctx,
             click_events(pos),
             fonts,
             current_font,
             font_size,
             line_spacing,
+            font_color,
         )
     }
 
@@ -955,6 +1143,7 @@ mod tests {
                         current_font: "Default",
                         font_size: 14.0,
                         line_spacing: 1.5,
+                        font_color: "Default",
                         format_use_tabs: false,
                         recent_files: &[],
                         plugins: &[],
@@ -1001,6 +1190,7 @@ mod tests {
                             current_font: "Default",
                             font_size: 14.0,
                             line_spacing: 1.5,
+                            font_color: "Default",
                             format_use_tabs: false,
                             recent_files: &[],
                             plugins: &[],
@@ -1099,6 +1289,7 @@ mod tests {
                         current_font: "PingFang SC",
                         font_size: 16.0,
                         line_spacing: 1.8,
+                        font_color: "Default",
                         format_use_tabs: false,
                         recent_files: &[],
                         plugins: &[],
@@ -1135,6 +1326,7 @@ mod tests {
                         current_font: "PingFang SC",
                         font_size: 16.0,
                         line_spacing: 1.8,
+                        font_color: "Default",
                         format_use_tabs: false,
                         recent_files: &[],
                         plugins: &[],
@@ -1168,6 +1360,7 @@ mod tests {
                         current_font: "PingFang SC",
                         font_size: 16.0,
                         line_spacing: 1.8,
+                        font_color: "Default",
                         format_use_tabs: false,
                         recent_files: &[],
                         plugins: &[],
@@ -1336,6 +1529,70 @@ mod tests {
     }
 
     #[test]
+    fn font_color_selection_keeps_both_menus_open_for_consecutive_changes() {
+        let ctx = egui::Context::default();
+        crate::style::configure_style(&ctx);
+        let fonts = vec!["PingFang SC".to_string()];
+
+        let (initial, _) = render_typography_title_bar(&ctx, vec![], &fonts, "Default", 14.0, 1.5);
+        let _ = click_text(&ctx, &initial, "排版", &fonts, "Default", 14.0, 1.5);
+        let (typography_open, _) =
+            render_typography_title_bar(&ctx, vec![], &fonts, "Default", 14.0, 1.5);
+        assert!(has_text(&typography_open, "字体颜色"));
+
+        let _ = click_text(
+            &ctx,
+            &typography_open,
+            "字体颜色",
+            &fonts,
+            "Default",
+            14.0,
+            1.5,
+        );
+        let (color_menu_open, _) =
+            render_typography_title_bar(&ctx, vec![], &fonts, "Default", 14.0, 1.5);
+        assert!(has_text(&color_menu_open, "系统默认"));
+        assert!(has_text(&color_menu_open, "墨黑"));
+        assert!(has_text(&color_menu_open, "墨蓝"));
+
+        let (_, first_action) =
+            click_text(&ctx, &color_menu_open, "墨蓝", &fonts, "Default", 14.0, 1.5);
+        assert!(matches!(
+            first_action,
+            Some(TitleBarAction::FontColorChange(ref hex)) if hex == "#1E3A5F"
+        ));
+
+        let (after_first_change, _) = render_typography_title_bar_with_color(
+            &ctx,
+            vec![],
+            &fonts,
+            "Default",
+            14.0,
+            1.5,
+            "#1E3A5F",
+        );
+        assert!(has_text(&after_first_change, "字号"));
+        assert!(has_text(&after_first_change, "系统默认"));
+        assert!(has_text(&after_first_change, "墨黑"));
+        assert!(has_text(&after_first_change, "深灰"));
+
+        let (_, second_action) = click_text_with_color(
+            &ctx,
+            &after_first_change,
+            "深灰",
+            &fonts,
+            "Default",
+            14.0,
+            1.5,
+            "#1E3A5F",
+        );
+        assert!(matches!(
+            second_action,
+            Some(TitleBarAction::FontColorChange(ref hex)) if hex == "#4A4A4A"
+        ));
+    }
+
+    #[test]
     fn typography_actions_dispatch_and_keep_the_menu_open() {
         let ctx = egui::Context::default();
         crate::style::configure_style(&ctx);
@@ -1458,6 +1715,7 @@ mod tests {
                                     current_font: "Default",
                                     font_size: 14.0,
                                     line_spacing: 1.5,
+                                    font_color: "Default",
                                     format_use_tabs: false,
                                     recent_files: &[],
                                     plugins: &[],

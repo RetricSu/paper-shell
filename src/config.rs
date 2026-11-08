@@ -106,6 +106,54 @@ fn default_font_family() -> String {
     "Default".to_string()
 }
 
+fn default_font_color() -> String {
+    "Default".to_string()
+}
+
+pub const FONT_COLOR_PRESETS: &[(&str, &str, egui::Color32)] = &[
+    ("墨黑", "#1A1A1A", egui::Color32::from_rgb(26, 26, 26)),
+    ("深灰", "#4A4A4A", egui::Color32::from_rgb(74, 74, 74)),
+    ("墨蓝", "#1E3A5F", egui::Color32::from_rgb(30, 58, 95)),
+    ("苍绿", "#205040", egui::Color32::from_rgb(32, 80, 64)),
+    ("赭红", "#7C2D24", egui::Color32::from_rgb(124, 45, 36)),
+    ("棕褐", "#523624", egui::Color32::from_rgb(82, 54, 36)),
+    ("紫檀", "#4A2E4B", egui::Color32::from_rgb(74, 46, 75)),
+];
+
+pub fn parse_hex_color(hex: &str) -> Option<egui::Color32> {
+    let s = hex.trim().strip_prefix('#').unwrap_or(hex.trim());
+    if s.len() == 6 {
+        let r = u8::from_str_radix(&s[0..2], 16).ok()?;
+        let g = u8::from_str_radix(&s[2..4], 16).ok()?;
+        let b = u8::from_str_radix(&s[4..6], 16).ok()?;
+        Some(egui::Color32::from_rgb(r, g, b))
+    } else if s.len() == 8 {
+        let r = u8::from_str_radix(&s[0..2], 16).ok()?;
+        let g = u8::from_str_radix(&s[2..4], 16).ok()?;
+        let b = u8::from_str_radix(&s[4..6], 16).ok()?;
+        let a = u8::from_str_radix(&s[6..8], 16).ok()?;
+        Some(egui::Color32::from_rgba_unmultiplied(r, g, b, a))
+    } else {
+        None
+    }
+}
+
+pub fn color_to_hex(color: egui::Color32) -> String {
+    format!("#{:02X}{:02X}{:02X}", color.r(), color.g(), color.b())
+}
+
+pub fn font_color_display_name(hex: &str) -> &str {
+    if hex == "Default" || hex.is_empty() {
+        return "系统默认";
+    }
+    for (name, preset_hex, _) in FONT_COLOR_PRESETS {
+        if hex.eq_ignore_ascii_case(preset_hex) {
+            return name;
+        }
+    }
+    hex
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
     /// Application theme (for future use)
@@ -131,6 +179,10 @@ pub struct Settings {
     /// Font family name (e.g. "Default", "PingFang SC", "Songti SC")
     #[serde(default = "default_font_family")]
     pub font_family: String,
+
+    /// Font color (e.g. "Default", "#1A1A1A", "#1E3A5F")
+    #[serde(default = "default_font_color")]
+    pub font_color: String,
 
     /// Recently opened file paths
     /// since the path is a string(heap data),
@@ -176,6 +228,7 @@ impl Default for Settings {
             line_spacing: default_line_spacing(),
             format_use_tabs: false,
             font_family: default_font_family(),
+            font_color: default_font_color(),
             recent_files: Vec::new(),
             vim_mode: false,
             custom_workspace: None,
@@ -199,6 +252,9 @@ impl Settings {
         }
         if self.font_family.trim().is_empty() {
             self.font_family = default_font_family();
+        }
+        if self.font_color != "Default" && parse_hex_color(&self.font_color).is_none() {
+            self.font_color = default_font_color();
         }
     }
 
@@ -402,6 +458,7 @@ mod tests {
         assert_eq!(empty_reloaded.font_size, 14.0);
         assert_eq!(empty_reloaded.line_spacing, 1.5);
         assert_eq!(empty_reloaded.font_family, "Default");
+        assert_eq!(empty_reloaded.font_color, "Default");
         assert!(!empty_reloaded.format_use_tabs);
 
         // Sanitizing out-of-range values restores defaults
@@ -409,11 +466,21 @@ mod tests {
             font_size: -5.0,
             line_spacing: 0.0,
             font_family: "   ".to_string(),
+            font_color: "not-a-color".to_string(),
             ..Settings::default()
         };
         corrupted.sanitize_typography();
         assert_eq!(corrupted.font_size, 14.0);
         assert_eq!(corrupted.line_spacing, 1.5);
         assert_eq!(corrupted.font_family, "Default");
+        assert_eq!(corrupted.font_color, "Default");
+
+        // Custom hex colors are preserved by sanitize_typography
+        let mut custom_color = Settings {
+            font_color: "#1E3A5F".to_string(),
+            ..Settings::default()
+        };
+        custom_color.sanitize_typography();
+        assert_eq!(custom_color.font_color, "#1E3A5F");
     }
 }

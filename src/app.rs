@@ -838,37 +838,27 @@ impl PaperShellApp {
                 );
             }
             PluginManagerAction::OpenPluginsFolder => self.open_plugins_folder_with_feedback(),
-            PluginManagerAction::Configure(id) => {
-                self.settings_window.open(
-                    ctx,
-                    Some(crate::ui::settings::SettingsTab::Plugins),
-                    Some(id.clone()),
-                );
-                match id.as_str() {
-                    "cloud_backup" => {
-                        self.cloud_backup_dialog
-                            .open(ctx, &self.config.settings.cloud_backup);
-                    }
-                    "github_publish" => {
-                        self.plugin_config_window
-                            .open(&self.config.settings.github_publish, false);
-                        ctx.send_viewport_cmd_to(
-                            egui::ViewportId::ROOT,
-                            egui::ViewportCommand::Focus,
-                        );
-                    }
-                    _ => {
-                        if let Some(plugin) = self.plugin_manager.find_any(&id) {
-                            let metadata = plugin.metadata();
-                            let definitions = plugin.settings_definitions();
-                            let saved = self.plugin_manager.external_settings_for(&id);
-                            self.external_plugin_config_window
-                                .open(&metadata, definitions, &saved);
-                            ctx.request_repaint_of(self.plugin_manager_window.viewport_id());
-                        }
+            PluginManagerAction::Configure(id) => match id.as_str() {
+                "cloud_backup" => {
+                    self.cloud_backup_dialog
+                        .open(ctx, &self.config.settings.cloud_backup);
+                }
+                "github_publish" => {
+                    self.plugin_config_window
+                        .open(&self.config.settings.github_publish, false);
+                    ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Focus);
+                }
+                _ => {
+                    if let Some(plugin) = self.plugin_manager.find_any(&id) {
+                        let metadata = plugin.metadata();
+                        let definitions = plugin.settings_definitions();
+                        let saved = self.plugin_manager.external_settings_for(&id);
+                        self.external_plugin_config_window
+                            .open(&metadata, definitions, &saved);
+                        ctx.request_repaint_of(self.plugin_manager_window.viewport_id());
                     }
                 }
-            }
+            },
             PluginManagerAction::Uninstall(id) => {
                 match self.plugin_manager.safe_uninstall_external_plugin(&id) {
                     Ok(removed) => {
@@ -1047,19 +1037,13 @@ impl PaperShellApp {
             crate::ui::settings::SettingsAction::ExportCurrentSkin => {
                 self.export_current_skin_dialog();
             }
-            crate::ui::settings::SettingsAction::SaveCustomSkin(skin) => {
-                let id = skin.id.clone();
-                match self.skin_manager.save_custom_skin(*skin) {
-                    Ok(_installed) => {
-                        self.apply_skin(ctx, &id);
-                        self.settings_window
-                            .set_status(false, "已保存并应用新皮肤".to_string());
-                    }
-                    Err(e) => {
-                        self.settings_window
-                            .set_status(true, format!("保存皮肤失败：{e}"));
-                    }
-                }
+            crate::ui::settings::SettingsAction::ManageSkins => {
+                self.plugin_manager_window
+                    .open_tab(ctx, crate::ui::plugins::manager::ManagerTab::Skins);
+            }
+            crate::ui::settings::SettingsAction::OpenSkinMarket => {
+                self.plugin_manager_window
+                    .open_tab(ctx, crate::ui::plugins::manager::ManagerTab::Market);
             }
             crate::ui::settings::SettingsAction::UpdateMarketSource {
                 repo,
@@ -1096,61 +1080,6 @@ impl PaperShellApp {
                 } else {
                     self.settings_window
                         .set_status(false, "已恢复为官方默认皮肤市场源".to_string());
-                }
-            }
-            crate::ui::settings::SettingsAction::SaveCloudBackupConfig(new_config) => {
-                let previous =
-                    std::mem::replace(&mut self.config.settings.cloud_backup, new_config.clone());
-                match self.config.save() {
-                    Ok(()) => {
-                        self.plugin_manager
-                            .update_builtin_configs(None, Some(new_config));
-                        self.settings_window
-                            .set_status(false, "云端备份配置已保存".to_string());
-                    }
-                    Err(error) => {
-                        self.config.settings.cloud_backup = previous;
-                        self.settings_window
-                            .set_status(true, format!("无法保存云端备份设置：{error}"));
-                    }
-                }
-            }
-            crate::ui::settings::SettingsAction::SaveGithubPublishConfig(new_config) => {
-                let previous =
-                    std::mem::replace(&mut self.config.settings.github_publish, new_config.clone());
-                match self.config.save() {
-                    Ok(()) => {
-                        self.plugin_manager
-                            .update_builtin_configs(Some(new_config), None);
-                        self.settings_window
-                            .set_status(false, "GitHub 发布配置已保存".to_string());
-                    }
-                    Err(error) => {
-                        self.config.settings.github_publish = previous;
-                        self.settings_window
-                            .set_status(true, format!("无法保存插件设置：{error}"));
-                    }
-                }
-            }
-            crate::ui::settings::SettingsAction::SaveExternalPluginConfig { plugin_id, values } => {
-                let previous = self.config.settings.get_external_settings(&plugin_id);
-                self.config
-                    .settings
-                    .set_external_settings(&plugin_id, values.clone());
-                match self.config.save() {
-                    Ok(()) => {
-                        self.plugin_manager
-                            .set_external_settings(&plugin_id, values);
-                        self.settings_window
-                            .set_status(false, "外部插件设置已保存".to_string());
-                    }
-                    Err(error) => {
-                        self.config
-                            .settings
-                            .set_external_settings(&plugin_id, previous);
-                        self.settings_window
-                            .set_status(true, format!("无法保存插件设置：{error}"));
-                    }
                 }
             }
         }
@@ -1463,8 +1392,6 @@ impl eframe::App for PaperShellApp {
                     sidebar_expanded: self.sidebar.is_expanded(),
                     vim_mode: self.config.settings.vim_mode,
                     vim_mode_label: self.editor.get_vim_mode_label(),
-                    skins: self.skin_manager.all_skins(),
-                    current_skin_id: self.skin_manager.current_skin_id(),
                 },
             )
             .or(shortcut_action)
@@ -1596,37 +1523,13 @@ impl eframe::App for PaperShellApp {
                             self.run_plugin(id);
                         }
                     }
-                    crate::ui::title_bar::TitleBarAction::OpenPluginsFolder => {
-                        self.open_plugins_folder_with_feedback();
-                    }
                     crate::ui::title_bar::TitleBarAction::ManagePlugins => {
-                        self.plugin_manager_window.open(ctx);
+                        self.plugin_manager_window
+                            .open_tab(ctx, crate::ui::plugins::manager::ManagerTab::Plugins);
                     }
                     crate::ui::title_bar::TitleBarAction::About => self.about_window.open(ctx),
-                    crate::ui::title_bar::TitleBarAction::SelectSkin(id) => {
-                        self.apply_skin(ctx, &id);
-                    }
-                    crate::ui::title_bar::TitleBarAction::ImportSkin => {
-                        self.import_skin_dialog(ctx);
-                    }
-                    crate::ui::title_bar::TitleBarAction::ExportCurrentSkin => {
-                        self.export_current_skin_dialog();
-                    }
-                    crate::ui::title_bar::TitleBarAction::OpenSkinMarket => {
-                        self.plugin_manager_window
-                            .open_tab(ctx, crate::ui::plugins::manager::ManagerTab::Market);
-                    }
                     crate::ui::title_bar::TitleBarAction::OpenSettings(tab) => {
-                        self.settings_window.open(ctx, tab, None);
-                    }
-                    crate::ui::title_bar::TitleBarAction::ConfigurePlugin(id) => {
-                        if id == "cloud_backup" {
-                            self.cloud_backup_dialog
-                                .open(ctx, &self.config.settings.cloud_backup);
-                        } else if id == "github_publish" {
-                            self.plugin_config_window
-                                .open(&self.config.settings.github_publish, false);
-                        }
+                        self.settings_window.open(ctx, tab);
                     }
                 }
             }
@@ -1710,16 +1613,6 @@ impl eframe::App for PaperShellApp {
         }
 
         // Settings Window (Dedicated unified preferences window)
-        let all_plugins = self.plugin_manager.all_metadata();
-        let mut plugin_definitions = std::collections::BTreeMap::new();
-        for meta in &all_plugins {
-            if let Some(plugin) = self.plugin_manager.find_any(&meta.id) {
-                let defs = plugin.settings_definitions();
-                if !defs.is_empty() {
-                    plugin_definitions.insert(meta.id.clone(), defs);
-                }
-            }
-        }
         let settings_state = crate::ui::settings::SettingsWindowState {
             vim_mode: self.config.settings.vim_mode,
             format_use_tabs: self.config.settings.format_use_tabs,
@@ -1734,11 +1627,6 @@ impl eframe::App for PaperShellApp {
             market_repo: &self.config.settings.skin_market_repo,
             market_branch: &self.config.settings.skin_market_branch,
             market_folder: &self.config.settings.skin_market_folder,
-            plugins: &all_plugins,
-            cloud_backup: &self.config.settings.cloud_backup,
-            github_publish: &self.config.settings.github_publish,
-            external_plugin_settings: &self.config.settings.external_plugin_settings,
-            plugin_definitions: &plugin_definitions,
         };
         if let Some(action) = self.settings_window.show(ctx, settings_state) {
             self.handle_settings_action(ctx, action);
@@ -1983,6 +1871,16 @@ impl eframe::App for PaperShellApp {
 #[cfg(test)]
 mod document_change_tests {
     use super::*;
+
+    #[test]
+    fn configuring_a_plugin_does_not_also_open_application_preferences() {
+        let ctx = egui::Context::default();
+        let mut app = PaperShellApp::default();
+        for id in ["cloud_backup", "github_publish"] {
+            app.handle_plugin_manager_action(&ctx, PluginManagerAction::Configure(id.into()));
+            assert!(!app.settings_window.is_open());
+        }
+    }
 
     #[test]
     fn update_restart_preserves_unsaved_document_when_cancelled() {

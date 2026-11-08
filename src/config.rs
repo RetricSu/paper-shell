@@ -30,6 +30,11 @@ impl Config {
         let mut settings: Settings = confy::load(APP_NAME, None)?;
         settings.migrate_workspace_folders();
         settings.sanitize_typography();
+        if settings.migrate_skin_market_source()
+            && let Err(error) = confy::store(APP_NAME, None, &settings)
+        {
+            tracing::warn!("Could not persist skin market source migration: {error}");
+        }
         info!("Load config from {:?}", Self::config_path()?);
         Ok(Self { settings })
     }
@@ -278,6 +283,23 @@ impl Default for Settings {
 }
 
 impl Settings {
+    /// Replace only the retired factory source, preserving custom repositories/paths.
+    pub fn migrate_skin_market_source(&mut self) -> bool {
+        let legacy_default = self
+            .skin_market_repo
+            .trim()
+            .eq_ignore_ascii_case("retricsu/paper-shell-themes")
+            && self.skin_market_branch.trim() == "main"
+            && self.skin_market_folder.trim().trim_matches('/') == "skins";
+        if !legacy_default {
+            return false;
+        }
+        self.skin_market_repo = default_skin_market_repo();
+        self.skin_market_branch = default_skin_market_branch();
+        self.skin_market_folder = default_skin_market_folder();
+        true
+    }
+
     /// Sanitize typography settings so they remain within sensible ranges.
     pub fn sanitize_typography(&mut self) {
         if self.font_size < 8.0 || self.font_size > 72.0 {
@@ -533,6 +555,62 @@ mod tests {
     }
 
     #[test]
+    fn legacy_market_source_migrates_once_and_preserves_custom_sources() {
+        let mut settings = Settings {
+            skin_market_repo: "retricsu/paper-shell-themes".into(),
+            skin_market_branch: "main".into(),
+            ..Settings::default()
+        };
+        assert!(settings.migrate_skin_market_source());
+        assert_eq!(settings.skin_market_repo, default_skin_market_repo());
+        assert_eq!(settings.skin_market_branch, "master");
+        assert!(!settings.migrate_skin_market_source());
+        for (repo, branch, folder) in [
+            ("someone/themes", "main", "skins"),
+            ("retricsu/paper-shell-themes", "custom", "skins"),
+            ("retricsu/paper-shell-themes", "main", "my-skins"),
+            ("RetricSu/paper-shell", "main", "skins"),
+        ] {
+            settings.skin_market_repo = repo.into();
+            settings.skin_market_branch = branch.into();
+            settings.skin_market_folder = folder.into();
+            assert!(!settings.migrate_skin_market_source());
+            assert_eq!(
+                (
+                    &*settings.skin_market_repo,
+                    &*settings.skin_market_branch,
+                    &*settings.skin_market_folder
+                ),
+                (repo, branch, folder)
+            );
+        }
+    }
+
+    #[test]
+    fn anime_skin_import_keeps_the_jpeg_background_and_loads_a_texture() {
+        let source =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("skins/summer_platform/skin.toml");
+        let destination = tempfile::tempdir().unwrap();
+        let skin = crate::skin::Skin::import_from_file(&source, destination.path()).unwrap();
+        let image_path = skin.dir.as_ref().unwrap().join("background.jpg");
+        let bytes = std::fs::read(image_path).unwrap();
+        let image = image::load_from_memory(&bytes).unwrap();
+        assert_eq!((image.width(), image.height()), (1920, 1038));
+        let mut renderer = crate::skin::SkinRenderer::new();
+        let ctx = egui::Context::default();
+        assert!(renderer.get_or_load_texture(&ctx, &skin).is_some());
+        let package = destination.path().join("summer_platform.paperskin");
+        skin.export_to_file(&package).unwrap();
+        let reimported = tempfile::tempdir().unwrap();
+        let restored = crate::skin::Skin::import_from_file(&package, reimported.path()).unwrap();
+        assert!(renderer.get_or_load_texture(&ctx, &restored).is_some());
+        assert_eq!(
+            std::fs::read(restored.dir.unwrap().join("background.jpg")).unwrap(),
+            bytes
+        );
+    }
+
+    #[test]
     fn repository_skins_folder_contains_valid_skins() {
         let repo_skins = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("skins");
         assert!(repo_skins.is_dir(), "skins folder must exist in repo");
@@ -547,6 +625,7 @@ mod tests {
             "mint_breeze",
             "deep_sea",
             "cherry_blossom",
+            "summer_platform",
         ] {
             let skin_toml = repo_skins.join(skin_id).join("skin.toml");
             assert!(skin_toml.is_file(), "skin file {:?} must exist", skin_toml);

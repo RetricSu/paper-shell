@@ -10,6 +10,18 @@ pub fn show_tool_window(
     title: &str,
     size: [f32; 2],
     open: &mut bool,
+    contents: impl FnMut(&mut egui::Ui),
+) {
+    show_tool_window_with_min_size(ctx, id, title, size, [320.0, 160.0], open, contents);
+}
+
+pub fn show_tool_window_with_min_size(
+    ctx: &egui::Context,
+    id: &str,
+    title: &str,
+    size: [f32; 2],
+    min_size: [f32; 2],
+    open: &mut bool,
     mut contents: impl FnMut(&mut egui::Ui),
 ) {
     ctx.show_viewport_immediate(
@@ -17,7 +29,7 @@ pub fn show_tool_window(
         egui::ViewportBuilder::default()
             .with_title(title)
             .with_inner_size(size)
-            .with_min_inner_size([320.0, 160.0])
+            .with_min_inner_size(min_size)
             .with_resizable(true),
         |ctx, class| {
             crate::style::configure_style(ctx);
@@ -27,6 +39,7 @@ pub fn show_tool_window(
                     .open(open)
                     .collapsible(false)
                     .default_size(size)
+                    .min_size(min_size)
                     .show(ctx, |ui| contents(ui));
             } else {
                 egui::CentralPanel::default().show(ctx, |ui| contents(ui));

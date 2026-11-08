@@ -23,17 +23,9 @@ pub enum TitleBarAction {
     SearchReplace,
     /// Run an installed plugin by its id.
     RunPlugin(String),
-    /// Open the configuration window for a built-in plugin.
-    ConfigurePlugin(String),
-    /// Open the plugins directory in the system file manager.
-    OpenPluginsFolder,
     /// Open the unified plugin management window.
     ManagePlugins,
     About,
-    SelectSkin(String),
-    ImportSkin,
-    ExportCurrentSkin,
-    OpenSkinMarket,
     /// Open the dedicated settings window, optionally navigating directly to a tab.
     OpenSettings(Option<crate::ui::settings::SettingsTab>),
 }
@@ -60,8 +52,6 @@ pub struct TitleBarState<'a> {
     pub plugins: &'a [PluginMetadata],
     pub vim_mode: bool,
     pub vim_mode_label: Option<&'a str>,
-    pub skins: &'a [crate::skin::Skin],
-    pub current_skin_id: &'a str,
 }
 
 impl TitleBar {
@@ -86,8 +76,6 @@ impl TitleBar {
             plugins,
             vim_mode,
             vim_mode_label,
-            skins,
-            current_skin_id,
         } = state;
 
         let mut action = None;
@@ -609,81 +597,12 @@ impl TitleBar {
 
                         ui.separator();
 
-                        // 5. 皮肤风格 (Skin Style)
-                        let current_skin_name = skins
-                            .iter()
-                            .find(|s| s.id == current_skin_id)
-                            .map(|s| s.name.as_str())
-                            .unwrap_or("默认");
-
-                        egui::containers::menu::SubMenuButton::from_button(
-                            egui::Button::new(format!(
-                                "{} 皮肤风格",
-                                egui_phosphor::regular::PALETTE
-                            ))
-                            .right_text(format!("{current_skin_name} ⏵")),
-                        )
-                        .config(
-                            egui::containers::menu::MenuConfig::default()
-                                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside),
-                        )
-                        .ui(ui, |ui| {
-                            let skin_menu_width = 180.0;
-                            ui.set_width(skin_menu_width);
-                            ui.set_max_width(skin_menu_width);
-
-                            for skin in skins {
-                                let is_selected = skin.id == current_skin_id;
-                                let label = if is_selected {
-                                    format!("{} {}", egui_phosphor::regular::CHECK, skin.name)
-                                } else {
-                                    format!("   {}", skin.name)
-                                };
-                                let mut response = ui.selectable_label(is_selected, label);
-                                if !skin.description.is_empty() {
-                                    response = response.on_hover_text(&skin.description);
-                                }
-                                if response.clicked() {
-                                    action = Some(TitleBarAction::SelectSkin(skin.id.clone()));
-                                }
-                            }
-
-                            ui.separator();
-
-                            if ui
-                                .button(format!(
-                                    "{} 导入皮肤…",
-                                    egui_phosphor::regular::DOWNLOAD_SIMPLE
-                                ))
-                                .clicked()
-                            {
-                                action = Some(TitleBarAction::ImportSkin);
-                            }
-                            if ui
-                                .button(format!("{} 导出当前皮肤…", egui_phosphor::regular::EXPORT))
-                                .clicked()
-                            {
-                                action = Some(TitleBarAction::ExportCurrentSkin);
-                            }
-                            if ui
-                                .button(format!(
-                                    "{} 皮肤市场与管理…",
-                                    egui_phosphor::regular::STOREFRONT
-                                ))
-                                .clicked()
-                            {
-                                action = Some(TitleBarAction::OpenSkinMarket);
-                            }
-                            if ui
-                                .button(format!("{} 皮肤设置与微调…", egui_phosphor::regular::GEAR))
-                                .clicked()
-                            {
-                                action = Some(TitleBarAction::OpenSettings(Some(
-                                    crate::ui::settings::SettingsTab::Skin,
-                                )));
-                            }
-                        });
-
+                        if ui.button("皮肤与外观设置…").clicked() {
+                            action = Some(TitleBarAction::OpenSettings(Some(
+                                crate::ui::settings::SettingsTab::Skin,
+                            )));
+                            ui.close();
+                        }
                         ui.separator();
 
                         ui.horizontal(|ui| {
@@ -736,92 +655,6 @@ impl TitleBar {
                         }
                     });
 
-                    // 皮肤菜单 (独立顶级菜单，可像字体一样快速选择皮肤)
-                    if ui.available_width() >= 120.0 {
-                        ui.menu_button(
-                            format!("{} 皮肤", egui_phosphor::regular::PALETTE),
-                            |ui| {
-                                ui.set_min_width(200.0);
-                                ui.label(egui::RichText::new("皮肤风格").strong());
-                                ui.separator();
-                                egui::ScrollArea::vertical()
-                                    .max_height(280.0)
-                                    .show(ui, |ui| {
-                                        for skin in skins {
-                                            let is_selected = skin.id == current_skin_id;
-                                            let label = if is_selected {
-                                                format!(
-                                                    "{} {}",
-                                                    egui_phosphor::regular::CHECK,
-                                                    skin.name
-                                                )
-                                            } else {
-                                                format!("   {}", skin.name)
-                                            };
-                                            let mut resp = ui.selectable_label(is_selected, label);
-                                            if !skin.description.is_empty() {
-                                                resp = resp.on_hover_text(&skin.description);
-                                            }
-                                            if resp.clicked() {
-                                                action = Some(TitleBarAction::SelectSkin(
-                                                    skin.id.clone(),
-                                                ));
-                                                ui.close();
-                                            }
-                                        }
-                                    });
-
-                                ui.separator();
-
-                                if ui
-                                    .button(format!(
-                                        "{} 皮肤市场…",
-                                        egui_phosphor::regular::STOREFRONT
-                                    ))
-                                    .on_hover_text("浏览和从 GitHub 下载社区皮肤")
-                                    .clicked()
-                                {
-                                    action = Some(TitleBarAction::OpenSkinMarket);
-                                    ui.close();
-                                }
-                                if ui
-                                    .button(format!(
-                                        "{} 导入皮肤…",
-                                        egui_phosphor::regular::DOWNLOAD_SIMPLE
-                                    ))
-                                    .clicked()
-                                {
-                                    action = Some(TitleBarAction::ImportSkin);
-                                    ui.close();
-                                }
-                                if ui
-                                    .button(format!(
-                                        "{} 导出当前皮肤…",
-                                        egui_phosphor::regular::EXPORT
-                                    ))
-                                    .clicked()
-                                {
-                                    action = Some(TitleBarAction::ExportCurrentSkin);
-                                    ui.close();
-                                }
-                                ui.separator();
-                                if ui
-                                    .button(format!(
-                                        "{} 皮肤外观设置…",
-                                        egui_phosphor::regular::GEAR
-                                    ))
-                                    .on_hover_text("在设置窗口微调皮肤效果与管理市场源")
-                                    .clicked()
-                                {
-                                    action = Some(TitleBarAction::OpenSettings(Some(
-                                        crate::ui::settings::SettingsTab::Skin,
-                                    )));
-                                    ui.close();
-                                }
-                            },
-                        );
-                    }
-
                     if ui.available_width() >= 55.0 {
                         ui.menu_button(
                             format!("{} 插件", egui_phosphor::regular::PUZZLE_PIECE),
@@ -842,111 +675,12 @@ impl TitleBar {
                                 }
                                 ui.separator();
 
-                                // 插件菜单内置快速切换皮肤选项 (像字体一样快速选)
-                                let current_skin_name = skins
-                                    .iter()
-                                    .find(|s| s.id == current_skin_id)
-                                    .map(|s| s.name.as_str())
-                                    .unwrap_or("默认");
-
-                                egui::containers::menu::SubMenuButton::from_button(
-                                    egui::Button::new(format!(
-                                        "{} 皮肤插件",
-                                        egui_phosphor::regular::PALETTE
-                                    ))
-                                    .right_text(format!("{current_skin_name} ⏵")),
-                                )
-                                .config(
-                                    egui::containers::menu::MenuConfig::default().close_behavior(
-                                        egui::PopupCloseBehavior::CloseOnClickOutside,
-                                    ),
-                                )
-                                .ui(ui, |ui| {
-                                    ui.set_min_width(180.0);
-                                    for skin in skins {
-                                        let is_selected = skin.id == current_skin_id;
-                                        let label = if is_selected {
-                                            format!(
-                                                "{} {}",
-                                                egui_phosphor::regular::CHECK,
-                                                skin.name
-                                            )
-                                        } else {
-                                            format!("   {}", skin.name)
-                                        };
-                                        let mut resp = ui.selectable_label(is_selected, label);
-                                        if !skin.description.is_empty() {
-                                            resp = resp.on_hover_text(&skin.description);
-                                        }
-                                        if resp.clicked() {
-                                            action =
-                                                Some(TitleBarAction::SelectSkin(skin.id.clone()));
-                                        }
-                                    }
-                                    ui.separator();
-                                    if ui
-                                        .button(format!(
-                                            "{} 皮肤市场…",
-                                            egui_phosphor::regular::STOREFRONT
-                                        ))
-                                        .clicked()
-                                    {
-                                        action = Some(TitleBarAction::OpenSkinMarket);
-                                    }
-                                });
-
-                                ui.separator();
                                 if ui
                                     .button("管理插件…")
                                     .on_hover_text("启用、禁用、刷新或卸载插件")
                                     .clicked()
                                 {
                                     action = Some(TitleBarAction::ManagePlugins);
-                                    ui.close();
-                                }
-                                if ui
-                                    .button(format!("{} 插件设置…", egui_phosphor::regular::GEAR))
-                                    .on_hover_text("在独立设置窗口统一配置所有插件参数")
-                                    .clicked()
-                                {
-                                    action = Some(TitleBarAction::OpenSettings(Some(
-                                        crate::ui::settings::SettingsTab::Plugins,
-                                    )));
-                                    ui.close();
-                                }
-                                if plugins.iter().any(|p| p.id == "cloud_backup")
-                                    && ui.button("配置云端备份…").clicked()
-                                {
-                                    action = Some(TitleBarAction::ConfigurePlugin(
-                                        "cloud_backup".to_string(),
-                                    ));
-                                    ui.close();
-                                }
-                                if plugins.iter().any(|p| p.id == "github_publish")
-                                    && ui.button("配置 GitHub 发布…").clicked()
-                                {
-                                    action = Some(TitleBarAction::ConfigurePlugin(
-                                        "github_publish".to_string(),
-                                    ));
-                                    ui.close();
-                                }
-                                if ui
-                                    .button(format!(
-                                        "{} 皮肤市场与管理…",
-                                        egui_phosphor::regular::STOREFRONT
-                                    ))
-                                    .on_hover_text("管理皮肤、从 GitHub 市场安装或导入导出")
-                                    .clicked()
-                                {
-                                    action = Some(TitleBarAction::OpenSkinMarket);
-                                    ui.close();
-                                }
-                                if ui
-                                    .button("打开插件目录…")
-                                    .on_hover_text("将插件文件夹放入此目录即可安装")
-                                    .clicked()
-                                {
-                                    action = Some(TitleBarAction::OpenPluginsFolder);
                                     ui.close();
                                 }
                             },
@@ -1252,8 +986,6 @@ mod tests {
                             sidebar_expanded: true,
                             vim_mode: false,
                             vim_mode_label: None,
-                            skins: &[],
-                            current_skin_id: "classic_paper",
                         },
                     );
                 });
@@ -1305,6 +1037,22 @@ mod tests {
             line_spacing,
             font_color,
         )
+    }
+
+    #[test]
+    fn plugin_menu_has_one_management_entry_and_no_appearance_or_configuration() {
+        let ctx = egui::Context::default();
+        crate::style::configure_style(&ctx);
+        let (initial, _) = render_typography_title_bar(&ctx, vec![], &[], "Default", 14.0, 1.5);
+        assert!(!has_text(&initial, "皮肤"));
+        let _ = click_text(&ctx, &initial, "插件", &[], "Default", 14.0, 1.5);
+        let (menu, _) = render_typography_title_bar(&ctx, vec![], &[], "Default", 14.0, 1.5);
+        assert!(has_text(&menu, "管理插件…"));
+        assert!(!has_text(&menu, "皮肤"));
+        assert!(!has_text(&menu, "插件设置"));
+        assert!(!has_text(&menu, "配置云端备份"));
+        let (_, action) = click_text(&ctx, &menu, "管理插件…", &[], "Default", 14.0, 1.5);
+        assert!(matches!(action, Some(TitleBarAction::ManagePlugins)));
     }
 
     #[test]
@@ -1418,8 +1166,6 @@ mod tests {
                         sidebar_expanded: false,
                         vim_mode: false,
                         vim_mode_label: None,
-                        skins: &[],
-                        current_skin_id: "classic_paper",
                     });
                     assert!(ui.min_rect().width() <= available + 1.0, "title overflow at {width}");
                     assert!(ui.min_rect().height() <= 24.0, "title bar must remain a single compact row");
@@ -1467,8 +1213,6 @@ mod tests {
                             sidebar_expanded: false,
                             vim_mode: false,
                             vim_mode_label: None,
-                            skins: &[],
-                            current_skin_id: "classic_paper",
                         },
                     );
                 });
@@ -1575,8 +1319,6 @@ mod tests {
                         sidebar_expanded: true,
                         vim_mode: false,
                         vim_mode_label: None,
-                        skins: &[],
-                        current_skin_id: "classic_paper",
                     },
                 );
             });
@@ -1614,8 +1356,6 @@ mod tests {
                         sidebar_expanded: true,
                         vim_mode: false,
                         vim_mode_label: None,
-                        skins: &[],
-                        current_skin_id: "classic_paper",
                     },
                 );
             });
@@ -1650,8 +1390,6 @@ mod tests {
                         sidebar_expanded: true,
                         vim_mode: false,
                         vim_mode_label: None,
-                        skins: &[],
-                        current_skin_id: "classic_paper",
                     },
                 );
             });
@@ -2007,8 +1745,6 @@ mod tests {
                                     sidebar_expanded: false,
                                     vim_mode: false,
                                     vim_mode_label: None,
-                                    skins: &[],
-                                    current_skin_id: "classic_paper",
                                 },
                             );
                         });

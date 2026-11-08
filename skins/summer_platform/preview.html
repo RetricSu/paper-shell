@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>夏日站台 · 皮肤效果预览</title>
+<style>
+:root { color-scheme: light; font-family: system-ui, sans-serif; color: #263441; background: #e8e7e0; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+header { padding: 18px 28px; border-bottom: 1px solid #b8bdba; display: flex; gap: 14px 28px; flex-wrap: wrap; align-items: center; }
+h1 { font-size: 18px; margin: 0 0 5px; }
+p { margin: 0; }
+header p, footer { font-size: 13px; color: #46545e; }
+label { display: flex; gap: 12px; align-items: center; }
+input { accent-color: #557b8c; width: 150px; }
+output { font-variant-numeric: tabular-nums; min-width: 3ch; }
+main { position: relative; isolation: isolate; min-height: 72vh; padding: 28px 36px; background: #f2f0e9; }
+main::before { content: ''; position: absolute; z-index: -1; inset: 0; background: url('background.jpg') center / cover no-repeat; opacity: var(--opacity, .24); }
+article { font-size: 16px; line-height: 1.8; white-space: pre-wrap; max-width: 70ch; }
+footer { padding: 16px 28px; line-height: 1.7; }
+a { color: #365e72; }
+@media (max-width: 600px) { main { padding: 24px; } header, footer { padding: 16px 24px; } }
+</style>
+<header>
+  <div><h1>夏日站台</h1><p>图片与文字的合成示意。实际效果请导入 skin.toml。</p></div>
+  <label for="opacity">背景强度 <input id="opacity" type="range" min="0" max="100" value="24"><output id="value" for="opacity">24%</output></label>
+</header>
+<main id="canvas"><article>夏日站台
+
+电车驶过的时候，站台短暂地安静下来。
+远处的楼房、淡黄色的衬衫，还有一阵从夏天吹来的风。
+
+有些故事，适合从一句平常的话开始。
+把它写下来，像把一张旧车票夹进书里。</article></main>
+<footer>《听到涛声》（1993）官方剧照，未经 AI 生成或修改。<br>
+© 1993 Saeko Himuro/Keiko Niwa/Studio Ghibli, N · <a href="https://www.ghibli.jp/works/umi/">原始来源与使用说明</a></footer>
+<script>
+const slider = document.querySelector('#opacity');
+slider.addEventListener('input', () => {
+  document.querySelector('#canvas').style.setProperty('--opacity', slider.value / 100);
+  document.querySelector('#value').value = slider.value + '%';
+});
+</script>
+</html>

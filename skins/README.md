@@ -23,3 +23,9 @@ skins/
 ```
 
 欢迎向此目录提交新的皮肤风格！
+
+## 图片背景示例：夏日站台
+
+`summer_platform/` 使用 1993 年《听到涛声》的官方剧照，包含 JPG 背景、配色和排版。
+在应用中导入该目录的 `skin.toml` 即可试用，详见 [素材来源和使用说明](summer_platform/README.md)。
+升级会将最早默认的 `retricsu/paper-shell-themes · main · skins` 迁移到上述官方源，其他自定义源保留。

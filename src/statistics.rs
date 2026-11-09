@@ -1,6 +1,6 @@
 //! Writing statistics derived from saved versions, using the editor's word rules.
 
-use chrono::{Datelike, Days, Months, NaiveDate};
+use chrono::{DateTime, Datelike, Days, Months, NaiveDate, Utc};
 use similar::{DiffTag, TextDiff};
 use std::collections::BTreeMap;
 use std::ops::AddAssign;
@@ -93,13 +93,16 @@ impl AddAssign for WritingActivity {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct DocumentStatistics {
     pub path: Option<PathBuf>,
     pub id: String,
     /// None when the latest version cannot be read. Older versions are not totals.
     pub words: Option<usize>,
     pub days: BTreeMap<NaiveDate, WritingActivity>,
+    pub version_count: usize,
+    pub last_saved: Option<DateTime<Utc>>,
+    pub total_activity: WritingActivity,
 }
 
 #[derive(Debug, Default)]
@@ -164,6 +167,11 @@ pub struct StatisticsReport {
 impl WritingStatistics {
     pub fn total_words(&self) -> usize {
         self.documents.iter().filter_map(|doc| doc.words).sum()
+    }
+
+    pub fn remove_document(&mut self, doc_id: &str) -> Option<DocumentStatistics> {
+        let pos = self.documents.iter().position(|doc| doc.id == doc_id)?;
+        Some(self.documents.remove(pos))
     }
 
     pub fn report(
@@ -364,5 +372,56 @@ mod tests {
         assert_eq!(report.activity.added, 18);
         assert_eq!(report.activity.net(), 13);
         assert_eq!(report.buckets.len(), 1);
+    }
+
+    #[test]
+    fn remove_document_updates_totals_and_reports() {
+        let day = date("2026-11-05");
+        let mut stats = WritingStatistics {
+            documents: vec![
+                DocumentStatistics {
+                    id: "doc-1".to_string(),
+                    words: Some(10),
+                    days: [(
+                        day,
+                        WritingActivity {
+                            added: 15,
+                            removed: 5,
+                            seconds: 30,
+                        },
+                    )]
+                    .into(),
+                    ..Default::default()
+                },
+                DocumentStatistics {
+                    id: "doc-2".to_string(),
+                    words: Some(20),
+                    days: [(
+                        day,
+                        WritingActivity {
+                            added: 25,
+                            removed: 5,
+                            seconds: 50,
+                        },
+                    )]
+                    .into(),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        assert_eq!(stats.total_words(), 30);
+        let removed = stats.remove_document("doc-1");
+        assert!(removed.is_some());
+        assert_eq!(removed.unwrap().id, "doc-1");
+        assert_eq!(stats.documents.len(), 1);
+        assert_eq!(stats.total_words(), 20);
+
+        let report = stats.report(StatisticsPeriod::AllTime, StatisticsGrouping::Month, day);
+        assert_eq!(report.activity.added, 25);
+        assert_eq!(report.activity.removed, 5);
+        assert_eq!(report.activity.seconds, 50);
+
+        assert!(stats.remove_document("non-existent").is_none());
     }
 }

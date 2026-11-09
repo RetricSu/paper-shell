@@ -689,6 +689,51 @@ impl PaperShellApp {
         }
     }
 
+    fn handle_statistics_action(&mut self, action: crate::ui::statistics::StatisticsAction) {
+        match action {
+            crate::ui::statistics::StatisticsAction::OpenFile(path) => {
+                self.open_file(path);
+            }
+            crate::ui::statistics::StatisticsAction::RevealInFolder(path) => {
+                crate::ui::statistics::reveal_path_in_file_manager(&path);
+            }
+            crate::ui::statistics::StatisticsAction::DeleteDocument {
+                doc_id,
+                delete_local_file,
+            } => {
+                let current_file = self.editor.get_current_file().cloned();
+                match self
+                    .editor_backend
+                    .remove_document_record(&doc_id, delete_local_file)
+                {
+                    Ok(affected_path) => {
+                        let is_current = affected_path
+                            .as_ref()
+                            .is_some_and(|p| current_file.as_ref() == Some(p));
+                        if is_current {
+                            if delete_local_file {
+                                self.apply_new_document(None);
+                            } else {
+                                self.document_uuid = None;
+                                self.current_version_id = None;
+                                self.history_window.close();
+                            }
+                        }
+                        self.statistics_window.remove_document(&doc_id);
+                        self.statistics_window.invalidate();
+                        if delete_local_file {
+                            self.sidebar.refresh();
+                        }
+                    }
+                    Err(error) => {
+                        self.statistics_window
+                            .set_error(format!("踢出文档记录失败: {error}"));
+                    }
+                }
+            }
+        }
+    }
+
     fn apply_rollback(&mut self, hash: &str) -> bool {
         let Some(path) = self.editor.get_current_file().cloned() else {
             self.file_error = Some(format!("无法回滚到版本 {hash}: 当前文档尚未保存"));
@@ -1682,6 +1727,9 @@ impl eframe::App for PaperShellApp {
         if let Some(action) = self.history_window.take_pending_action() {
             self.handle_history_action(action);
         }
+        if let Some(action) = self.statistics_window.take_pending_action() {
+            self.handle_statistics_action(action);
+        }
 
         // Settings Window (Dedicated unified preferences window)
         let settings_state = crate::ui::settings::SettingsWindowState {
@@ -2540,5 +2588,53 @@ mod final_integration_tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn test_statistics_delete_document_action_handling() {
+        let mut app = PaperShellApp::default();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file_path = temp_dir.path().join("article_to_delete.md");
+        std::fs::write(&file_path, "# 一篇记录的文章\n这是正文内容。").unwrap();
+
+        // Save via backend
+        let (doc_uuid, _) = app.editor_backend.save(&file_path, "# 一篇记录的文章\n这是正文内容。", 60).unwrap();
+        assert!(file_path.exists());
+
+        // Set as current file
+        app.editor.set_current_file(Some(file_path.clone()));
+        app.document_uuid = Some(doc_uuid.clone());
+
+        // 1. Kick out document from statistics (retaining local file)
+        app.handle_statistics_action(crate::ui::statistics::StatisticsAction::DeleteDocument {
+            doc_id: doc_uuid.clone(),
+            delete_local_file: false,
+        });
+
+        // File remains on disk
+        assert!(file_path.exists());
+        // Editor document_uuid cleared so it won't link to the deleted record
+        assert_eq!(app.document_uuid, None);
+        // Stats record is removed
+        let stats = app.editor_backend.load_writing_statistics().unwrap();
+        assert!(stats.documents.iter().all(|doc| doc.id != doc_uuid));
+
+        // 2. Now save another temporary file and delete with delete_local_file = true
+        let file_path_2 = temp_dir.path().join("draft_to_wipe.md");
+        std::fs::write(&file_path_2, "临时草稿").unwrap();
+        let (doc_uuid_2, _) = app.editor_backend.save(&file_path_2, "临时草稿", 30).unwrap();
+        app.editor.set_current_file(Some(file_path_2.clone()));
+        app.document_uuid = Some(doc_uuid_2.clone());
+
+        app.handle_statistics_action(crate::ui::statistics::StatisticsAction::DeleteDocument {
+            doc_id: doc_uuid_2.clone(),
+            delete_local_file: true,
+        });
+
+        // Disk file was removed
+        assert!(!file_path_2.exists());
+        // Editor opened a new document
+        assert!(app.editor.get_current_file().is_none());
+        assert_eq!(app.document_uuid, None);
     }
 }

@@ -1,230 +1,72 @@
 <div align="center">
-  <img src="assets/app-icon.png" alt="Paper Shell app icon" width="112" />
-  <h1>Paper Shell</h1>
+  <img src="assets/app-icon.png" alt="Paper Shell app icon" width="104" />
+  <h1>Paper Shell · 纸壳</h1>
   <p><strong>A quiet place to think, write, and revise.</strong></p>
+  <p>为日常与长文写作打造的轻量桌面编辑器。保持纸面的纯粹，把控思考的节奏。</p>
   <p>
-    A simple, compact, and informative desktop editor for everyday and long-form writing.
-  </p>
-  <p>
-    <a href="https://github.com/RetricSu/paper-shell/releases/latest"><strong>Download</strong></a>
+    <a href="https://retricsu.github.io/paper-shell/"><strong>🌐 官方网站</strong></a>
     ·
-    <a href="#features">Features</a>
+    <a href="https://github.com/RetricSu/paper-shell/releases/latest"><strong>📥 立即下载</strong></a>
     ·
-    <a href="#getting-started">Getting started</a>
+    <a href="docs/features.md">📖 功能手册</a>
     ·
-    <a href="docs/development.md">Development</a>
+    <a href="docs/development.md">🛠 开发指南</a>
   </p>
   <p>
     <a href="https://github.com/RetricSu/paper-shell/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/RetricSu/paper-shell?display_name=tag" /></a>
     <a href="https://github.com/RetricSu/paper-shell/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/RetricSu/paper-shell/actions/workflows/ci.yml/badge.svg" /></a>
+    <a href="https://retricsu.github.io/paper-shell/"><img alt="Website" src="https://img.shields.io/badge/website-live-success.svg" /></a>
+    <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue.svg" /></a>
   </p>
 </div>
 
-Paper Shell keeps the document at the center of the workspace. It combines plain-text
-editing with practical tools for organizing files, annotating passages, exploring version
-history, and understanding your writing habits—without turning the editor into a dashboard.
+---
 
-> Paper Shell is under active development. Download a packaged release below, or
-> [build from source](docs/development.md#build-from-source).
+**Paper Shell（纸壳）** 将文档重新置于创作中心。它结合了纯文本编辑的无干扰感与长文创作必备的实用工具——组织文件、划词批注、像 Git 一样探索分支版本历史、以及深度中文分词支持，而绝不把编辑器变成杂乱的仪表盘。
 
-## Highlights
+## ✨ 核心特性
 
-### Vim mode that understands Chinese
+- **懂中文分词的 Vim 模式**：原生集成 Jieba 结巴分词，`w`、`b`、`dw`、`yw` 等指令精准贴合中文词汇边界，Normal / Insert 模式无缝衔接中文输入法。
+- **类 Git 的文档分支历史**：保存即创建内容哈希节点。可视化分支树与正文 Diff 对比，回退历史版本绝不覆盖后续保存，随时拉出新分支。
+- **经典白纸与主题皮肤**：默认“经典白纸”极简界面；内置古雅羊皮纸、薄荷清夏、无限地带等多种氛围皮肤，字体、字号、行距即调即看，支持社区皮肤导入。
+- **行内批注与专注统计**：独立存储划词批注，不污染原文内容；精准汉字计数与专注时长趋势分析，陪伴长期写作习惯。
+- **本地优先与多格式导出**：纯文本存储（txt / md / org / rst），无云端锁定；一键导出高质量矢量 PDF、独立 HTML 与 macOS 原生打印。
 
-Use familiar Insert, Normal, and Visual modes without giving up normal Chinese IME input.
-Chinese word motions and operators use [Jieba](https://github.com/messense/jieba-rs)
-segmentation, so commands such as `w`, `b`, `dw`, and `yw` follow word boundaries in
-Chinese prose instead of treating an entire paragraph as one token. Common motions,
-operators, counts, registers, and system-clipboard integration are supported.
+![Paper Shell's Classic Paper workspace with a blank document](assets/screenshots/classic-paper.png)
 
-Enable it via **编辑 → Vim 模式 (Esc)**. Press `Esc` to enter Normal mode and `i` to return
-to Chinese input in Insert mode.
+## 📥 下载安装
 
-### Git-like branching history for every document
+各平台预编译安装包可直接在 [GitHub Releases](https://github.com/RetricSu/paper-shell/releases/latest) 下载：
 
-Saved versions form a local, content-addressed history with parent links. Inspect the
-branching tree and content diffs, compare any version with its parent or the current
-document, and pin or label important milestones. Restoring an older version does not
-delete later saves; continuing from it creates a sibling branch.
+| 平台 | 架构 | 下载包 | 说明 |
+| :--- | :--- | :--- | :--- |
+| **macOS** | Universal (通用) | [DMG](https://github.com/RetricSu/paper-shell/releases/latest/download/Paper-Shell-macOS-universal.dmg) · [ZIP](https://github.com/RetricSu/paper-shell/releases/latest/download/Paper-Shell-macOS-universal.zip) | 推荐，支持 Apple Silicon 与 Intel |
+| **macOS** | Apple Silicon | [DMG](https://github.com/RetricSu/paper-shell/releases/latest/download/Paper-Shell-macOS-aarch64.dmg) · [ZIP](https://github.com/RetricSu/paper-shell/releases/latest/download/Paper-Shell-macOS-aarch64.zip) | M 系列芯片专属 |
+| **macOS** | Intel | [DMG](https://github.com/RetricSu/paper-shell/releases/latest/download/Paper-Shell-macOS-x86_64.dmg) · [ZIP](https://github.com/RetricSu/paper-shell/releases/latest/download/Paper-Shell-macOS-x86_64.zip) | Intel 芯片专属 |
+| **Windows** | x86_64 | [ZIP](https://github.com/RetricSu/paper-shell/releases/latest/download/Paper-Shell-Windows-x86_64.zip) | 解压即用 |
+| **Linux** | x86_64 | [tar.gz](https://github.com/RetricSu/paper-shell/releases/latest/download/Paper-Shell-Linux-x86_64.tar.gz) | 运行可执行文件 |
 
-It feels like the useful part of Git for a writer, without requiring a repository, staging,
-or the command line.
+> **macOS 首次打开提示“已损坏”或“未验证开发者”？**
+> 打开终端执行：`xattr -cr /Applications/Paper\ Shell.app` 即可正常打开。更多细节参见 [应用安全与更新指引](docs/features.md#九应用安全与自动更新机制)。
 
-## A quiet page, made yours
+## 🚀 快速上手
 
-The default **Classic Paper (经典白纸)** workspace keeps everything out of the way except
-the page.
+1. **打开或新建**：通过 `Cmd/Ctrl + O` 打开本地文档，或直接在空白纸面上开始书写。
+2. **工作区目录**：按 `Cmd/Ctrl + Shift + E`（或点击左上角标题）展开文件树，添加你的写作文件夹。
+3. **沉浸排版与模式**：
+   - 按 `Esc` 开启/切换 **Vim 模式**。
+   - 在顶部 **排版** 菜单中自由挑选字体、字号与行距，在 **设置 → 皮肤与外观** 中切换纸张主题。
+4. **历史与统计**：通过 **文件 → 版本历史** 随时回溯灵感演进，点击状态栏字数打开 **写作统计**。
 
-![Paper Shell's default Classic Paper workspace with a blank document](assets/screenshots/classic-paper.png)
+## 📚 详细文档
 
-Choose a different atmosphere without giving up a readable writing surface. Here, the
-**无限地带 · 双人疾驰 (`megazone_ride`)** skin combines a background illustration with a
-Chinese essay in the editor.
+- 📖 **[功能完整手册 (docs/features.md)](docs/features.md)**：深入了解 Vim 模式、分支版本树机制、行内批注原理、插件系统与皮肤配置。
+- 🛠 **[开发与构建指南 (docs/development.md)](docs/development.md)**：从源码构建、本地打包、测试验证与发版流程。
+- 🌐 **[访问官方网站](https://retricsu.github.io/paper-shell/)**：在线体验产品画廊与平台自动检测下载。
+- 💡 **[问题反馈与建议](https://github.com/RetricSu/paper-shell/issues)**：欢迎提交 Issue 或 Pull Request。
 
-![Paper Shell using the Megazone Ride skin while editing a Chinese essay](assets/screenshots/megazone-ride-chinese.png)
+---
 
-Paper Shell includes built-in skins, adjustable Chinese typography, and portable custom
-skin packages. See [Appearance & skin library](#appearance--skin-library-外观与皮肤库).
-
-## Download
-
-Prebuilt packages are available for macOS, Linux, and Windows.
-
-| Platform | Package | Notes |
-| --- | --- | --- |
-| macOS — Universal | [DMG](https://github.com/RetricSu/paper-shell/releases/latest/download/Paper-Shell-macOS-universal.dmg) · [ZIP](https://github.com/RetricSu/paper-shell/releases/latest/download/Paper-Shell-macOS-universal.zip) | Apple Silicon and Intel |
-| macOS — Apple Silicon | [DMG](https://github.com/RetricSu/paper-shell/releases/latest/download/Paper-Shell-macOS-aarch64.dmg) · [ZIP](https://github.com/RetricSu/paper-shell/releases/latest/download/Paper-Shell-macOS-aarch64.zip) | `aarch64` |
-| macOS — Intel | [DMG](https://github.com/RetricSu/paper-shell/releases/latest/download/Paper-Shell-macOS-x86_64.dmg) · [ZIP](https://github.com/RetricSu/paper-shell/releases/latest/download/Paper-Shell-macOS-x86_64.zip) | `x86_64` |
-| Linux | [tar.gz](https://github.com/RetricSu/paper-shell/releases/latest/download/Paper-Shell-Linux-x86_64.tar.gz) | `x86_64` |
-| Windows | [ZIP](https://github.com/RetricSu/paper-shell/releases/latest/download/Paper-Shell-Windows-x86_64.zip) | `x86_64` |
-
-On macOS, open the DMG and drag **Paper Shell** into **Applications**. On Linux and
-Windows, extract the archive and run the included executable. The current macOS packages
-are ad-hoc signed rather than notarized, so macOS may display a Gatekeeper warning.
-
-Every release includes [SHA-256 checksums](https://github.com/RetricSu/paper-shell/releases/latest/download/SHA256SUMS.txt).
-See the [release page](https://github.com/RetricSu/paper-shell/releases/latest) for all
-packages and release notes.
-
-## Getting started
-
-1. Open an existing document with **文件 → 打开文件…** (`Cmd/Ctrl+O`), or use the default
-   workspace.
-2. Press `Cmd/Ctrl+Shift+E`, or click the **纸壳** title, to show the workspace sidebar.
-   Add a folder from the sidebar's context menu, or create an article from a folder's
-   new-article action.
-3. Write in plain text, then save with `Cmd/Ctrl+S`. Paper Shell supports `txt`, `md`,
-   `markdown`, `text`, `org`, and `rst` files.
-4. Open **文件 → 写作统计…**, **文件 → 版本历史…**, or **插件 → 管理插件…** to explore
-   the tools around your document.
-
-Use **文件 → 关于纸壳** to check the installed version and update the app.
-
-### App updates
-
-Paper Shell checks GitHub for a newer stable release in the background at startup. When
-an update is available, **文件 → 关于纸壳 · 有新版本** opens the update controls. You can also
-check manually in the About window. Choose **下载更新**, then **安装并重启** when ready;
-the app verifies the package against the release's SHA-256 checksums before offering to
-install it. Unsaved writing goes through the usual save/discard/cancel confirmation,
-and the current saved file reopens after restart. Other open windows keep running.
-
-Updates use the macOS Universal app bundle or the Linux/Windows x86_64 executable.
-Install the app in a writable location first; macOS updates require a packaged `.app`
-outside the DMG. The updater clears the quarantine attribute on the verified replacement,
-so an in-app update does not repeat the browser-download Gatekeeper prompt. Network errors
-can be retried from About, which also links to the release page for manual installation.
-Drafts, prereleases, and older versions are skipped.
-
-## Features
-
-### Focused editing
-
-- Search and replace, match highlighting, clipboard actions, and a selection toolbar.
-- Adjustable Chinese fonts, font size, line spacing, and paragraph indentation.
-- Optional Vim modal editing via **编辑 → Vim 模式 (Esc)**. Press `Esc` to switch between
-  Insert and Normal modes; Visual mode, Chinese word segmentation, common motions,
-  operators, and counts are supported.
-- Unsaved-change confirmation when switching articles or closing a window.
-
-Adjust font size, line spacing, font family, text color, and paragraph indentation directly
-from the **排版** menu. Changes are immediately visible on the current document.
-
-![Paper Shell's typography controls over a Chinese document](assets/screenshots/typography.png)
-
-### Workspace files
-
-Keep the default workspace and any folders you add in one expandable file tree. Custom
-folders stay where they are, and articles are edited in place. Duplicate folders are
-ignored; removing a custom folder from the sidebar never deletes its files.
-
-The tree hides unsupported files, hidden files and directories, and symbolic links. Use
-the sidebar's refresh action after changing files outside Paper Shell.
-
-### Inline comments
-
-Select a non-empty range and release the mouse to add a comment, or right-click and choose
-**添加评论 / 备注**. Commented text has a pale amber highlight and underline; click it to
-edit or delete the comment.
-
-Comments are saved as character-indexed metadata in the app data directory, leaving the
-original text file unchanged. Anchors follow later edits and history restores. Deleting
-the entire commented range also removes its comment.
-
-### Branching version history
-
-Open **文件 → 版本历史…** to inspect saved versions as a branching tree. Select a version
-to see its timestamp, focus time, word changes, relationships, and content diff. Compare
-against its parent, the current version, or a pinned base.
-
-Rolling back restores the editor content without deleting later saves; continuing from an
-older version creates a sibling branch. Versions can be labeled, pinned, or deleted with
-confirmation. The current version and any branch containing it are protected from deletion.
-
-### Writing statistics
-
-Open **文件 → 写作统计…**, or click the title-bar word count, to see saved word totals,
-additions and deletions, focus time, and active days. Compare the last 7 days, last 30 days,
-this year, or all history, grouped by day, week, or calendar month.
-
-The **趋势总览**, **时间明细**, and **文档统计** tabs separate trends, complete time-series
-details, and a searchable per-document list. Statistics are computed in the background,
-and saving updates an open window automatically. **刷新** picks up saves from other windows.
-
-One Han character counts as one word; other non-whitespace runs count as one word each.
-Statistics compare saved versions rather than keystrokes, so imports, pasted text, and
-restored versions count as changes. Unsaved drafts are excluded. Focus time is the existing
-editor focus timer, not a measure of active typing.
-
-### Export and printing
-
-Use **文件 → 导出** to export the current document into common formats:
-- **PDF 文档 (.pdf)**: Generates a paginated vector PDF with native macOS typography, automatic wrapping, and standard margins.
-- **HTML 文档 (.html)**: Creates a clean, standalone HTML document styled with reader-friendly typography, code formatting, and light/dark theme support.
-- **Markdown (.md)** / **纯文本 (.txt)**: Exports plain text or markdown directly to disk.
-
-Paper Shell also includes **Print**, **Cloud Backup**, and **GitHub Publish** plugins. Open
-**插件 → 管理插件…** to enable or configure built-ins, discover external plugins, or inspect
-manifest errors. External plugins can be installed by placing a folder containing a
-`plugin.toml` manifest and its command in the plugin directory, then choosing **重新扫描**.
-
-![Paper Shell's plugin menu with Print, Cloud Backup, and GitHub Publish](assets/screenshots/plugins.png)
-
-Export results, plugin output, GitHub configuration and publishing, and external plugin
-settings open in separate resizable desktop windows. Use the window's close button or
-**Esc** to dismiss them. Long results and configuration forms can be scrolled.
-
-Cloud Backup remembers the encryption password in the local app configuration (plaintext)
-after **保存配置**, and reloads it on restart. After upgrading from a version that kept the
-password only for the session, enter your existing password once and save. Existing backups
-still use that password; it is never included in the backup uploaded to the server. Keep a
-separate copy of the password for recovery on another device or after losing local settings.
-
-On macOS, **打印当前文档** opens the native print panel with automatic wrapping, pagination,
-and PDF export. Other platforms use their existing print-command flow.
-
-### Appearance & skin library (外观与皮肤库)
-
-Paper Shell supports custom skin plugins, fine-grained visual tuning, and theme sharing:
-
-- **Built-in skins:** Classic Paper (经典白纸), Warm Parchment (古雅羊皮纸), Obsidian Night (黑曜石夜), Mint Breeze (薄荷清夏), Deep Sea (深海墨蓝), and Cherry Blossom (春日樱粉).
-- **Custom skin plugins:** Customize fonts, line spacing, text color, element spacing, editor padding, background images, image opacity, editor transparency, and corner radii.
-- **Import and export:** Export your current layout and typography to portable `.toml` manifests or `.paperskin` / `.zip` packages, and import skin packages with a single click.
-- **GitHub marketplace:** Browse and install community themes directly pulled from a remote GitHub repository directory (configurable in settings or the UI), with pre-seeded offline community templates for instant preview and installation.
-- Access via **设置 → 皮肤与外观** (also linked from **排版 → 皮肤与外观设置…**). Switch skins immediately, or open **管理与微调…** / **浏览皮肤市场…**. Market source configuration is under **高级：皮肤市场源**.
-- **设置** groups writing/autosave, typography, and appearance. Changes apply immediately; market source edits require saving.
-- **插件** lists enabled plugin commands. Use **插件 → 管理插件…** to enable, disable, rescan, uninstall, or open an individual plugin's settings. Skin management is separate from executable plugins.
-
-> **Plugin security:** external plugins run local commands with the same permissions as
-> Paper Shell and are not sandboxed. Install only plugins you trust and review their
-> manifests before enabling them. External password settings are masked in the UI but are
-> stored unencrypted in the application configuration file.
-
-## Development
-
-Build instructions, acceptance checks, packaging, the release process, and the project
-roadmap live in [docs/development.md](docs/development.md).
-
-## Feedback
-
-Report bugs or request features through [GitHub Issues](https://github.com/RetricSu/paper-shell/issues).
+<div align="center">
+  <sub>Paper Shell is open source software released under the <a href="LICENSE">MIT License</a>.</sub>
+</div>

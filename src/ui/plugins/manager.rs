@@ -1150,7 +1150,7 @@ impl PluginManagerWindow {
                                                     ui.painter().circle_stroke(
                                                         dot_center,
                                                         2.5,
-                                                        egui::Stroke::new(1.0, dot_color),
+                                                        egui::Stroke::new(1.0_f32, dot_color),
                                                     );
                                                 }
 
@@ -1476,7 +1476,7 @@ impl PluginManagerWindow {
                         rect,
                         2.0,
                         color,
-                        Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color),
+                        Stroke::new(1.0_f32, ui.visuals().widgets.noninteractive.bg_stroke.color),
                         egui::epaint::StrokeKind::Inside,
                     );
                 }

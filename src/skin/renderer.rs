@@ -225,7 +225,7 @@ impl SkinRenderer {
         if let Some(ref hex) = skin.colors.accent_color
             && let Some(color) = parse_hex_color(hex)
         {
-            visuals.selection.stroke = Stroke::new(1.0, color);
+            visuals.selection.stroke = Stroke::new(1.0_f32, color);
         }
 
         if let Some(ref hex) = skin.colors.text_color

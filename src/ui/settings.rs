@@ -452,7 +452,7 @@ impl SettingsWindow {
                     ui.painter().rect_stroke(
                         rect,
                         3.0,
-                        egui::Stroke::new(2.0, ui.visuals().text_color()),
+                        egui::Stroke::new(2.0_f32, ui.visuals().text_color()),
                         egui::StrokeKind::Outside,
                     );
                 }
@@ -1056,7 +1056,10 @@ impl SettingsWindow {
                         rect,
                         2.0,
                         color,
-                        egui::Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color),
+                        egui::Stroke::new(
+                            1.0_f32,
+                            ui.visuals().widgets.noninteractive.bg_stroke.color,
+                        ),
                         egui::StrokeKind::Inside,
                     );
                     response.on_hover_text(hex);

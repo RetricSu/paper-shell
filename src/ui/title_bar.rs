@@ -568,7 +568,7 @@ impl TitleBar {
                                                 rect,
                                                 2.0,
                                                 egui::Stroke::new(
-                                                    1.0,
+                                                    1.0_f32,
                                                     ui.visuals()
                                                         .widgets
                                                         .noninteractive

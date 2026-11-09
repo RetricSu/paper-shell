@@ -29,6 +29,7 @@ struct CommentComposer {
 struct OpenCommentDraft {
     id: String,
     text: String,
+    editing: bool,
 }
 
 struct OpenComment {
@@ -59,6 +60,78 @@ pub struct Editor {
     pub font_size: f32,
     pub line_spacing: f32,
     pub font_color: Option<egui::Color32>,
+}
+
+// Keep anchored comment popovers in the same visual vocabulary as app dialogs.
+fn comment_window(ctx: &egui::Context, id: &str, position: egui::Pos2) -> egui::Window<'static> {
+    let style = ctx.style();
+    let width = 300.0_f32.min((ctx.content_rect().width() - 48.0).max(120.0));
+    egui::Window::new("评论")
+        .id(egui::Id::new(id))
+        .fixed_pos(position)
+        .constrain_to(ctx.content_rect())
+        .fixed_size(egui::vec2(width, 0.0))
+        .title_bar(false)
+        .collapsible(false)
+        .resizable(false)
+        .frame(
+            egui::Frame::window(&style)
+                .fill(style.visuals.panel_fill)
+                .stroke(egui::Stroke::new(
+                    1.0_f32,
+                    style.visuals.text_color().gamma_multiply(0.18),
+                ))
+                .corner_radius(egui::CornerRadius::ZERO)
+                .inner_margin(10)
+                .shadow(egui::epaint::Shadow::NONE),
+        )
+}
+
+fn comment_header(ui: &mut Ui, title: &str) -> bool {
+    let mut close = false;
+    ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
+    ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new(format!("{} {}", egui_phosphor::regular::CHAT_TEXT, title))
+                .size(14.0)
+                .strong(),
+        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            close = crate::ui::dialog::modal_button(ui, egui_phosphor::regular::X)
+                .on_hover_text("关闭评论")
+                .clicked();
+        });
+    });
+    ui.separator();
+    close
+}
+
+fn comment_input(ui: &mut Ui, id: &str, text: &mut String) {
+    let text_id = egui::Id::new(("comment_text", id));
+    let stroke = if ui.memory(|memory| memory.has_focus(text_id)) {
+        ui.visuals().selection.stroke
+    } else {
+        egui::Stroke::new(1.0_f32, ui.visuals().text_color().gamma_multiply(0.18))
+    };
+    egui::Frame::new()
+        .stroke(stroke)
+        .inner_margin(8)
+        .show(ui, |ui| {
+            egui::ScrollArea::vertical()
+                .id_salt(("comment_input_scroll", id))
+                .max_height(220.0)
+                .show(ui, |ui| {
+                    ui.add(
+                        egui::TextEdit::multiline(text)
+                            .id(text_id)
+                            .font(egui::FontId::proportional(13.0))
+                            .frame(false)
+                            .hint_text("写下评论或备注…")
+                            .desired_width(ui.available_width())
+                            .desired_rows(5),
+                    );
+                });
+        });
 }
 
 impl Default for Editor {
@@ -766,6 +839,7 @@ impl Editor {
             start,
             end,
             quote,
+            updated_at: Some(chrono::Utc::now()),
         });
         true
     }
@@ -1292,12 +1366,16 @@ impl Editor {
                 start,
                 end,
                 quote: String::new(),
+                updated_at: None,
             },
             position: Self::comment_popup_position(output, end),
             anchor_valid: true,
             error: None,
         });
         self.open_comment = None;
+        output.response.ctx.memory_mut(|memory| {
+            memory.request_focus(egui::Id::new(("comment_text", "new_comment_text")));
+        });
     }
 
     fn show_selection_comment_button(
@@ -1432,6 +1510,7 @@ impl Editor {
             .map(|comment| OpenCommentDraft {
                 id: comment.id.clone(),
                 text: comment.text.clone(),
+                editing: false,
             })
             .collect();
         if !comments.is_empty() {
@@ -1464,45 +1543,41 @@ impl Editor {
         composer.comment.quote =
             Self::char_slice(&self.content, composer.comment.start, composer.comment.end)
                 .to_string();
+        composer.comment.updated_at = Some(chrono::Utc::now());
+        let index = composer.comment.start;
+        let position = composer.position;
         self.comments.push(composer.comment);
+        self.open_comments_at(index, position);
+        if let Some(open) = &mut self.open_comment {
+            open.selected = open.comments.len() - 1;
+        }
     }
 
     fn show_comment_windows(&mut self, ui: &mut Ui) {
+        use crate::ui::dialog::modal_button;
         if let Some(mut composer) = self.comment_composer.take() {
             let mut cancel = false;
             let mut save = false;
-            egui::Window::new("添加评论 / 备注")
-                .fixed_pos(composer.position)
-                .collapsible(false)
-                .resizable(false)
-                .show(ui.ctx(), |ui| {
-                    ui.add(
-                        egui::TextEdit::multiline(&mut composer.comment.text)
-                            .hint_text("写下评论或备注…")
-                            .desired_width(280.0)
-                            .desired_rows(5),
-                    );
-                    if let Some(error) = &composer.error {
-                        ui.colored_label(ui.visuals().error_fg_color, error);
-                    }
-                    ui.horizontal(|ui| {
-                        if ui
-                            .add_enabled(
-                                composer.anchor_valid && !composer.comment.text.trim().is_empty(),
-                                egui::Button::new("添加评论"),
-                            )
-                            .clicked()
-                        {
-                            save = true;
-                        }
-                        if ui.button("取消").clicked() {
-                            cancel = true;
-                        }
-                    });
+            comment_window(ui.ctx(), "comment_composer", composer.position).show(ui.ctx(), |ui| {
+                cancel = comment_header(ui, "添加评论 / 备注");
+                comment_input(ui, "new_comment_text", &mut composer.comment.text);
+                if let Some(error) = &composer.error {
+                    ui.colored_label(ui.visuals().error_fg_color, error);
+                }
+                ui.separator();
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    save = ui
+                        .add_enabled_ui(
+                            composer.anchor_valid && !composer.comment.text.trim().is_empty(),
+                            |ui| modal_button(ui, egui::RichText::new("添加评论").strong()),
+                        )
+                        .inner
+                        .clicked();
+                    cancel |= modal_button(ui, "取消").clicked();
                 });
-            if ui.input(|input| input.key_pressed(egui::Key::Escape)) {
-                cancel = true;
-            }
+            });
+            cancel |=
+                ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
             if save {
                 self.comment_composer = Some(composer);
                 self.submit_comment();
@@ -1514,89 +1589,128 @@ impl Editor {
         let Some(mut open) = self.open_comment.take() else {
             return;
         };
-        let mut visible = true;
-        let mut done = false;
+        let mut close = false;
+        let mut save = false;
         let mut delete = false;
-        egui::Window::new("评论 / 备注")
-            .open(&mut visible)
-            .fixed_pos(open.position)
-            .collapsible(false)
-            .resizable(false)
-            .show(ui.ctx(), |ui| {
-                if open.comments.len() > 1 {
-                    ui.horizontal_wrapped(|ui| {
-                        for index in 0..open.comments.len() {
-                            if ui
-                                .selectable_label(
-                                    open.selected == index,
-                                    format!("评论 {}", index + 1),
-                                )
-                                .clicked()
-                            {
-                                open.selected = index;
-                            }
+        comment_window(ui.ctx(), "comment_reader", open.position).show(ui.ctx(), |ui| {
+            close = comment_header(ui, "评论 / 备注");
+            if open.comments.len() > 1 {
+                ui.horizontal_wrapped(|ui| {
+                    for index in 0..open.comments.len() {
+                        if ui
+                            .selectable_label(open.selected == index, format!("评论 {}", index + 1))
+                            .clicked()
+                        {
+                            open.selected = index;
                         }
-                    });
-                    ui.separator();
-                }
-                let selected_id = &open.comments[open.selected].id;
-                let Some(comment) = self
-                    .comments
-                    .iter()
-                    .find(|comment| comment.id == *selected_id)
-                else {
-                    return;
-                };
-                let quote = if comment.quote.chars().count() > 80 {
-                    format!("{}…", comment.quote.chars().take(80).collect::<String>())
-                } else {
-                    comment.quote.clone()
-                };
-                ui.label(egui::RichText::new(format!("“{}”", quote)).small().weak());
-                ui.add(
-                    egui::TextEdit::multiline(&mut open.comments[open.selected].text)
-                        .desired_width(280.0)
-                        .desired_rows(5),
-                );
-                ui.horizontal(|ui| {
-                    if ui
-                        .add_enabled(
-                            !open.comments[open.selected].text.trim().is_empty(),
-                            egui::Button::new("完成"),
-                        )
-                        .clicked()
-                    {
-                        done = true;
                     }
-                    if ui.button("删除评论").clicked() {
-                        delete = true;
+                });
+            }
+            let draft = &mut open.comments[open.selected];
+            let Some(comment) = self.comments.iter().find(|comment| comment.id == draft.id) else {
+                return;
+            };
+            let time = comment
+                .updated_at
+                .map(|time| {
+                    format!(
+                        "最后更新 {}",
+                        time.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M")
+                    )
+                })
+                .unwrap_or_else(|| "时间未记录".into());
+            ui.label(egui::RichText::new(time).size(11.0).weak());
+            ui.add_space(2.0);
+            let quote = if comment.quote.chars().count() > 80 {
+                format!("{}…", comment.quote.chars().take(80).collect::<String>())
+            } else {
+                comment.quote.clone()
+            };
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(format!("“{}”", quote))
+                        .size(12.0)
+                        .weak(),
+                )
+                .wrap(),
+            );
+            ui.add_space(4.0);
+            if draft.editing {
+                comment_input(ui, &draft.id, &mut draft.text);
+            } else {
+                egui::ScrollArea::vertical()
+                    .id_salt("comment_body")
+                    .max_height(240.0)
+                    .show(ui, |ui| {
+                        ui.add(
+                            egui::Label::new(egui::RichText::new(&comment.text).size(13.0))
+                                .wrap()
+                                .selectable(true),
+                        );
+                    });
+            }
+            ui.add_space(4.0);
+            ui.separator();
+            ui.horizontal(|ui| {
+                delete = modal_button(ui, egui::RichText::new("删除评论").small().weak()).clicked();
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if draft.editing {
+                        save = ui
+                            .add_enabled_ui(!draft.text.trim().is_empty(), |ui| {
+                                modal_button(ui, egui::RichText::new("保存").strong())
+                            })
+                            .inner
+                            .clicked();
+                        if modal_button(ui, "取消").clicked() {
+                            draft.text = comment.text.clone();
+                            draft.editing = false;
+                        }
+                    } else if modal_button(
+                        ui,
+                        format!("{} 编辑", egui_phosphor::regular::PENCIL_SIMPLE),
+                    )
+                    .clicked()
+                    {
+                        draft.editing = true;
+                        ui.memory_mut(|memory| {
+                            memory.request_focus(egui::Id::new(("comment_text", &draft.id)))
+                        });
                     }
                 });
             });
-        if ui.input(|input| input.key_pressed(egui::Key::Escape)) {
-            visible = false;
+        });
+        if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+            let draft = &mut open.comments[open.selected];
+            if draft.editing {
+                if let Some(comment) = self.comments.iter().find(|comment| comment.id == draft.id) {
+                    draft.text = comment.text.clone();
+                }
+                draft.editing = false;
+            } else {
+                close = true;
+            }
         }
-
         if delete {
-            let selected_id = open.comments[open.selected].id.clone();
-            self.comments.retain(|comment| comment.id != selected_id);
+            let selected_id = &open.comments[open.selected].id;
+            self.comments.retain(|comment| comment.id != *selected_id);
             open.comments.remove(open.selected);
             open.selected = open.selected.min(open.comments.len().saturating_sub(1));
-            if visible && !open.comments.is_empty() {
-                self.open_comment = Some(open);
-            }
-        } else if done {
-            for draft in open.comments {
-                if !draft.text.trim().is_empty()
-                    && let Some(comment) = self
-                        .comments
-                        .iter_mut()
-                        .find(|comment| comment.id == draft.id)
-                {
-                    comment.text = draft.text;
+        } else if save {
+            let draft = &mut open.comments[open.selected];
+            if !draft.text.trim().is_empty()
+                && let Some(comment) = self
+                    .comments
+                    .iter_mut()
+                    .find(|comment| comment.id == draft.id)
+            {
+                if comment.text != draft.text {
+                    comment.text = draft.text.clone();
+                    comment.updated_at = Some(chrono::Utc::now());
                 }
+                draft.editing = false;
             }
-        } else if visible {
+        }
+        if !close && !open.comments.is_empty() {
             self.open_comment = Some(open);
         }
     }
@@ -2022,6 +2136,167 @@ mod tests {
         )
     }
 
+    fn render_comment_popup(
+        ctx: &egui::Context,
+        editor: &mut Editor,
+        events: Vec<egui::Event>,
+    ) -> egui::FullOutput {
+        ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(640.0, 480.0),
+                )),
+                events,
+                focused: true,
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| editor.show_comment_windows(ui));
+            },
+        )
+    }
+
+    fn popup_text_rect(output: &egui::FullOutput, label: &str) -> egui::Rect {
+        output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.text() == label => {
+                    Some(text.galley.rect.translate(text.pos.to_vec2()))
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("visible popup label: {label}"))
+    }
+
+    fn click_comment_action(ctx: &egui::Context, editor: &mut Editor, label: &str) {
+        let output = render_comment_popup(ctx, editor, vec![]);
+        let pos = popup_text_rect(&output, label).center();
+        for pressed in [true, false] {
+            render_comment_popup(
+                ctx,
+                editor,
+                vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            );
+        }
+    }
+
+    #[test]
+    fn submitting_a_comment_opens_its_reader_and_records_the_time() {
+        let ctx = egui::Context::default();
+        crate::style::configure_default_style(&ctx);
+        let mut editor = Editor::default();
+        editor.set_content("abcdef".into());
+        assert!(editor.add_comment(0, 6, "existing".into()));
+        editor.comment_composer = Some(CommentComposer {
+            comment: TextComment {
+                id: String::new(),
+                text: "new note".into(),
+                start: 1,
+                end: 4,
+                quote: String::new(),
+                updated_at: None,
+            },
+            position: egui::pos2(40.0, 40.0),
+            anchor_valid: true,
+            error: None,
+        });
+        render_comment_popup(&ctx, &mut editor, vec![]);
+        click_comment_action(&ctx, &mut editor, "添加评论");
+        let comment = &editor.comments[1];
+        assert!(comment.updated_at.is_some());
+        assert_eq!(comment.quote, "bcd");
+        let open = editor.open_comment.as_ref().unwrap();
+        assert_eq!(open.comments[open.selected].id, comment.id);
+        let output = render_comment_popup(&ctx, &mut editor, vec![]);
+        popup_text_rect(&output, "new note");
+    }
+
+    #[test]
+    fn comment_reader_edits_saves_and_cancels_without_changing_other_comments() {
+        let ctx = egui::Context::default();
+        crate::style::configure_default_style(&ctx);
+        let mut editor = Editor::default();
+        editor.set_content("abcdef".into());
+        assert!(editor.add_comment(0, 4, "first note".into()));
+        assert!(editor.add_comment(2, 6, "second note".into()));
+        let original_time = editor.comments[0].updated_at;
+        editor.open_comments_at(3, egui::pos2(40.0, 40.0));
+        render_comment_popup(&ctx, &mut editor, vec![]);
+        let output = render_comment_popup(&ctx, &mut editor, vec![]);
+        popup_text_rect(&output, "first note");
+        assert!(output.shapes.iter().any(|shape| matches!(&shape.shape,
+            egui::Shape::Text(text) if text.galley.text().starts_with("最后更新 "))));
+        assert!(!editor.open_comment.as_ref().unwrap().comments[0].editing);
+        let edit_label = format!("{} 编辑", egui_phosphor::regular::PENCIL_SIMPLE);
+        click_comment_action(&ctx, &mut editor, &edit_label);
+        assert!(editor.open_comment.as_ref().unwrap().comments[0].editing);
+        render_comment_popup(
+            &ctx,
+            &mut editor,
+            vec![egui::Event::Text(" appended".into())],
+        );
+        let updated = editor.open_comment.as_ref().unwrap().comments[0]
+            .text
+            .clone();
+        assert!(updated.contains(" appended"));
+        click_comment_action(&ctx, &mut editor, "保存");
+        assert_eq!(editor.comments[0].text, updated);
+        assert!(editor.comments[0].updated_at > original_time);
+        assert_eq!(editor.comments[1].text, "second note");
+        assert!(!editor.open_comment.as_ref().unwrap().comments[0].editing);
+
+        let saved_time = editor.comments[0].updated_at;
+        click_comment_action(&ctx, &mut editor, &edit_label);
+        render_comment_popup(
+            &ctx,
+            &mut editor,
+            vec![egui::Event::Text(" discard".into())],
+        );
+        click_comment_action(&ctx, &mut editor, "取消");
+        assert_eq!(editor.comments[0].text, updated);
+        assert_eq!(editor.comments[0].updated_at, saved_time);
+        assert_eq!(
+            editor.open_comment.as_ref().unwrap().comments[0].text,
+            updated
+        );
+        click_comment_action(&ctx, &mut editor, &edit_label);
+        editor.open_comment.as_mut().unwrap().comments[0].text = "   ".into();
+        assert!(editor.open_comment.as_ref().unwrap().comments[0].editing);
+        render_comment_popup(&ctx, &mut editor, vec![]);
+        assert!(editor.open_comment.as_ref().unwrap().comments[0].editing);
+        assert_eq!(editor.comments[0].text, updated);
+        render_comment_popup(
+            &ctx,
+            &mut editor,
+            vec![egui::Event::Key {
+                key: egui::Key::Escape,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+        assert!(!editor.open_comment.as_ref().unwrap().comments[0].editing);
+        click_comment_action(&ctx, &mut editor, "评论 2");
+        let output = render_comment_popup(&ctx, &mut editor, vec![]);
+        popup_text_rect(&output, "second note");
+        click_comment_action(&ctx, &mut editor, "评论 1");
+        click_comment_action(&ctx, &mut editor, "删除评论");
+        assert_eq!(editor.comments.len(), 1);
+        let output = render_comment_popup(&ctx, &mut editor, vec![]);
+        popup_text_rect(&output, "second note");
+    }
+
     #[test]
     fn comment_tool_stays_hidden_during_ime_composition_and_typing() {
         use egui::{Event, ImeEvent};
@@ -2372,6 +2647,7 @@ mod tests {
                 start: 4,
                 end: 7,
                 quote: String::new(),
+                updated_at: None,
             },
             position: egui::Pos2::ZERO,
             anchor_valid: true,
@@ -2398,6 +2674,7 @@ mod tests {
                 start: 5,
                 end: 8,
                 quote: String::new(),
+                updated_at: None,
             },
             position: egui::Pos2::ZERO,
             anchor_valid: true,

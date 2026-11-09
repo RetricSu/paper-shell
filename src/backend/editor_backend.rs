@@ -1647,6 +1647,7 @@ mod tests {
             start: 1,
             end: 4,
             quote: " selected ".into(),
+            updated_at: Some(chrono::Utc::now()),
         }];
         backend.save_comments(&uuid, &comments).unwrap();
         assert_eq!(backend.load_comments(&uuid).unwrap(), comments);

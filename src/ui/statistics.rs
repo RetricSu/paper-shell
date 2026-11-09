@@ -144,7 +144,8 @@ impl StatisticsWindow {
                 }
                 if ctx.input(|i| i.viewport().close_requested())
                     || (self.pending_delete.is_none()
-                        && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)))
+                        && ctx
+                            .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)))
                 {
                     self.open = false;
                 }
@@ -157,10 +158,7 @@ impl StatisticsWindow {
             return;
         };
 
-        let file_exists = pending
-            .file_path
-            .as_ref()
-            .is_some_and(|path| path.exists());
+        let file_exists = pending.file_path.as_ref().is_some_and(|path| path.exists());
 
         let message = if file_exists {
             format!(
@@ -638,7 +636,11 @@ fn show_documents(
                     );
                     child.spacing_mut().item_spacing.x = 4.0;
                     if child
-                        .button(RichText::new("踢出").color(Color32::from_rgb(180, 60, 60)).small())
+                        .button(
+                            RichText::new("踢出")
+                                .color(Color32::from_rgb(180, 60, 60))
+                                .small(),
+                        )
                         .on_hover_text("将此文章踢出统计，不再记录字数与写作趋势")
                         .clicked()
                     {
@@ -678,7 +680,10 @@ fn show_documents(
                     if file_exists {
                         ui.colored_label(Color32::from_rgb(60, 140, 70), "● 本地文件存在");
                     } else {
-                        ui.colored_label(Color32::from_rgb(190, 120, 40), "⚠️ 本地源文件已不存在（仅保留统计历史）");
+                        ui.colored_label(
+                            Color32::from_rgb(190, 120, 40),
+                            "⚠️ 本地源文件已不存在（仅保留统计历史）",
+                        );
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.small_button("✕ 关闭详情").clicked() {
@@ -694,7 +699,10 @@ fn show_documents(
                     .spacing([24.0, 6.0])
                     .show(ui, |ui| {
                         ui.label("最新保存字数");
-                        ui.strong(doc.words.map_or_else(|| "无法读取".to_string(), |w| format!("{} 字", number(w))));
+                        ui.strong(doc.words.map_or_else(
+                            || "无法读取".to_string(),
+                            |w| format!("{} 字", number(w)),
+                        ));
                         ui.label("保存版本数");
                         ui.strong(format!("{} 次", doc.version_count));
                         ui.end_row();
@@ -706,25 +714,34 @@ fn show_documents(
                         ui.label("累计写作时长");
                         ui.strong(duration(doc.total_activity.seconds));
                         ui.label("最后保存时间");
-                        ui.strong(doc.last_saved.map_or_else(|| "未知".to_string(), |dt| dt.with_timezone(&Local).format("%Y-%m-%d %H:%M").to_string()));
+                        ui.strong(doc.last_saved.map_or_else(
+                            || "未知".to_string(),
+                            |dt| {
+                                dt.with_timezone(&Local)
+                                    .format("%Y-%m-%d %H:%M")
+                                    .to_string()
+                            },
+                        ));
                         ui.end_row();
                     });
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    if file_exists
-                        && let Some(doc_path) = &doc.path
-                    {
+                    if file_exists && let Some(doc_path) = &doc.path {
                         if ui.button("在编辑器中打开").clicked() {
                             *pending_action = Some(StatisticsAction::OpenFile(doc_path.clone()));
                         }
                         if ui.button("在访达/资源管理器中显示").clicked() {
-                            *pending_action = Some(StatisticsAction::RevealInFolder(doc_path.clone()));
+                            *pending_action =
+                                Some(StatisticsAction::RevealInFolder(doc_path.clone()));
                         }
                     }
                     if ui
                         .button(
-                            RichText::new(format!("{} 踢出统计并删除记录", egui_phosphor::regular::TRASH))
-                                .color(Color32::from_rgb(180, 60, 60)),
+                            RichText::new(format!(
+                                "{} 踢出统计并删除记录",
+                                egui_phosphor::regular::TRASH
+                            ))
+                            .color(Color32::from_rgb(180, 60, 60)),
                         )
                         .on_hover_text("从纸壳中彻底清除该文章的记录与统计")
                         .clicked()
@@ -791,9 +808,7 @@ pub fn reveal_path_in_file_manager(path: &Path) {
         } else {
             path.parent().unwrap_or(path)
         };
-        let _ = std::process::Command::new("xdg-open")
-            .arg(target)
-            .spawn();
+        let _ = std::process::Command::new("xdg-open").arg(target).spawn();
     }
 }
 

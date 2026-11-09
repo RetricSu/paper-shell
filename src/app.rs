@@ -2598,7 +2598,10 @@ mod final_integration_tests {
         std::fs::write(&file_path, "# 一篇记录的文章\n这是正文内容。").unwrap();
 
         // Save via backend
-        let (doc_uuid, _) = app.editor_backend.save(&file_path, "# 一篇记录的文章\n这是正文内容。", 60).unwrap();
+        let (doc_uuid, _) = app
+            .editor_backend
+            .save(&file_path, "# 一篇记录的文章\n这是正文内容。", 60)
+            .unwrap();
         assert!(file_path.exists());
 
         // Set as current file
@@ -2622,7 +2625,10 @@ mod final_integration_tests {
         // 2. Now save another temporary file and delete with delete_local_file = true
         let file_path_2 = temp_dir.path().join("draft_to_wipe.md");
         std::fs::write(&file_path_2, "临时草稿").unwrap();
-        let (doc_uuid_2, _) = app.editor_backend.save(&file_path_2, "临时草稿", 30).unwrap();
+        let (doc_uuid_2, _) = app
+            .editor_backend
+            .save(&file_path_2, "临时草稿", 30)
+            .unwrap();
         app.editor.set_current_file(Some(file_path_2.clone()));
         app.document_uuid = Some(doc_uuid_2.clone());
 

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <title>纸壳 Paper Shell · 为写作者打造的极简桌面编辑器</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Paper Shell（纸壳）是一款为日常与长文写作打造的轻量桌面编辑器。支持中文分词 Vim 模式、类 Git 分支版本树、纸张排版与主题皮肤，本地优先，安静专注。">
+  <meta name="description" content="Paper Shell（纸壳）是一款为日常与长文写作打造的轻量桌面编辑器。支持中文分词 Vim 模式、类 Git 分支版本树、纸张排版与主题皮肤，本地优先，安静专注。免费下载 macOS、Windows 与 Linux 版。">
   
   <!-- Open Graph -->
   <meta property="og:title" content="纸壳 Paper Shell · 为写作者打造的极简桌面编辑器">
@@ -89,9 +89,9 @@
       position: sticky;
       top: 0;
       z-index: 100;
-      background: rgba(247, 246, 240, 0.92);
-      backdrop-filter: blur(10px);
-      -webkit-backdrop-filter: blur(10px);
+      background: rgba(247, 246, 240, 0.94);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
       border-bottom: 1px solid var(--border-color);
     }
     .header-inner {
@@ -110,9 +110,9 @@
       letter-spacing: -0.2px;
     }
     .brand-link img {
-      width: 32px;
-      height: 32px;
-      border-radius: 7px;
+      width: 34px;
+      height: 34px;
+      border-radius: 8px;
       box-shadow: 0 2px 6px rgba(0,0,0,0.1);
     }
     .brand-link span.en {
@@ -121,10 +121,15 @@
       font-weight: 400;
       margin-left: 2px;
     }
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
     nav.header-nav {
       display: flex;
       align-items: center;
-      gap: 24px;
+      gap: 20px;
       font-size: 15px;
     }
     nav.header-nav a {
@@ -133,11 +138,28 @@
     nav.header-nav a:hover {
       color: var(--ink-primary);
     }
+    .header-download-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      background: var(--brand);
+      color: #ffffff !important;
+      font-size: 14px;
+      font-weight: 500;
+      padding: 8px 16px;
+      border-radius: var(--radius-sm);
+      box-shadow: 0 2px 6px rgba(28, 53, 84, 0.2);
+      transition: all 0.15s ease;
+    }
+    .header-download-btn:hover {
+      background: var(--brand-hover);
+      transform: translateY(-1px);
+    }
     .github-link {
       display: flex;
       align-items: center;
       gap: 6px;
-      padding: 6px 12px;
+      padding: 7px 12px;
       background: var(--bg-card);
       border: 1px solid var(--border-color);
       border-radius: var(--radius-sm);
@@ -160,7 +182,7 @@
       display: inline-flex;
       align-items: center;
       gap: 8px;
-      padding: 4px 14px;
+      padding: 5px 16px;
       background: var(--bg-card);
       border: 1px solid var(--border-color);
       border-radius: 999px;
@@ -177,19 +199,19 @@
     }
     .hero-title {
       font-family: var(--font-serif);
-      font-size: 46px;
+      font-size: 48px;
       font-weight: 600;
       line-height: 1.25;
       letter-spacing: -0.5px;
       color: var(--ink-primary);
-      margin-bottom: 18px;
+      margin-bottom: 20px;
     }
     .hero-subtitle {
       font-size: 20px;
       color: var(--ink-secondary);
       max-width: 680px;
-      margin: 0 auto 32px;
-      line-height: 1.6;
+      margin: 0 auto 36px;
+      line-height: 1.62;
       font-weight: 400;
     }
     
@@ -198,35 +220,54 @@
       display: flex;
       flex-direction: column;
       align-items: center;
-      gap: 14px;
+      gap: 16px;
       margin-bottom: 48px;
     }
     .cta-group {
       display: flex;
       align-items: center;
-      gap: 12px;
+      gap: 14px;
       flex-wrap: wrap;
       justify-content: center;
     }
-    .btn-primary {
+    .btn-primary-hero {
       display: inline-flex;
       align-items: center;
-      gap: 10px;
+      gap: 14px;
       background: var(--brand);
       color: #ffffff !important;
-      font-weight: 500;
-      font-size: 16px;
-      padding: 13px 26px;
+      padding: 14px 28px;
       border-radius: var(--radius-md);
-      box-shadow: 0 4px 14px rgba(28, 53, 84, 0.25);
+      box-shadow: 0 4px 16px rgba(28, 53, 84, 0.28);
       transition: all 0.15s ease;
+      text-align: left;
     }
-    .btn-primary:hover {
+    .btn-primary-hero:hover {
       background: var(--brand-hover);
-      box-shadow: 0 6px 18px rgba(28, 53, 84, 0.32);
-      transform: translateY(-1px);
+      box-shadow: 0 6px 20px rgba(28, 53, 84, 0.35);
+      transform: translateY(-2px);
     }
-    .btn-secondary {
+    .btn-icon-wrapper svg {
+      width: 26px;
+      height: 26px;
+      display: block;
+    }
+    .btn-text-wrapper {
+      display: flex;
+      flex-direction: column;
+    }
+    .btn-main-label {
+      font-size: 17px;
+      font-weight: 600;
+      line-height: 1.25;
+    }
+    .btn-sub-label {
+      font-size: 12px;
+      color: rgba(255, 255, 255, 0.78);
+      margin-top: 3px;
+    }
+    
+    .btn-secondary-hero {
       display: inline-flex;
       align-items: center;
       gap: 8px;
@@ -234,25 +275,65 @@
       color: var(--ink-primary) !important;
       font-weight: 500;
       font-size: 15px;
-      padding: 12px 20px;
+      padding: 16px 22px;
       border-radius: var(--radius-md);
       border: 1px solid var(--border-color);
       box-shadow: var(--shadow-sm);
       transition: all 0.15s ease;
     }
-    .btn-secondary:hover {
+    .btn-secondary-hero:hover {
       background: #ffffff;
       border-color: var(--ink-faint);
       transform: translateY(-1px);
     }
-    .cta-hint {
+
+    /* Quick OS download pills */
+    .quick-download-pills {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: center;
       font-size: 13px;
       color: var(--ink-muted);
+      margin-top: 4px;
     }
-    .cta-hint a {
+    .pills-title {
+      font-weight: 500;
       color: var(--ink-secondary);
-      text-decoration: underline;
-      text-underline-offset: 3px;
+    }
+    .pill-item {
+      display: inline-flex;
+      align-items: center;
+      padding: 4px 10px;
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-sm);
+      color: var(--ink-secondary) !important;
+      font-size: 12px;
+      transition: all 0.12s ease;
+    }
+    .pill-item:hover {
+      background: #ffffff;
+      border-color: var(--brand);
+      color: var(--brand) !important;
+    }
+
+    /* Trust indicators */
+    .trust-badges {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      flex-wrap: wrap;
+      justify-content: center;
+      font-size: 13px;
+      color: var(--ink-secondary);
+      margin-top: 10px;
+    }
+    .trust-badges span {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
     }
 
     /* Showcase Window */
@@ -293,7 +374,7 @@
     .tab-btn {
       border: none;
       background: transparent;
-      padding: 5px 12px;
+      padding: 6px 14px;
       font-size: 13px;
       color: var(--ink-secondary);
       border-radius: 4px;
@@ -421,7 +502,7 @@
       font-family: var(--font-mono);
     }
 
-    /* Features Grid (Small details) */
+    /* Features Grid */
     section.features-detail {
       padding: 32px 0 72px;
     }
@@ -474,7 +555,7 @@
     }
     table.download-table th {
       background: #f8f6ed;
-      padding: 14px 20px;
+      padding: 16px 20px;
       font-weight: 600;
       color: var(--ink-secondary);
       border-bottom: 1px solid var(--border-color);
@@ -482,9 +563,10 @@
       letter-spacing: 0.5px;
     }
     table.download-table td {
-      padding: 16px 20px;
+      padding: 18px 20px;
       border-bottom: 1px solid var(--border-light);
       color: var(--ink-secondary);
+      vertical-align: middle;
     }
     table.download-table tr:last-child td {
       border-bottom: none;
@@ -507,10 +589,47 @@
       padding: 2px 6px;
       border-radius: 4px;
     }
-    .action-links a {
-      display: inline-block;
-      margin-right: 8px;
-      font-weight: 500;
+    .btn-table-download {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--brand-soft);
+      color: var(--brand) !important;
+      font-size: 13px;
+      font-weight: 600;
+      padding: 6px 14px;
+      border-radius: var(--radius-sm);
+      border: 1px solid rgba(28, 53, 84, 0.12);
+      transition: all 0.15s ease;
+      margin-right: 6px;
+    }
+    .btn-table-download:hover {
+      background: var(--brand);
+      color: #ffffff !important;
+    }
+    .alt-format-link {
+      font-size: 13px;
+      color: var(--ink-muted);
+      margin-left: 4px;
+    }
+
+    /* Gatekeeper Note inside Download */
+    .download-helper-card {
+      margin-top: 24px;
+      background: #ffffff;
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      padding: 20px 24px;
+      box-shadow: var(--shadow-sm);
+    }
+    .download-helper-card h4 {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--ink-primary);
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
     }
 
     /* FAQ */
@@ -582,10 +701,74 @@
       background: #ffffff;
       border: 1px solid var(--border-color);
       border-radius: 4px;
-      padding: 3px 8px;
+      padding: 4px 10px;
       font-size: 12px;
       cursor: pointer;
       color: var(--ink-primary);
+    }
+
+    /* Final CTA Banner */
+    section.final-cta {
+      padding: 64px 0 88px;
+    }
+    .final-cta-card {
+      background: linear-gradient(135deg, #1c3554 0%, #102138 100%);
+      border-radius: var(--radius-lg);
+      padding: 60px 32px;
+      text-align: center;
+      color: #ffffff;
+      box-shadow: 0 16px 40px rgba(16, 33, 56, 0.25);
+    }
+    .cta-eyebrow {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.65);
+      margin-bottom: 12px;
+      display: block;
+    }
+    .final-cta-title {
+      font-family: var(--font-serif);
+      font-size: 38px;
+      font-weight: 600;
+      margin-bottom: 16px;
+      letter-spacing: -0.3px;
+    }
+    .final-cta-desc {
+      font-size: 18px;
+      color: rgba(255, 255, 255, 0.82);
+      max-width: 580px;
+      margin: 0 auto 36px;
+      line-height: 1.6;
+    }
+    .final-cta-actions {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    .btn-light-theme {
+      background: #ffffff !important;
+      color: var(--brand) !important;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.2);
+    }
+    .btn-light-theme:hover {
+      background: #f7f6f0 !important;
+      transform: translateY(-2px);
+    }
+    .btn-light-theme .btn-sub-label {
+      color: rgba(28, 53, 84, 0.7);
+    }
+    .btn-secondary-light {
+      background: rgba(255, 255, 255, 0.12);
+      color: #ffffff !important;
+      border-color: rgba(255, 255, 255, 0.25);
+    }
+    .btn-secondary-light:hover {
+      background: rgba(255, 255, 255, 0.2);
+      border-color: rgba(255, 255, 255, 0.4);
     }
 
     /* Footer */
@@ -615,11 +798,13 @@
     @media (max-width: 840px) {
       .hero-title { font-size: 34px; }
       .hero-subtitle { font-size: 17px; }
+      .final-cta-title { font-size: 28px; }
       .pillars-grid { grid-template-columns: 1fr; }
       .features-grid { grid-template-columns: 1fr; }
       .showcase-header { flex-direction: column; gap: 12px; align-items: flex-start; }
       .showcase-tabs { width: 100%; overflow-x: auto; }
       header.site-header nav.header-nav { display: none; }
+      .quick-download-pills { flex-direction: column; align-items: center; }
     }
   </style>
 </head>
@@ -629,22 +814,36 @@
   <header class="site-header">
     <div class="container header-inner">
       <a href="#" class="brand-link">
-        <img src="assets/app-icon.png" alt="Paper Shell icon" width="32" height="32">
+        <img src="assets/app-icon.png" alt="Paper Shell icon" width="34" height="34">
         <span>纸壳 <span class="en">Paper Shell</span></span>
       </a>
-      <nav class="header-nav">
-        <a href="#features">特性</a>
-        <a href="#showcase">体验</a>
-        <a href="#downloads">下载</a>
-        <a href="#faq">常见问题</a>
-        <a href="https://github.com/RetricSu/paper-shell/blob/master/docs/features.md" target="_blank" rel="noopener">功能手册</a>
+      
+      <div class="header-right">
+        <nav class="header-nav">
+          <a href="#features">核心特性</a>
+          <a href="#showcase">界面体验</a>
+          <a href="#downloads">版本矩阵</a>
+          <a href="#faq">常见问题</a>
+          <a href="https://github.com/RetricSu/paper-shell/blob/master/docs/features.md" target="_blank" rel="noopener">功能手册</a>
+        </nav>
+        
+        <!-- Header Download CTA Button -->
+        <a href="#downloads" class="header-download-btn">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="7 10 12 15 17 10"></polyline>
+            <line x1="12" y1="15" x2="12" y2="3"></line>
+          </svg>
+          <span>立即下载</span>
+        </a>
+
         <a href="https://github.com/RetricSu/paper-shell" target="_blank" rel="noopener" class="github-link">
           <svg height="16" width="16" viewBox="0 0 16 16" fill="currentColor">
             <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path>
           </svg>
           GitHub
         </a>
-      </nav>
+      </div>
     </div>
   </header>
 
@@ -662,22 +861,48 @@
 
       <div class="hero-cta">
         <div class="cta-group">
-          <!-- Dynamic OS Download Button -->
-          <a id="primary-download-btn" href="https://github.com/RetricSu/paper-shell/releases/latest" class="btn-primary">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-              <polyline points="7 10 12 15 17 10"></polyline>
-              <line x1="12" y1="15" x2="12" y2="3"></line>
-            </svg>
-            <span id="primary-btn-label">下载 macOS Universal 版 (DMG)</span>
+          <!-- Dynamic OS Download Button with rich labels -->
+          <a id="primary-download-btn" href="https://github.com/RetricSu/paper-shell/releases/latest" class="btn-primary-hero">
+            <div class="btn-icon-wrapper" id="primary-btn-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="7 10 12 15 17 10"></polyline>
+                <line x1="12" y1="15" x2="12" y2="3"></line>
+              </svg>
+            </div>
+            <div class="btn-text-wrapper">
+              <span class="btn-main-label" id="primary-btn-label">下载 macOS 通用版 (Universal DMG)</span>
+              <span class="btn-sub-label" id="primary-btn-sub">v0.1.12 · 适配 Apple Silicon 与 Intel · 约 30MB</span>
+            </div>
           </a>
-          <a href="#downloads" class="btn-secondary">
-            查看全部平台安装包
+          
+          <a href="#downloads" class="btn-secondary-hero">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="7" height="7"></rect>
+              <rect x="14" y="3" width="7" height="7"></rect>
+              <rect x="14" y="14" width="7" height="7"></rect>
+              <rect x="3" y="14" width="7" height="7"></rect>
+            </svg>
+            全部版本下载
           </a>
         </div>
-        <div class="cta-hint">
-          支持 macOS (Apple Silicon / Intel)、Windows 与 Linux · 
-          <a href="https://github.com/RetricSu/paper-shell/releases/latest" target="_blank" rel="noopener">访问 GitHub Releases</a>
+
+        <!-- Quick Download Bar -->
+        <div class="quick-download-pills">
+          <span class="pills-title">快速通道：</span>
+          <a href="https://github.com/RetricSu/paper-shell/releases/latest/download/Paper-Shell-macOS-universal.dmg" class="pill-item">🍎 Mac Universal</a>
+          <a href="https://github.com/RetricSu/paper-shell/releases/latest/download/Paper-Shell-macOS-aarch64.dmg" class="pill-item">⚡ Apple Silicon</a>
+          <a href="https://github.com/RetricSu/paper-shell/releases/latest/download/Paper-Shell-macOS-x86_64.dmg" class="pill-item">💻 Intel Mac</a>
+          <a href="https://github.com/RetricSu/paper-shell/releases/latest/download/Paper-Shell-Windows-x86_64.zip" class="pill-item">🪟 Windows (ZIP)</a>
+          <a href="https://github.com/RetricSu/paper-shell/releases/latest/download/Paper-Shell-Linux-x86_64.tar.gz" class="pill-item">🐧 Linux (tar.gz)</a>
+        </div>
+
+        <!-- Trust Badges -->
+        <div class="trust-badges">
+          <span>✓ 100% 离线可用</span>
+          <span>✓ 纯文本文件存储</span>
+          <span>✓ 零遥测与隐私保护</span>
+          <span>✓ 永久开源免费</span>
         </div>
       </div>
 
@@ -817,9 +1042,9 @@
   <section id="downloads" class="downloads">
     <div class="container">
       <div class="section-header">
-        <span class="section-tag">Cross Platform</span>
-        <h2 class="section-title">下载安装 Paper Shell</h2>
-        <p class="section-desc">全平台免安装或一键拖拽即可体验。所有版本均通过 GitHub Actions 自动化编译发布。</p>
+        <span class="section-tag">Cross Platform Downloads</span>
+        <h2 class="section-title">全平台安装包下载</h2>
+        <p class="section-desc">绿色免安装或一键拖拽即可开始使用。所有文件由 GitHub Actions 官方流水线自动编译。</p>
       </div>
 
       <div class="download-table-wrapper">
@@ -828,8 +1053,8 @@
             <tr>
               <th>操作系统</th>
               <th>适配架构</th>
-              <th>文件格式</th>
-              <th>说明</th>
+              <th>下载文件</th>
+              <th>说明与特性</th>
             </tr>
           </thead>
           <tbody>
@@ -841,31 +1066,40 @@
                 </div>
               </td>
               <td>Universal (通用)</td>
-              <td class="action-links">
-                <a href="https://github.com/RetricSu/paper-shell/releases/latest/download/Paper-Shell-macOS-universal.dmg">DMG 镜像</a> · 
-                <a href="https://github.com/RetricSu/paper-shell/releases/latest/download/Paper-Shell-macOS-universal.zip">ZIP 压缩包</a>
+              <td>
+                <a href="https://github.com/RetricSu/paper-shell/releases/latest/download/Paper-Shell-macOS-universal.dmg" class="btn-table-download">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                  下载 DMG
+                </a>
+                <a href="https://github.com/RetricSu/paper-shell/releases/latest/download/Paper-Shell-macOS-universal.zip" class="alt-format-link">ZIP 包</a>
               </td>
-              <td>同时适配 Apple Silicon (M1/M2/M3/M4) 与 Intel 芯片</td>
+              <td>同时适配 Apple Silicon (M系列) 与 Intel 芯片</td>
             </tr>
             <tr>
               <td>
                 <div class="platform-name">macOS (专属)</div>
               </td>
               <td>Apple Silicon (aarch64)</td>
-              <td class="action-links">
-                <a href="https://github.com/RetricSu/paper-shell/releases/latest/download/Paper-Shell-macOS-aarch64.dmg">DMG</a> · 
-                <a href="https://github.com/RetricSu/paper-shell/releases/latest/download/Paper-Shell-macOS-aarch64.zip">ZIP</a>
+              <td>
+                <a href="https://github.com/RetricSu/paper-shell/releases/latest/download/Paper-Shell-macOS-aarch64.dmg" class="btn-table-download">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                  下载 DMG
+                </a>
+                <a href="https://github.com/RetricSu/paper-shell/releases/latest/download/Paper-Shell-macOS-aarch64.zip" class="alt-format-link">ZIP 包</a>
               </td>
-              <td>体积更小，专为苹果 M 系列芯片架构精简</td>
+              <td>体积更小，专为苹果 M1/M2/M3/M4 架构优化</td>
             </tr>
             <tr>
               <td>
                 <div class="platform-name">macOS (专属)</div>
               </td>
               <td>Intel (x86_64)</td>
-              <td class="action-links">
-                <a href="https://github.com/RetricSu/paper-shell/releases/latest/download/Paper-Shell-macOS-x86_64.dmg">DMG</a> · 
-                <a href="https://github.com/RetricSu/paper-shell/releases/latest/download/Paper-Shell-macOS-x86_64.zip">ZIP</a>
+              <td>
+                <a href="https://github.com/RetricSu/paper-shell/releases/latest/download/Paper-Shell-macOS-x86_64.dmg" class="btn-table-download">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                  下载 DMG
+                </a>
+                <a href="https://github.com/RetricSu/paper-shell/releases/latest/download/Paper-Shell-macOS-x86_64.zip" class="alt-format-link">ZIP 包</a>
               </td>
               <td>专为旧款 Intel 处理器的 Mac 机型编译</td>
             </tr>
@@ -874,29 +1108,50 @@
                 <div class="platform-name">Windows</div>
               </td>
               <td>x86_64</td>
-              <td class="action-links">
-                <a href="https://github.com/RetricSu/paper-shell/releases/latest/download/Paper-Shell-Windows-x86_64.zip">ZIP 绿色版</a>
+              <td>
+                <a href="https://github.com/RetricSu/paper-shell/releases/latest/download/Paper-Shell-Windows-x86_64.zip" class="btn-table-download">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                  下载 ZIP 绿色包
+                </a>
               </td>
-              <td>解压后双击运行 <code>paper-shell.exe</code> 即用</td>
+              <td>解压后直接双击 <code>paper-shell.exe</code> 运行</td>
             </tr>
             <tr>
               <td>
                 <div class="platform-name">Linux</div>
               </td>
               <td>x86_64</td>
-              <td class="action-links">
-                <a href="https://github.com/RetricSu/paper-shell/releases/latest/download/Paper-Shell-Linux-x86_64.tar.gz">tar.gz</a>
+              <td>
+                <a href="https://github.com/RetricSu/paper-shell/releases/latest/download/Paper-Shell-Linux-x86_64.tar.gz" class="btn-table-download">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                  下载 tar.gz
+                </a>
               </td>
-              <td>解压即用，支持主流 Linux 发行版</td>
+              <td>解压即用，支持主流 Linux 桌面环境</td>
             </tr>
           </tbody>
         </table>
       </div>
 
+      <!-- Quick Mac Help inside download section -->
+      <div class="download-helper-card">
+        <h4>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+          macOS 首次打开如果提示“已损坏”或“未验证开发者”？
+        </h4>
+        <p style="font-size: 14px; color: var(--ink-secondary); margin-bottom: 6px;">
+          因为当前个人开源版本未加入苹果高额收费开发者公证，macOS 会默认拦截。只需打开终端粘贴这行命令回车即可：
+        </p>
+        <div class="code-box" style="margin: 6px 0;">
+          <code>xattr -cr /Applications/Paper\ Shell.app</code>
+          <button class="copy-btn" onclick="navigator.clipboard.writeText('xattr -cr /Applications/Paper\\ Shell.app'); this.innerText='已复制'; setTimeout(()=>this.innerText='复制', 2000);">复制命令</button>
+        </div>
+      </div>
+
       <div style="text-align: center; margin-top: 24px; font-size: 14px; color: var(--ink-muted);">
-        安全校验：每个发行版本均附带完整的 
-        <a href="https://github.com/RetricSu/paper-shell/releases/latest/download/SHA256SUMS.txt" target="_blank" rel="noopener">SHA-256 校验清单</a> · 
-        <a href="https://github.com/RetricSu/paper-shell/releases/latest" target="_blank" rel="noopener">浏览全部 Releases</a>
+        所有发布均附带防篡改校验码：
+        <a href="https://github.com/RetricSu/paper-shell/releases/latest/download/SHA256SUMS.txt" target="_blank" rel="noopener">查看 SHA-256 校验清单</a> · 
+        <a href="https://github.com/RetricSu/paper-shell/releases/latest" target="_blank" rel="noopener">浏览 GitHub 全部历史 Releases</a>
       </div>
     </div>
   </section>
@@ -963,6 +1218,35 @@
     </div>
   </section>
 
+  <!-- Final CTA Banner -->
+  <section class="final-cta">
+    <div class="container">
+      <div class="final-cta-card">
+        <span class="cta-eyebrow">READY TO WRITE</span>
+        <h2 class="final-cta-title">让思考与文字重回纯粹</h2>
+        <p class="final-cta-desc">没有干扰，没有专有格式绑架。下载即用，开启独属于你的沉浸写作心流。</p>
+        <div class="final-cta-actions">
+          <a id="bottom-download-btn" href="https://github.com/RetricSu/paper-shell/releases/latest" class="btn-primary-hero btn-light-theme">
+            <div class="btn-icon-wrapper">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="7 10 12 15 17 10"></polyline>
+                <line x1="12" y1="15" x2="12" y2="3"></line>
+              </svg>
+            </div>
+            <div class="btn-text-wrapper">
+              <span class="btn-main-label" id="bottom-btn-label">立即下载 Paper Shell</span>
+              <span class="btn-sub-label" id="bottom-btn-sub">v0.1.12 稳定版 · 开源免费</span>
+            </div>
+          </a>
+          <a href="#downloads" class="btn-secondary-hero btn-secondary-light">
+            查看全部版本与校验清单
+          </a>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <!-- Footer -->
   <footer class="site-footer">
     <div class="container">
@@ -982,31 +1266,53 @@
 
   <!-- Scripts: OS Detection & Interactive Showcase -->
   <script>
-    // 1. Dynamic OS Detection for Primary Download CTA
+    // 1. Dynamic OS Detection for Primary & Bottom Download CTAs
     (function detectPlatform() {
-      const btn = document.getElementById('primary-download-btn');
-      const label = document.getElementById('primary-btn-label');
-      if (!btn || !label) return;
+      const heroBtn = document.getElementById('primary-download-btn');
+      const heroLabel = document.getElementById('primary-btn-label');
+      const heroSub = document.getElementById('primary-btn-sub');
+
+      const bottomBtn = document.getElementById('bottom-download-btn');
+      const bottomLabel = document.getElementById('bottom-btn-label');
+      const bottomSub = document.getElementById('bottom-btn-sub');
 
       const ua = navigator.userAgent || '';
       const platform = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || '';
 
+      let downloadUrl = 'https://github.com/RetricSu/paper-shell/releases/latest/download/Paper-Shell-macOS-universal.dmg';
+      let title = '下载 macOS 通用版 (Universal DMG)';
+      let sub = 'v0.1.12 · 适配 Apple Silicon 与 Intel · 约 30MB';
+
       if (/Mac/i.test(platform) || /Macintosh/i.test(ua)) {
-        // Check for Apple Silicon if available via userAgentData
         const isArm = /ARM/i.test(ua) || (navigator.userAgentData && navigator.userAgentData.architecture === 'arm');
         if (isArm) {
-          label.textContent = '下载 macOS 版 (Apple Silicon)';
-          btn.href = 'https://github.com/RetricSu/paper-shell/releases/latest/download/Paper-Shell-macOS-aarch64.dmg';
+          downloadUrl = 'https://github.com/RetricSu/paper-shell/releases/latest/download/Paper-Shell-macOS-aarch64.dmg';
+          title = '下载 macOS 版 (Apple Silicon M系列)';
+          sub = 'v0.1.12 · 专为 M1/M2/M3/M4 芯片架构优化 · 约 28MB';
         } else {
-          label.textContent = '下载 macOS 通用版 (Universal DMG)';
-          btn.href = 'https://github.com/RetricSu/paper-shell/releases/latest/download/Paper-Shell-macOS-universal.dmg';
+          downloadUrl = 'https://github.com/RetricSu/paper-shell/releases/latest/download/Paper-Shell-macOS-universal.dmg';
+          title = '下载 macOS 通用版 (Universal DMG)';
+          sub = 'v0.1.12 · Apple Silicon 与 Intel 通用 · 约 30MB';
         }
       } else if (/Win/i.test(platform) || /Windows/i.test(ua)) {
-        label.textContent = '下载 Windows 版 (64-bit ZIP)';
-        btn.href = 'https://github.com/RetricSu/paper-shell/releases/latest/download/Paper-Shell-Windows-x86_64.zip';
+        downloadUrl = 'https://github.com/RetricSu/paper-shell/releases/latest/download/Paper-Shell-Windows-x86_64.zip';
+        title = '下载 Windows 版 (64-bit ZIP)';
+        sub = 'v0.1.12 · 免安装绿色版 · 解压直接运行';
       } else if (/Linux/i.test(platform) || /Linux/i.test(ua)) {
-        label.textContent = '下载 Linux 版 (x86_64 tar.gz)';
-        btn.href = 'https://github.com/RetricSu/paper-shell/releases/latest/download/Paper-Shell-Linux-x86_64.tar.gz';
+        downloadUrl = 'https://github.com/RetricSu/paper-shell/releases/latest/download/Paper-Shell-Linux-x86_64.tar.gz';
+        title = '下载 Linux 版 (x86_64 tar.gz)';
+        sub = 'v0.1.12 · 独立可执行程序 · 解压即用';
+      }
+
+      if (heroBtn && heroLabel) {
+        heroBtn.href = downloadUrl;
+        heroLabel.textContent = title;
+        if (heroSub) heroSub.textContent = sub;
+      }
+      if (bottomBtn && bottomLabel) {
+        bottomBtn.href = downloadUrl;
+        bottomLabel.textContent = title;
+        if (bottomSub) bottomSub.textContent = sub;
       }
     })();
 

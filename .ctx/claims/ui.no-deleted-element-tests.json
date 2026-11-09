@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "id": "ui.no-deleted-element-tests",
+  "type": "decision",
+  "lifecycle": "active",
+  "policy": "advisory",
+  "claim": "UI tests must verify active user-visible behavior and interactions; when a UI control, menu entry, or feature is removed or relocated, delete or update its old tests instead of adding negative assertions that only check the removed UI element does not appear.",
+  "why": "Asserting the absence of deleted or moved UI labels couples tests to historical removals rather than current product behavior, creating dead maintenance noise.",
+  "anchors": [
+    {
+      "kind": "file",
+      "path": "src/ui/mod.rs",
+      "watch": "file"
+    },
+    {
+      "kind": "file",
+      "path": "src/ui/title_bar.rs",
+      "watch": "file"
+    },
+    {
+      "kind": "file",
+      "path": "src/ui/settings.rs",
+      "watch": "file"
+    },
+    {
+      "kind": "file",
+      "path": "src/ui/editor.rs",
+      "watch": "file"
+    },
+    {
+      "kind": "file",
+      "path": "src/app.rs",
+      "watch": "file"
+    }
+  ],
+  "tags": [
+    "ui",
+    "testing",
+    "hygiene"
+  ]
+}

@@ -2193,30 +2193,7 @@ mod tests {
             );
         }
 
-        let comment_button = action_centers[0];
-        let hovered = render_editor(
-            &ctx,
-            &mut editor,
-            vec![Event::PointerMoved(comment_button)],
-            None,
-        );
-        assert!(
-            !hovered.shapes.iter().any(|shape| {
-                matches!(&shape.shape, egui::Shape::Text(text) if text.galley.text().contains("为选中文字添加评论"))
-            }),
-            "selection toolbar should not show hover tooltip"
-        );
-
-        let delete_button = hovered
-            .shapes
-            .iter()
-            .find_map(|shape| match &shape.shape {
-                egui::Shape::Text(text) if text.galley.text().ends_with(" 删除") => {
-                    Some(text.pos + text.galley.rect.center().to_vec2())
-                }
-                _ => None,
-            })
-            .expect("delete button rendered");
+        let delete_button = action_centers[3];
         let pointer = |pos, pressed| Event::PointerButton {
             pos,
             button: PointerButton::Primary,

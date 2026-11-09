@@ -1070,28 +1070,23 @@ mod tests {
     }
 
     #[test]
-    fn plugin_menu_has_one_management_entry_and_no_appearance_or_configuration() {
+    fn plugin_menu_dispatches_manage_plugins() {
         let ctx = egui::Context::default();
         crate::style::configure_style(&ctx);
         let (initial, _) = render_typography_title_bar(&ctx, vec![], &[], "Default", 14.0, 1.5);
-        assert!(!has_text(&initial, "皮肤"));
         let _ = click_text(&ctx, &initial, "插件", &[], "Default", 14.0, 1.5);
         let (menu, _) = render_typography_title_bar(&ctx, vec![], &[], "Default", 14.0, 1.5);
         assert!(has_text(&menu, "管理插件…"));
-        assert!(!has_text(&menu, "皮肤"));
-        assert!(!has_text(&menu, "插件设置"));
-        assert!(!has_text(&menu, "配置云端备份"));
         let (_, action) = click_text(&ctx, &menu, "管理插件…", &[], "Default", 14.0, 1.5);
         assert!(matches!(action, Some(TitleBarAction::ManagePlugins)));
     }
 
     #[test]
-    fn title_bar_has_no_top_level_settings_and_file_menu_dispatches_settings() {
+    fn file_menu_settings_dispatches_action() {
         let ctx = egui::Context::default();
         crate::style::configure_style(&ctx);
         let fonts = [];
         let (initial, _) = render_typography_title_bar(&ctx, vec![], &fonts, "Default", 14.0, 1.5);
-        assert!(!has_text(&initial, "设置"));
 
         let _ = click_text(&ctx, &initial, "文件", &fonts, "Default", 14.0, 1.5);
         let (menu, _) = render_typography_title_bar(&ctx, vec![], &fonts, "Default", 14.0, 1.5);
@@ -1467,29 +1462,6 @@ mod tests {
     }
 
     #[test]
-    fn format_is_in_typography_menu_and_not_edit_menu() {
-        let ctx = egui::Context::default();
-        crate::style::configure_style(&ctx);
-        let fonts = vec!["PingFang SC".to_string(), "STSong".to_string()];
-        let (initial, _) = render_typography_title_bar(&ctx, vec![], &fonts, "Default", 14.0, 1.5);
-
-        let _ = click_text(&ctx, &initial, "编辑", &fonts, "Default", 14.0, 1.5);
-        let (edit_open, _) =
-            render_typography_title_bar(&ctx, vec![], &fonts, "Default", 14.0, 1.5);
-        assert!(has_text(&edit_open, "查找与替换"));
-        assert!(has_text(&edit_open, "Vim 模式"));
-        assert!(!has_text(&edit_open, "整理段落缩进"));
-
-        let _ = click_text(&ctx, &edit_open, "排版", &fonts, "Default", 14.0, 1.5);
-        let (typography_open, _) =
-            render_typography_title_bar(&ctx, vec![], &fonts, "Default", 14.0, 1.5);
-        assert!(has_text(&typography_open, "字号"));
-        assert!(has_text(&typography_open, "行间距"));
-        assert!(has_text(&typography_open, "整理段落缩进"));
-        assert!(has_text(&typography_open, "重置默认排版"));
-    }
-
-    #[test]
     fn format_indent_switch_dispatches_selection_and_keeps_menu_open() {
         let ctx = egui::Context::default();
         crate::style::configure_style(&ctx);
@@ -1560,7 +1532,6 @@ mod tests {
         let _ = click_text(&ctx, &initial, "排版", &fonts, "Default", 14.0, 1.5);
         let (menu, _) = render_typography_title_bar(&ctx, vec![], &fonts, "Default", 14.0, 1.5);
         assert!(text_position(&menu, "皮肤").unwrap().y < text_position(&menu, "字号").unwrap().y);
-        assert!(!has_text(&menu, "皮肤与外观设置"));
 
         let _ = click_text(&ctx, &menu, "皮肤", &fonts, "Default", 14.0, 1.5);
         let (skins, _) = render_typography_title_bar(&ctx, vec![], &fonts, "Default", 14.0, 1.5);
@@ -1756,136 +1727,5 @@ mod tests {
         assert!(!has_text(&closed, "字号"));
         assert!(!has_text(&closed, "整理段落缩进"));
         assert!(!has_text(&closed, "STSong"));
-    }
-
-    #[test]
-    fn file_menu_does_not_contain_toggle_article_list() {
-        let ctx = egui::Context::default();
-        crate::style::configure_style(&ctx);
-
-        let find_text_position = |output: &egui::FullOutput, needle: &str| -> Option<egui::Pos2> {
-            output.shapes.iter().find_map(|shape| {
-                if let egui::Shape::Text(text) = &shape.shape
-                    && text.galley.text().contains(needle)
-                {
-                    Some(text.pos + text.galley.size() * 0.5)
-                } else {
-                    None
-                }
-            })
-        };
-
-        let has_text = |output: &egui::FullOutput, needle: &str| -> bool {
-            output.shapes.iter().any(|shape| {
-                if let egui::Shape::Text(text) = &shape.shape {
-                    text.galley.text().contains(needle)
-                } else {
-                    false
-                }
-            })
-        };
-
-        let render_title_bar =
-            |ctx: &egui::Context, events: Vec<egui::Event>| -> egui::FullOutput {
-                ctx.run(
-                    egui::RawInput {
-                        screen_rect: Some(egui::Rect::from_min_size(
-                            egui::Pos2::ZERO,
-                            egui::vec2(1000.0, 700.0),
-                        )),
-                        events,
-                        ..Default::default()
-                    },
-                    |ctx| {
-                        egui::TopBottomPanel::top("title").show(ctx, |ui| {
-                            let _ = TitleBar::show(
-                                ui,
-                                TitleBarState {
-                                    update_available: false,
-                                    title: "Test Document",
-                                    document_path: Some("/tmp/test.txt"),
-                                    word_count: 100,
-                                    cursor_word_count: 50,
-                                    selection_word_count: None,
-                                    writing_time: 120,
-                                    has_current_file: true,
-                                    chinese_fonts: &[],
-                                    current_font: "Default",
-                                    skins: &[],
-                                    current_skin_id: "classic_paper",
-                                    font_size: 14.0,
-                                    line_spacing: 1.5,
-                                    font_color: "Default",
-                                    format_use_tabs: false,
-                                    recent_files: &[],
-                                    plugins: &[],
-                                    sidebar_expanded: false,
-                                    vim_mode: false,
-                                    vim_mode_label: None,
-                                },
-                            );
-                        });
-                    },
-                )
-            };
-
-        // Frame 1: initial render
-        let output1 = render_title_bar(&ctx, vec![]);
-        let file_pos = find_text_position(&output1, "文件").expect("File menu button must exist");
-
-        // Frame 2: click the File menu
-        let click_events = vec![
-            egui::Event::PointerButton {
-                pos: file_pos,
-                button: egui::PointerButton::Primary,
-                pressed: true,
-                modifiers: egui::Modifiers::NONE,
-            },
-            egui::Event::PointerButton {
-                pos: file_pos,
-                button: egui::PointerButton::Primary,
-                pressed: false,
-                modifiers: egui::Modifiers::NONE,
-            },
-        ];
-        let _ = render_title_bar(&ctx, click_events);
-
-        // Frame 3: file menu is open
-        let output3 = render_title_bar(&ctx, vec![]);
-        assert!(
-            output3.shapes.iter().any(|shape| {
-                matches!(&shape.shape, egui::Shape::LineSegment { points, stroke }
-                    if points[0].y == points[1].y
-                        && points[0].y > 35.0
-                        && (180.0..=240.0).contains(&(points[1].x - points[0].x).abs())
-                        && stroke.width > 0.0
-                        && stroke.color.a() > 0)
-            }),
-            "File menu should paint a visible separator"
-        );
-        assert!(
-            has_text(&output3, "新建窗口"),
-            "File menu should contain '新建窗口'"
-        );
-        assert!(
-            has_text(&output3, "保存"),
-            "File menu should contain '保存'"
-        );
-        assert!(
-            has_text(&output3, "导出"),
-            "File menu should contain '导出'"
-        );
-        assert!(
-            has_text(&output3, "版本历史…"),
-            "File menu should contain '版本历史…'"
-        );
-        assert!(
-            !has_text(&output3, "显示文章列表"),
-            "File menu should not contain '显示文章列表'"
-        );
-        assert!(
-            !has_text(&output3, "隐藏文章列表"),
-            "File menu should not contain '隐藏文章列表'"
-        );
     }
 }

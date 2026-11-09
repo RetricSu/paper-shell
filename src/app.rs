@@ -2069,6 +2069,7 @@ mod document_change_tests {
             start: 0,
             end: 4,
             quote: "base".into(),
+            updated_at: None,
         }]);
         assert!(app.is_document_dirty());
     }

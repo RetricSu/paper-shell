@@ -14,6 +14,9 @@ pub struct TextComment {
     pub end: usize,
     #[serde(default)]
     pub quote: String,
+    /// Last submitted text change; absent for comments created before timestamps.
+    #[serde(default)]
+    pub updated_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 /// One exact editor mutation, expressed in character indices into the old document.
@@ -155,6 +158,7 @@ mod tests {
             start,
             end,
             quote: "original".into(),
+            updated_at: None,
         }
     }
 
@@ -170,6 +174,14 @@ mod tests {
             end,
             inserted_len,
         }
+    }
+
+    #[test]
+    fn legacy_comments_load_without_inventing_a_timestamp() {
+        let comment: TextComment =
+            serde_json::from_str(r#"{"id":"old","text":"备注","start":0,"end":2,"quote":"原文"}"#)
+                .unwrap();
+        assert_eq!(comment.updated_at, None);
     }
 
     #[test]

@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>侧耳倾听 · 破晓晨曦 · 皮肤效果预览</title>
+<style>
+:root { color-scheme: light; font-family: system-ui, -apple-system, sans-serif; color: #182026; background: #ebe8dd; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+header { padding: 18px 28px; border-bottom: 1px solid #c7c4b8; display: flex; gap: 14px 28px; flex-wrap: wrap; align-items: center; }
+h1 { font-size: 18px; margin: 0 0 5px; }
+p { margin: 0; }
+header p, footer { font-size: 13px; color: #4e575d; }
+label { display: flex; gap: 12px; align-items: center; }
+input { accent-color: #c2783e; width: 150px; }
+output { font-variant-numeric: tabular-nums; min-width: 3ch; }
+main { position: relative; isolation: isolate; min-height: calc(100vh - 150px); padding: 6px 6px 6px 2px; background: #f6f4ed; }
+main::before { content: ''; position: absolute; z-index: -1; inset: 0; background: url('background.jpg') center / cover no-repeat; opacity: var(--opacity, .18); }
+article { font-size: 14px; line-height: 1.5; white-space: pre-wrap; color: #182026; }
+footer { padding: 16px 28px; line-height: 1.7; }
+a { color: #a05a26; }
+@media (max-width: 600px) { header, footer { padding: 16px 24px; } }
+</style>
+<header>
+  <div><h1>侧耳倾听 · 破晓晨曦</h1><p>图片与文字的合成示意。实际效果请在应用中导入 skin.toml。</p></div>
+  <label for="opacity">背景强度 <input id="opacity" type="range" min="0" max="100" value="18"><output id="value" for="opacity">18%</output></label>
+</header>
+<main id="canvas"><article>侧耳倾听 · 破晓晨曦
+
+自行车的车轮停在山顶的坡道上。
+远方的薄雾在平原上散开，天边泛起一抹温和的金黄。
+
+「雫，不要害怕，按照你自己想写的方式去写就好。」
+
+在安静的清晨，写下今天的第一行字。
+故事随着初升的晨光，渐渐清晰。</article></main>
+<footer>《侧耳倾听》（1995）官方剧照，未经 AI 生成或修改。<br>
+© 1995 Aoi Hiiragi/Shueisha - Studio Ghibli - NH · <a href="https://www.ghibli.jp/works/mimi/">原始来源与使用说明</a></footer>
+<script>
+const slider = document.querySelector('#opacity');
+slider.addEventListener('input', () => {
+  document.querySelector('#canvas').style.setProperty('--opacity', slider.value / 100);
+  document.querySelector('#value').value = slider.value + '%';
+});
+</script>
+</html>

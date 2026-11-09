@@ -2,6 +2,7 @@
 name = "paper-shell"
 version = "0.1.12"
 edition = "2024"
+license = "MIT"
 description = "A simple, compact and informative text editor for everyday writing."
 
 [package.metadata.bundle]

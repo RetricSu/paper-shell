@@ -612,8 +612,7 @@ mod tests {
 
     #[test]
     fn whisper_dawn_skin_preserves_classic_paper_spacing_and_loads_background() {
-        let source =
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("skins/whisper_dawn/skin.toml");
+        let source = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("skins/whisper_dawn/skin.toml");
         let destination = tempfile::tempdir().unwrap();
         let skin = crate::skin::Skin::import_from_file(&source, destination.path()).unwrap();
         assert_eq!(skin.id, "whisper_dawn");

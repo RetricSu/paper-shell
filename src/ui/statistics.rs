@@ -2,10 +2,30 @@ use crate::backend::editor_backend::EditorBackend;
 use crate::statistics::{
     StatisticsGrouping, StatisticsPeriod, StatisticsReport, WritingActivity, WritingStatistics,
 };
+use crate::ui::dialog::{ModalConfig, modal_button, show_modal};
 use chrono::{Local, NaiveDate};
 use egui::{Color32, Context, RichText, Ui};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StatisticsAction {
+    OpenFile(PathBuf),
+    RevealInFolder(PathBuf),
+    DeleteDocument {
+        doc_id: String,
+        delete_local_file: bool,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingDeleteDocument {
+    pub doc_id: String,
+    pub doc_name: String,
+    pub file_path: Option<PathBuf>,
+    pub delete_local_file: bool,
+}
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 enum StatisticsView {
@@ -26,6 +46,10 @@ pub struct StatisticsWindow {
     grouping: StatisticsGrouping,
     view: StatisticsView,
     document_query: String,
+    selected_doc_id: Option<String>,
+    pending_delete: Option<PendingDeleteDocument>,
+    pending_action: Option<StatisticsAction>,
+    status_message: Option<String>,
 }
 
 impl StatisticsWindow {
@@ -37,11 +61,33 @@ impl StatisticsWindow {
             );
         }
         self.open = true;
+        self.pending_delete = None;
         self.invalidate();
     }
 
     pub fn invalidate(&mut self) {
         self.refresh_requested = true;
+    }
+
+    pub fn take_pending_action(&mut self) -> Option<StatisticsAction> {
+        self.pending_action.take()
+    }
+
+    pub fn remove_document(&mut self, doc_id: &str) {
+        if let Some(data) = &mut self.data {
+            data.remove_document(doc_id);
+        }
+        if self.selected_doc_id.as_deref() == Some(doc_id) {
+            self.selected_doc_id = None;
+        }
+    }
+
+    pub fn set_error(&mut self, error: String) {
+        self.error = Some(error);
+    }
+
+    pub fn set_status_message(&mut self, msg: String) {
+        self.status_message = Some(msg);
     }
 
     pub fn show(&mut self, ctx: &Context, backend: &Arc<EditorBackend>) {
@@ -93,13 +139,114 @@ impl StatisticsWindow {
                 egui::CentralPanel::default()
                     .frame(egui::Frame::central_panel(&ctx.style()).inner_margin(20))
                     .show(ctx, |ui| self.show_content(ui));
+                if self.pending_delete.is_some() {
+                    self.show_delete_modal(ctx);
+                }
                 if ctx.input(|i| i.viewport().close_requested())
-                    || ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+                    || (self.pending_delete.is_none()
+                        && ctx
+                            .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)))
                 {
                     self.open = false;
                 }
             },
         );
+    }
+
+    fn show_delete_modal(&mut self, ctx: &Context) {
+        let Some(pending) = &mut self.pending_delete else {
+            return;
+        };
+
+        let file_exists = pending.file_path.as_ref().is_some_and(|path| path.exists());
+
+        let message = if file_exists {
+            format!(
+                "确定要将《{}》踢出统计吗？\n将删除该文章的历史版本记录与统计数据，该文章将不再计入总字数与写作趋势中。",
+                pending.doc_name
+            )
+        } else {
+            format!(
+                "确定要将《{}》踢出统计吗？\n该文章的本地文件已不存在，踢出将永久清除其历史版本与统计记录。",
+                pending.doc_name
+            )
+        };
+
+        let config = ModalConfig {
+            id: "statistics_confirm_delete_document",
+            title: "确认踢出文章记录",
+            icon: egui_phosphor::regular::TRASH,
+            icon_color: Color32::from_rgb(180, 60, 60),
+            message: &message,
+            width: 420.0,
+        };
+
+        let mut confirmed = false;
+        let mut cancelled = false;
+        let mut delete_local_file = pending.delete_local_file;
+        let doc_name = pending.doc_name.clone();
+        let file_path_opt = pending.file_path.clone();
+
+        let response = show_modal(ctx, config, |ui| {
+            if file_exists {
+                ui.checkbox(&mut delete_local_file, "同时删除磁盘上的本地文件");
+                if delete_local_file {
+                    if let Some(path) = &file_path_opt {
+                        ui.colored_label(
+                            Color32::from_rgb(200, 70, 70),
+                            format!("⚠️ 警告：磁盘源文件将被永久删除！\n{}", path.display()),
+                        );
+                    }
+                } else {
+                    ui.label(
+                        RichText::new("说明：磁盘源文件将保留，仅删除历史记录与统计数据。")
+                            .small()
+                            .weak(),
+                    );
+                }
+                ui.add_space(8.0);
+            }
+            ui.horizontal(|ui| {
+                let delete_label = if delete_local_file {
+                    format!("{} 确认踢出并删除文件", egui_phosphor::regular::TRASH)
+                } else {
+                    format!("{} 确认踢出统计", egui_phosphor::regular::TRASH)
+                };
+                if modal_button(
+                    ui,
+                    RichText::new(delete_label)
+                        .color(Color32::from_rgb(180, 60, 60))
+                        .strong(),
+                )
+                .clicked()
+                {
+                    confirmed = true;
+                }
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if modal_button(ui, RichText::new("取消").strong()).clicked() {
+                        cancelled = true;
+                    }
+                });
+            });
+        });
+
+        if let Some(pending) = &mut self.pending_delete {
+            pending.delete_local_file = delete_local_file;
+        }
+
+        if confirmed || response.enter_pressed {
+            if let Some(pending) = self.pending_delete.take() {
+                self.pending_action = Some(StatisticsAction::DeleteDocument {
+                    doc_id: pending.doc_id.clone(),
+                    delete_local_file: pending.delete_local_file,
+                });
+                self.remove_document(&pending.doc_id);
+                self.status_message = Some(format!("已成功将《{}》踢出统计", doc_name));
+            }
+        } else if cancelled || response.escape_pressed {
+            self.pending_delete = None;
+        }
     }
 
     fn show_content(&mut self, ui: &mut Ui) {
@@ -217,7 +364,14 @@ impl StatisticsWindow {
                 show_time_details(ui, data, &mut self.period, &mut self.grouping, today)
             }
             StatisticsView::Documents => {
-                show_documents(ui, data, &mut self.document_query);
+                show_documents(
+                    ui,
+                    data,
+                    &mut self.document_query,
+                    &mut self.selected_doc_id,
+                    &mut self.pending_delete,
+                    &mut self.pending_action,
+                );
             }
         }
     }
@@ -344,7 +498,14 @@ fn show_report_controls(
     report
 }
 
-fn show_documents(ui: &mut Ui, data: &WritingStatistics, query: &mut String) {
+fn show_documents(
+    ui: &mut Ui,
+    data: &WritingStatistics,
+    query: &mut String,
+    selected_doc_id: &mut Option<String>,
+    pending_delete: &mut Option<PendingDeleteDocument>,
+    pending_action: &mut Option<StatisticsAction>,
+) {
     let matching: Vec<usize> = data
         .documents
         .iter()
@@ -373,7 +534,7 @@ fn show_documents(ui: &mut Ui, data: &WritingStatistics, query: &mut String) {
         });
     });
     ui.label(
-        RichText::new("最新保存字数 · 按字数从多到少 · 悬停查看完整路径")
+        RichText::new("点击文档可展开管理详情 · 可直接在列表右侧踢出记录不再统计")
             .small()
             .weak(),
     );
@@ -388,12 +549,12 @@ fn show_documents(ui: &mut Ui, data: &WritingStatistics, query: &mut String) {
         return;
     }
 
-    let (name_width, count_width) = document_column_widths(ui);
+    let (name_width, count_width, action_width) = document_column_widths(ui);
     ui.horizontal(|ui| {
         aligned_label(
             ui,
             [name_width, 20.0].into(),
-            RichText::new("文档").small().weak(),
+            RichText::new("文档（点击查看详情）").small().weak(),
             egui::Align::Min,
         );
         aligned_label(
@@ -402,19 +563,60 @@ fn show_documents(ui: &mut Ui, data: &WritingStatistics, query: &mut String) {
             RichText::new("最新保存字数").small().weak(),
             egui::Align::Max,
         );
+        aligned_label(
+            ui,
+            [action_width, 20.0].into(),
+            RichText::new("操作").small().weak(),
+            egui::Align::Max,
+        );
     });
     ui.separator();
+    let scroll_height = if selected_doc_id.is_some() {
+        (ui.available_height() - 170.0).max(120.0)
+    } else {
+        ui.available_height()
+    };
     egui::ScrollArea::vertical()
         .id_salt("statistics_documents")
+        .max_height(scroll_height)
         .auto_shrink([false, false])
         .show_rows(ui, 32.0, matching.len(), |ui, rows| {
-            let (name_width, count_width) = document_column_widths(ui);
+            let (name_width, count_width, action_width) = document_column_widths(ui);
             for index in rows {
                 let doc = &data.documents[matching[index]];
                 let (name, path) = document_labels(doc);
+                let file_exists = doc.path.as_ref().is_some_and(|p| p.exists());
+                let is_selected = selected_doc_id.as_deref() == Some(&doc.id);
                 ui.horizontal(|ui| {
-                    aligned_label(ui, [name_width, 32.0].into(), name, egui::Align::Min)
-                        .on_hover_text(path);
+                    let (name_rect, name_resp) =
+                        ui.allocate_exact_size([name_width, 32.0].into(), egui::Sense::click());
+                    let mut text = RichText::new(&name);
+                    if is_selected {
+                        text = text.strong().underline();
+                    }
+                    if !file_exists {
+                        text = text.weak();
+                    }
+                    let name_label = ui
+                        .new_child(
+                            egui::UiBuilder::new()
+                                .max_rect(name_rect)
+                                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+                        )
+                        .add(egui::Label::new(text).truncate());
+                    let hover_hint = if file_exists {
+                        format!("{}\n点击选择此文章查看详情", path)
+                    } else {
+                        format!("{}\n[本地文件已不存在]\n点击选择此文章查看详情", path)
+                    };
+                    if (name_resp | name_label).on_hover_text(hover_hint).clicked() {
+                        *selected_doc_id = if is_selected {
+                            None
+                        } else {
+                            Some(doc.id.clone())
+                        };
+                    }
+
                     aligned_label(
                         ui,
                         [count_width, 32.0].into(),
@@ -424,9 +626,136 @@ fn show_documents(ui: &mut Ui, data: &WritingStatistics, query: &mut String) {
                         ),
                         egui::Align::Max,
                     );
+
+                    let (action_rect, _) =
+                        ui.allocate_exact_size([action_width, 32.0].into(), egui::Sense::hover());
+                    let mut child = ui.new_child(
+                        egui::UiBuilder::new()
+                            .max_rect(action_rect)
+                            .layout(egui::Layout::right_to_left(egui::Align::Center)),
+                    );
+                    child.spacing_mut().item_spacing.x = 4.0;
+                    if child
+                        .button(
+                            RichText::new("踢出")
+                                .color(Color32::from_rgb(180, 60, 60))
+                                .small(),
+                        )
+                        .on_hover_text("将此文章踢出统计，不再记录字数与写作趋势")
+                        .clicked()
+                    {
+                        *pending_delete = Some(PendingDeleteDocument {
+                            doc_id: doc.id.clone(),
+                            doc_name: name.clone(),
+                            file_path: doc.path.clone(),
+                            delete_local_file: false,
+                        });
+                    }
+                    if file_exists
+                        && let Some(doc_path) = &doc.path
+                        && child
+                            .button(RichText::new("打开").small())
+                            .on_hover_text("在编辑器中打开此文章")
+                            .clicked()
+                    {
+                        *pending_action = Some(StatisticsAction::OpenFile(doc_path.clone()));
+                    }
                 });
             }
         });
+
+    if let Some(selected_id) = selected_doc_id.as_deref()
+        && let Some(doc) = data.documents.iter().find(|d| d.id == selected_id)
+    {
+        ui.add_space(8.0);
+        ui.separator();
+        ui.add_space(4.0);
+        let (name, path) = document_labels(doc);
+        let file_exists = doc.path.as_ref().is_some_and(|p| p.exists());
+        egui::Frame::group(ui.style())
+            .inner_margin(10.0)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.strong(format!("文章详情 · 《{}》", name));
+                    if file_exists {
+                        ui.colored_label(Color32::from_rgb(60, 140, 70), "● 本地文件存在");
+                    } else {
+                        ui.colored_label(
+                            Color32::from_rgb(190, 120, 40),
+                            "⚠️ 本地源文件已不存在（仅保留统计历史）",
+                        );
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.small_button("✕ 关闭详情").clicked() {
+                            *selected_doc_id = None;
+                        }
+                    });
+                });
+                ui.add_space(2.0);
+                ui.label(RichText::new(format!("路径：{}", path)).small().weak());
+                ui.add_space(6.0);
+                egui::Grid::new("statistics_doc_detail_grid")
+                    .num_columns(4)
+                    .spacing([24.0, 6.0])
+                    .show(ui, |ui| {
+                        ui.label("最新保存字数");
+                        ui.strong(doc.words.map_or_else(
+                            || "无法读取".to_string(),
+                            |w| format!("{} 字", number(w)),
+                        ));
+                        ui.label("保存版本数");
+                        ui.strong(format!("{} 次", doc.version_count));
+                        ui.end_row();
+                        ui.label("累计新增");
+                        ui.strong(format!("+{} 字", number(doc.total_activity.added)));
+                        ui.label("累计删除");
+                        ui.strong(format!("−{} 字", number(doc.total_activity.removed)));
+                        ui.end_row();
+                        ui.label("累计写作时长");
+                        ui.strong(duration(doc.total_activity.seconds));
+                        ui.label("最后保存时间");
+                        ui.strong(doc.last_saved.map_or_else(
+                            || "未知".to_string(),
+                            |dt| {
+                                dt.with_timezone(&Local)
+                                    .format("%Y-%m-%d %H:%M")
+                                    .to_string()
+                            },
+                        ));
+                        ui.end_row();
+                    });
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if file_exists && let Some(doc_path) = &doc.path {
+                        if ui.button("在编辑器中打开").clicked() {
+                            *pending_action = Some(StatisticsAction::OpenFile(doc_path.clone()));
+                        }
+                        if ui.button("在访达/资源管理器中显示").clicked() {
+                            *pending_action =
+                                Some(StatisticsAction::RevealInFolder(doc_path.clone()));
+                        }
+                    }
+                    if ui
+                        .button(
+                            RichText::new(format!(
+                                "{} 踢出统计并删除记录",
+                                egui_phosphor::regular::TRASH
+                            ))
+                            .color(Color32::from_rgb(180, 60, 60)),
+                        )
+                        .on_hover_text("从纸壳中彻底清除该文章的记录与统计")
+                        .clicked()
+                    {
+                        *pending_delete = Some(PendingDeleteDocument {
+                            doc_id: doc.id.clone(),
+                            doc_name: name.clone(),
+                            file_path: doc.path.clone(),
+                            delete_local_file: false,
+                        });
+                    }
+                });
+            });
+    }
 }
 
 fn aligned_label(
@@ -447,10 +776,40 @@ fn aligned_label(
     cell_response | label_response
 }
 
-fn document_column_widths(ui: &Ui) -> (f32, f32) {
-    let count_width = 120.0;
-    let name_width = (ui.available_width() - count_width - ui.spacing().item_spacing.x).max(80.0);
-    (name_width, count_width)
+fn document_column_widths(ui: &Ui) -> (f32, f32, f32) {
+    let count_width = 100.0;
+    let action_width = 110.0;
+    let spacing = ui.spacing().item_spacing.x * 2.0;
+    let name_width = (ui.available_width() - count_width - action_width - spacing).max(80.0);
+    (name_width, count_width, action_width)
+}
+
+pub fn reveal_path_in_file_manager(path: &Path) {
+    if !path.exists() {
+        return;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("open")
+            .arg("-R")
+            .arg(path)
+            .spawn();
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let _ = std::process::Command::new("explorer")
+            .arg(format!("/select,\"{}\"", path.display()))
+            .spawn();
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let target = if path.is_dir() {
+            path
+        } else {
+            path.parent().unwrap_or(path)
+        };
+        let _ = std::process::Command::new("xdg-open").arg(target).spawn();
+    }
 }
 
 fn document_labels(doc: &crate::statistics::DocumentStatistics) -> (String, String) {
@@ -684,5 +1043,163 @@ mod tests {
         assert!(document_matches(&doc, "WRITING"));
         assert!(document_matches(&doc, " one "));
         assert!(!document_matches(&doc, "missing"));
+    }
+
+    #[test]
+    fn test_take_pending_action_and_remove_document() {
+        let mut window = StatisticsWindow {
+            data: Some(WritingStatistics {
+                documents: vec![
+                    DocumentStatistics {
+                        id: "doc-1".to_string(),
+                        words: Some(100),
+                        ..Default::default()
+                    },
+                    DocumentStatistics {
+                        id: "doc-2".to_string(),
+                        words: Some(200),
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            }),
+            selected_doc_id: Some("doc-1".to_string()),
+            ..Default::default()
+        };
+        assert!(window.take_pending_action().is_none());
+
+        window.remove_document("doc-1");
+        assert_eq!(window.data.as_ref().unwrap().documents.len(), 1);
+        assert_eq!(window.data.as_ref().unwrap().documents[0].id, "doc-2");
+        assert_eq!(window.selected_doc_id, None);
+
+        window.pending_action = Some(StatisticsAction::DeleteDocument {
+            doc_id: "doc-2".into(),
+            delete_local_file: false,
+        });
+        assert_eq!(
+            window.take_pending_action(),
+            Some(StatisticsAction::DeleteDocument {
+                doc_id: "doc-2".into(),
+                delete_local_file: false,
+            })
+        );
+        assert!(window.take_pending_action().is_none());
+    }
+
+    #[test]
+    fn test_delete_modal_escape_cancels_and_enter_confirms() {
+        let ctx = Context::default();
+        let mut window = StatisticsWindow {
+            data: Some(WritingStatistics {
+                documents: vec![DocumentStatistics {
+                    id: "doc-to-delete".to_string(),
+                    path: Some("/tmp/test_article.md".into()),
+                    words: Some(500),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }),
+            pending_delete: Some(PendingDeleteDocument {
+                doc_id: "doc-to-delete".into(),
+                doc_name: "test_article.md".into(),
+                file_path: Some("/tmp/test_article.md".into()),
+                delete_local_file: false,
+            }),
+            open: true,
+            ..Default::default()
+        };
+
+        // 1. Pressing Escape cancels the pending delete modal without closing window
+        let _ = ctx.run(
+            egui::RawInput {
+                events: vec![egui::Event::Key {
+                    key: egui::Key::Escape,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+                ..Default::default()
+            },
+            |ctx| {
+                window.show_delete_modal(ctx);
+            },
+        );
+        assert!(window.pending_delete.is_none());
+        assert!(window.pending_action.is_none());
+
+        // 2. Setting pending delete again and pressing Enter confirms
+        window.pending_delete = Some(PendingDeleteDocument {
+            doc_id: "doc-to-delete".into(),
+            doc_name: "test_article.md".into(),
+            file_path: Some("/tmp/test_article.md".into()),
+            delete_local_file: false,
+        });
+        let _ = ctx.run(
+            egui::RawInput {
+                events: vec![egui::Event::Key {
+                    key: egui::Key::Enter,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+                ..Default::default()
+            },
+            |ctx| {
+                window.show_delete_modal(ctx);
+            },
+        );
+        assert!(window.pending_delete.is_none());
+        assert_eq!(
+            window.take_pending_action(),
+            Some(StatisticsAction::DeleteDocument {
+                doc_id: "doc-to-delete".into(),
+                delete_local_file: false,
+            })
+        );
+        // Document was removed from window data
+        assert!(window.data.as_ref().unwrap().documents.is_empty());
+        assert!(window.status_message.is_some());
+    }
+
+    #[test]
+    fn test_documents_view_with_selected_doc_details_renders_and_fits() {
+        let ctx = Context::default();
+        let mut window = StatisticsWindow {
+            data: Some(WritingStatistics {
+                documents: vec![DocumentStatistics {
+                    id: "doc-selected".to_string(),
+                    path: Some("/tmp/my_novel.md".into()),
+                    words: Some(5000),
+                    version_count: 10,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }),
+            view: StatisticsView::Documents,
+            selected_doc_id: Some("doc-selected".to_string()),
+            ..Default::default()
+        };
+
+        for (width, height) in [(600.0, 460.0), (800.0, 720.0)] {
+            let _ = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(width, height),
+                    )),
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        let available = ui.available_width();
+                        window.show_content(ui);
+                        assert!(ui.min_rect().width() <= available + 1.0);
+                    });
+                },
+            );
+        }
     }
 }

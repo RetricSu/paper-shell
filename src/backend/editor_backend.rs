@@ -482,6 +482,8 @@ impl EditorBackend {
                 .iter()
                 .rev()
                 .find_map(|entry| entry.file_path.clone()),
+            version_count: entries.len(),
+            last_saved: entries.last().map(|entry| entry.timestamp),
             ..Default::default()
         };
         // Load every blob first: a child can have an earlier timestamp than its
@@ -549,7 +551,91 @@ impl EditorBackend {
                 day.removed += removed;
             }
         }
+        let mut total_activity = crate::statistics::WritingActivity::default();
+        for day in document.days.values() {
+            total_activity += *day;
+        }
+        document.total_activity = total_activity;
         Ok(document)
+    }
+
+    /// Remove a document's history and tracking records completely.
+    /// Optionally deletes the local file on disk if requested.
+    /// Any blobs no longer referenced by any remaining document history are deleted.
+    /// If the local file remains, its file_id metadata is cleared so it is no longer tracked.
+    pub fn remove_document_record(
+        &self,
+        doc_id: &str,
+        delete_file_on_disk: bool,
+    ) -> Result<Option<PathBuf>, BackendError> {
+        if doc_id.is_empty()
+            || doc_id.contains('/')
+            || doc_id.contains('\\')
+            || doc_id.contains("..")
+        {
+            return Err(BackendError::InvalidHash("Invalid document ID".into()));
+        }
+
+        let history_path = self.history_dir.join(format!("{}.json", doc_id));
+        let mut doc_hashes = Vec::new();
+        let mut file_path = None;
+
+        if history_path.exists() {
+            if let Ok(content) = fs::read_to_string(&history_path)
+                && let Ok(entries) = serde_json::from_str::<Vec<HistoryEntry>>(&content)
+            {
+                for entry in &entries {
+                    doc_hashes.push(entry.hash.clone());
+                }
+                file_path = entries.iter().rev().find_map(|e| e.file_path.clone());
+            }
+            fs::remove_file(&history_path)?;
+        }
+
+        // Remove comments file if present
+        let comments_path = self.marks_dir.join(format!("{}.comments.json", doc_id));
+        if comments_path.exists() {
+            let _ = fs::remove_file(comments_path);
+        }
+
+        // Handle local file
+        if let Some(ref path) = file_path
+            && path.exists()
+        {
+            if delete_file_on_disk {
+                let _ = fs::remove_file(path);
+            } else if let Ok(Some(existing_id)) = get_file_id_wrapper(path)
+                && existing_id == doc_id
+            {
+                let _ = remove_file_id_wrapper(path);
+            }
+        }
+
+        // Clean up unreferenced blobs
+        if !doc_hashes.is_empty() {
+            let mut referenced_hashes = HashSet::new();
+            if let Ok(entries) = fs::read_dir(&self.history_dir) {
+                for entry in entries.flatten() {
+                    if entry.path().extension().is_some_and(|ext| ext == "json")
+                        && let Ok(content) = fs::read_to_string(entry.path())
+                        && let Ok(history_entries) =
+                            serde_json::from_str::<Vec<HistoryEntry>>(&content)
+                    {
+                        for e in history_entries {
+                            referenced_hashes.insert(e.hash);
+                        }
+                    }
+                }
+            }
+            for hash in doc_hashes {
+                if !referenced_hashes.contains(&hash) {
+                    let blob_path = self.blobs_dir.join(&hash);
+                    let _ = fs::remove_file(blob_path);
+                }
+            }
+        }
+
+        Ok(file_path)
     }
 
     /// Get total writing time for a file
@@ -761,6 +847,28 @@ fn get_file_id_wrapper(path: &Path) -> io::Result<Option<String>> {
     {
         // Unsupported platform
         Ok(None)
+    }
+}
+
+/// Remove UUID and time from file metadata (cross-platform)
+fn remove_file_id_wrapper(path: &Path) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        let _ = xattr::remove(path, METADATA_KEY);
+        let _ = xattr::remove(path, TOTAL_TIME_KEY);
+        Ok(())
+    }
+    #[cfg(windows)]
+    {
+        let ads_path = format!("{}:{}", path.to_string_lossy(), METADATA_KEY);
+        let _ = fs::remove_file(ads_path);
+        let ads_time = format!("{}:{}", path.to_string_lossy(), TOTAL_TIME_KEY);
+        let _ = fs::remove_file(ads_time);
+        Ok(())
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        Ok(())
     }
 }
 
@@ -1582,6 +1690,72 @@ mod tests {
         // Test invalid hash
         let result = backend.restore_version("invalid_hash_123");
         assert!(result.is_err(), "Should error on invalid hash");
+
+        cleanup_test_dir(&test_dir);
+    }
+
+    #[test]
+    fn test_remove_document_record_preserves_local_file_cleans_xattr_and_blobs() {
+        let (backend, test_dir) = setup_test_backend();
+        let file_a = test_dir.join("article_a.md");
+        let file_b = test_dir.join("article_b.md");
+        fs::write(&file_a, "独创文章内容 A").unwrap();
+        fs::write(&file_b, "独创文章内容 B").unwrap();
+
+        let (uuid_a, _) = backend.save(&file_a, "独创文章内容 A", 60).unwrap();
+        let (uuid_b, _) = backend.save(&file_b, "独创文章内容 B", 120).unwrap();
+
+        let hash_a = EditorBackend::calculate_hash("独创文章内容 A");
+        let hash_b = EditorBackend::calculate_hash("独创文章内容 B");
+
+        assert!(backend.history_dir.join(format!("{uuid_a}.json")).exists());
+        assert!(backend.blobs_dir.join(&hash_a).exists());
+        assert!(backend.blobs_dir.join(&hash_b).exists());
+
+        let stats = backend.load_writing_statistics().unwrap();
+        assert_eq!(stats.documents.len(), 2);
+
+        // Remove document A record (keeping local file)
+        let affected = backend.remove_document_record(&uuid_a, false).unwrap();
+        assert_eq!(affected, Some(file_a.clone()));
+
+        // History file should be gone
+        assert!(!backend.history_dir.join(format!("{uuid_a}.json")).exists());
+        // Local file A still exists
+        assert!(file_a.exists());
+        // xattr on file A should be cleared
+        assert_eq!(get_file_id_wrapper(&file_a).unwrap(), None);
+
+        // Blob A should be deleted since no other doc references it
+        assert!(!backend.blobs_dir.join(&hash_a).exists());
+        // Blob B and document B should remain intact
+        assert!(backend.blobs_dir.join(&hash_b).exists());
+        assert!(backend.history_dir.join(format!("{uuid_b}.json")).exists());
+
+        let stats_after = backend.load_writing_statistics().unwrap();
+        assert_eq!(stats_after.documents.len(), 1);
+        assert_eq!(stats_after.documents[0].id, uuid_b);
+
+        // Path traversal rejected
+        assert!(backend.remove_document_record("../secret", false).is_err());
+        assert!(backend.remove_document_record("", false).is_err());
+
+        cleanup_test_dir(&test_dir);
+    }
+
+    #[test]
+    fn test_remove_document_record_deletes_disk_file_when_requested() {
+        let (backend, test_dir) = setup_test_backend();
+        let file = test_dir.join("temp_note.md");
+        fs::write(&file, "临时笔记待删").unwrap();
+
+        let (uuid, _) = backend.save(&file, "临时笔记待删", 30).unwrap();
+        assert!(file.exists());
+
+        let affected = backend.remove_document_record(&uuid, true).unwrap();
+        assert_eq!(affected, Some(file.clone()));
+        assert!(!file.exists());
+        assert!(!backend.history_dir.join(format!("{uuid}.json")).exists());
 
         cleanup_test_dir(&test_dir);
     }

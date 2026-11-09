@@ -1346,13 +1346,10 @@ mod tests {
                 });
             }
             let output = captured.borrow().clone().unwrap();
-            assert!(text_positions(&output, "管理与微调…").is_empty());
-            assert!(text_positions(&output, "浏览皮肤市场…").is_empty());
             assert!(!text_positions(&output, "已安装").is_empty());
             let import_label = format!("{} 导入皮肤…", egui_phosphor::regular::DOWNLOAD_SIMPLE);
             assert!(!text_positions(&output, &import_label).is_empty());
             assert!(!text_positions(&output, "经典白纸").is_empty());
-            assert!(text_positions(&output, "插件设置").is_empty());
             for tab in SettingsTab::ALL {
                 assert!(!text_positions(&output, tab.label()).is_empty());
             }

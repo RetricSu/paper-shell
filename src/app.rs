@@ -1946,16 +1946,6 @@ mod document_change_tests {
     use super::*;
 
     #[test]
-    fn configuring_a_plugin_does_not_also_open_application_preferences() {
-        let ctx = egui::Context::default();
-        let mut app = PaperShellApp::default();
-        for id in ["cloud_backup", "github_publish"] {
-            app.handle_plugin_manager_action(&ctx, PluginManagerAction::Configure(id.into()));
-            assert!(!app.settings_window.is_open());
-        }
-    }
-
-    #[test]
     fn update_restart_preserves_unsaved_document_when_cancelled() {
         let ctx = egui::Context::default();
         let mut app = PaperShellApp::default();

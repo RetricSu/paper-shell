@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "claims": {
+    "ui.no-deleted-element-tests": {
+      "policy": "advisory",
+      "claim_hash": "sha256:d5dd51c15adb3131a6625e9e54028d1796d7fe85803602db4e387ea7a4aadefa",
+      "semantic_hash": "sha256:b607e1e9149db929f72af125731c3b19dd2767ef6e47f64b77aaa260193163de",
+      "anchors": {
+        "file:src/app.rs": "sha256:f7aa27d725bc7ab0202ded3fd83dbafb36b4dd7f05d6263a4b55072ed485c7ca",
+        "file:src/ui/editor.rs": "sha256:5189c87a33c9ece0f56c51793bd9583c2d808cb435946af4bded4a42ad64930e",
+        "file:src/ui/mod.rs": "sha256:305b1d4ad1289fdf91833327cff9a1f698eb6874bffd226ef011ea4773d047d4",
+        "file:src/ui/settings.rs": "sha256:4f860ef8eec5b357572b6278305fbfc9e28eb9a1c892a8d025d0075e49835fe7",
+        "file:src/ui/title_bar.rs": "sha256:4d1641c75e0912f7ed11ae13cbb5b8c9d063465d2c24ebf8fd29ff35fba12015"
+      },
+      "dependencies": {}
+    }
+  }
+}

@@ -604,14 +604,14 @@ impl PaperShellApp {
                         let count = skins.len();
                         self.skin_market_client.cached_skins = skins;
                         self.skin_market_client.last_error = None;
-                        self.plugin_manager_window.set_status(
+                        self.settings_window.set_status(
                             false,
                             format!("已成功从 GitHub 仓库拉取 {} 款皮肤", count),
                         );
                     }
                     Err(err) => {
                         self.skin_market_client.last_error = Some(err.clone());
-                        self.plugin_manager_window
+                        self.settings_window
                             .set_status(true, format!("从 GitHub 拉取失败：{err}"));
                     }
                 },
@@ -1041,13 +1041,48 @@ impl PaperShellApp {
             crate::ui::settings::SettingsAction::ExportCurrentSkin => {
                 self.export_current_skin_dialog();
             }
-            crate::ui::settings::SettingsAction::ManageSkins => {
-                self.plugin_manager_window
-                    .open_tab(ctx, crate::ui::plugins::manager::ManagerTab::Skins);
+            crate::ui::settings::SettingsAction::ExportSkin(id) => {
+                self.export_skin_dialog(&id);
             }
-            crate::ui::settings::SettingsAction::OpenSkinMarket => {
-                self.plugin_manager_window
-                    .open_tab(ctx, crate::ui::plugins::manager::ManagerTab::Market);
+            crate::ui::settings::SettingsAction::UninstallSkin(id) => {
+                match self.skin_manager.uninstall_skin(&id) {
+                    Ok(()) => {
+                        let current_id = self.skin_manager.current_skin_id().to_string();
+                        self.apply_skin(ctx, &current_id);
+                        self.settings_window
+                            .set_status(false, format!("皮肤“{id}”已卸载"));
+                    }
+                    Err(error) => self.settings_window.set_status(true, error),
+                }
+            }
+            crate::ui::settings::SettingsAction::SaveCustomSkin(skin) => {
+                let skin_name = skin.name.clone();
+                match self.skin_manager.save_custom_skin(skin) {
+                    Ok(saved) => {
+                        self.apply_skin(ctx, &saved.id);
+                        self.settings_window
+                            .set_status(false, format!("自定义皮肤“{skin_name}”已保存并应用"));
+                    }
+                    Err(error) => self.settings_window.set_status(true, error),
+                }
+            }
+            crate::ui::settings::SettingsAction::FetchMarketSkins => {
+                self.fetch_market_skins();
+            }
+            crate::ui::settings::SettingsAction::InstallMarketSkin(market_skin) => {
+                let name = market_skin.name.clone();
+                match self
+                    .skin_market_client
+                    .download_and_install(&market_skin, self.skin_manager.skins_dir())
+                {
+                    Ok(installed) => {
+                        self.skin_manager.rescan();
+                        self.apply_skin(ctx, &installed.id);
+                        self.settings_window
+                            .set_status(false, format!("已成功安装并应用皮肤“{name}”"));
+                    }
+                    Err(error) => self.settings_window.set_status(true, error),
+                }
             }
             crate::ui::settings::SettingsAction::UpdateMarketSource {
                 repo,
@@ -1089,6 +1124,28 @@ impl PaperShellApp {
         }
     }
 
+    fn fetch_market_skins(&mut self) {
+        let sender = self.response_sender.clone();
+        let mut client = self.skin_market_client.clone();
+        let installed_ids: Vec<String> = self
+            .skin_manager
+            .all_skins()
+            .iter()
+            .map(|s| s.id.clone())
+            .collect();
+        self.settings_window
+            .set_status(false, "正在从 GitHub 仓库拉取皮肤列表…".to_string());
+        std::thread::spawn(move || {
+            let skins = client.fetch_skins(&installed_ids);
+            let result = if let Some(err) = client.last_error {
+                Err(err)
+            } else {
+                Ok(skins)
+            };
+            let _ = sender.send(ResponseMessage::MarketSkinsFetched { result });
+        });
+    }
+
     pub fn apply_skin(&mut self, ctx: &egui::Context, id: &str) {
         if self.skin_manager.set_current_skin(id) {
             let skin = self.skin_manager.current_skin();
@@ -1127,11 +1184,11 @@ impl PaperShellApp {
             match self.skin_manager.import_from_file(&path) {
                 Ok(skin) => {
                     self.apply_skin(ctx, &skin.id);
-                    self.plugin_manager_window
+                    self.settings_window
                         .set_status(false, format!("成功导入并应用皮肤“{}”", skin.name));
                 }
                 Err(e) => {
-                    self.plugin_manager_window
+                    self.settings_window
                         .set_status(true, format!("导入皮肤失败: {e}"));
                 }
             }
@@ -1148,11 +1205,11 @@ impl PaperShellApp {
         {
             match self.skin_manager.export_skin_to_file(id, &path) {
                 Ok(()) => {
-                    self.plugin_manager_window
+                    self.settings_window
                         .set_status(false, format!("皮肤已成功导出到 {:?}", path));
                 }
                 Err(e) => {
-                    self.plugin_manager_window
+                    self.settings_window
                         .set_status(true, format!("导出皮肤失败: {e}"));
                 }
             }
@@ -1189,11 +1246,11 @@ impl PaperShellApp {
             };
             match skin.export_to_file(&path) {
                 Ok(()) => {
-                    self.plugin_manager_window
+                    self.settings_window
                         .set_status(false, format!("当前外观已成功导出到 {:?}", path));
                 }
                 Err(e) => {
-                    self.plugin_manager_window
+                    self.settings_window
                         .set_status(true, format!("导出失败: {e}"));
                 }
             }
@@ -1638,6 +1695,8 @@ impl eframe::App for PaperShellApp {
             font_color: &self.config.settings.font_color,
             skins: self.skin_manager.all_skins(),
             current_skin_id: self.skin_manager.current_skin_id(),
+            market_skins: &self.skin_market_client.cached_skins,
+            market_error: self.skin_market_client.last_error.as_deref(),
             market_repo: &self.config.settings.skin_market_repo,
             market_branch: &self.config.settings.skin_market_branch,
             market_folder: &self.config.settings.skin_market_folder,

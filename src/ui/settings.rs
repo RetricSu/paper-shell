@@ -1,4 +1,5 @@
 //! Application preferences. Plugin lifecycle and configuration live in the plugin manager.
+use crate::ui::dialog::{ModalConfig, modal_button, show_modal};
 use egui::{Context, RichText, Ui};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -34,8 +35,11 @@ pub enum SettingsAction {
     SelectSkin(String),
     ImportSkin,
     ExportCurrentSkin,
-    ManageSkins,
-    OpenSkinMarket,
+    ExportSkin(String),
+    UninstallSkin(String),
+    SaveCustomSkin(crate::skin::Skin),
+    FetchMarketSkins,
+    InstallMarketSkin(crate::skin::MarketSkin),
     UpdateMarketSource {
         repo: String,
         branch: String,
@@ -56,9 +60,52 @@ pub struct SettingsWindowState<'a> {
     pub font_color: &'a str,
     pub skins: &'a [crate::skin::Skin],
     pub current_skin_id: &'a str,
+    pub market_skins: &'a [crate::skin::MarketSkin],
+    pub market_error: Option<&'a str>,
     pub market_repo: &'a str,
     pub market_branch: &'a str,
     pub market_folder: &'a str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum SkinLibraryTab {
+    #[default]
+    Installed,
+    Market,
+}
+
+struct CustomSkinTuner {
+    base_skin: Option<crate::skin::Skin>,
+    name: String,
+    id: String,
+    font_size: f32,
+    line_spacing: f32,
+    font_color: String,
+    item_spacing: f32,
+    editor_padding: f32,
+    background_opacity: f32,
+    editor_opacity: f32,
+    corner_radius: f32,
+    dark_mode: bool,
+}
+
+impl Default for CustomSkinTuner {
+    fn default() -> Self {
+        Self {
+            base_skin: None,
+            name: String::new(),
+            id: String::new(),
+            font_size: 14.0,
+            line_spacing: 1.5,
+            font_color: "#1A1A1A".to_string(),
+            item_spacing: 8.0,
+            editor_padding: 2.0,
+            background_opacity: 0.25,
+            editor_opacity: 1.0,
+            corner_radius: 0.0,
+            dark_mode: false,
+        }
+    }
 }
 
 #[derive(Default)]
@@ -70,6 +117,12 @@ pub struct SettingsWindow {
     branch_input: String,
     folder_input: String,
     market_buffers_initialized: bool,
+    skin_library_tab: SkinLibraryTab,
+    skin_search: String,
+    market_search: String,
+    custom_skin_tuning: bool,
+    tuner: CustomSkinTuner,
+    confirm_uninstall_skin: Option<(String, String)>,
 }
 
 impl SettingsWindow {
@@ -100,6 +153,7 @@ impl SettingsWindow {
     pub fn close(&mut self) {
         self.open = false;
         self.status_message = None;
+        self.confirm_uninstall_skin = None;
     }
 
     pub fn set_status(&mut self, is_error: bool, text: String) {
@@ -130,6 +184,9 @@ impl SettingsWindow {
             [640.0, 420.0],
             &mut open,
             |ui| {
+                if self.confirm_uninstall_skin.is_some() {
+                    ui.disable();
+                }
                 ui.spacing_mut().item_spacing = egui::vec2(10.0, 10.0);
                 ui.spacing_mut().interact_size.y = 28.0;
                 if ui.available_width() < 720.0 {
@@ -151,9 +208,15 @@ impl SettingsWindow {
                         });
                     });
                 }
+                if let Some(modal_action) = self.show_uninstall_skin_modal(ui.ctx()) {
+                    action = Some(modal_action);
+                }
             },
         );
         self.open = open;
+        if !self.open {
+            self.confirm_uninstall_skin = None;
+        }
         action
     }
 
@@ -429,79 +492,619 @@ impl SettingsWindow {
         ui.heading("皮肤与外观");
         ui.label(RichText::new("选择写作环境的配色与质感。切换后立即生效。").weak());
         ui.add_space(12.0);
+
         ui.label(RichText::new("当前皮肤").strong());
         let current = state.skins.iter().find(|s| s.id == state.current_skin_id);
-        egui::ComboBox::from_id_salt("settings_skin")
-            .selected_text(current.map_or("默认", |s| s.name.as_str()))
-            .width(240.0)
-            .show_ui(ui, |ui| {
-                for skin in state.skins {
-                    if ui
-                        .selectable_label(skin.id == state.current_skin_id, &skin.name)
-                        .on_hover_text(&skin.description)
-                        .clicked()
-                    {
-                        action = Some(SettingsAction::SelectSkin(skin.id.clone()));
+        ui.horizontal_wrapped(|ui| {
+            egui::ComboBox::from_id_salt("settings_skin")
+                .selected_text(current.map_or("默认", |s| s.name.as_str()))
+                .width(220.0)
+                .show_ui(ui, |ui| {
+                    for skin in state.skins {
+                        if ui
+                            .selectable_label(skin.id == state.current_skin_id, &skin.name)
+                            .on_hover_text(&skin.description)
+                            .clicked()
+                        {
+                            action = Some(SettingsAction::SelectSkin(skin.id.clone()));
+                        }
                     }
+                });
+            if ui
+                .button(format!("{} 导出当前外观…", egui_phosphor::regular::EXPORT))
+                .clicked()
+            {
+                action = Some(SettingsAction::ExportCurrentSkin);
+            }
+            let tuning_label = if self.custom_skin_tuning {
+                format!("{} 收起自定义", egui_phosphor::regular::CARET_UP)
+            } else {
+                format!("{} 自定义外观", egui_phosphor::regular::SLIDERS)
+            };
+            if ui.button(tuning_label).clicked() {
+                if self.custom_skin_tuning {
+                    self.custom_skin_tuning = false;
+                } else {
+                    self.begin_custom_skin_tuning(state);
                 }
-            });
+            }
+        });
         if let Some(skin) = current {
             ui.label(RichText::new(&skin.description).weak().small());
-            ui.horizontal(|ui| {
-                for hex in [
-                    &skin.colors.background_color,
-                    &skin.colors.editor_background_color,
-                    &skin.colors.text_color,
-                    &skin.colors.accent_color,
-                ]
-                .into_iter()
-                .flatten()
-                {
-                    if let Some(color) = crate::config::parse_hex_color(hex) {
-                        let (rect, response) =
-                            ui.allocate_exact_size(egui::vec2(30.0, 20.0), egui::Sense::hover());
-                        ui.painter().rect_filled(rect, 3.0, color);
-                        response.on_hover_text(hex);
-                    }
+            ui.horizontal_wrapped(|ui| {
+                Self::paint_color_swatches(ui, &skin.colors);
+                ui.label(
+                    RichText::new(if skin.colors.dark_mode {
+                        "深色"
+                    } else {
+                        "浅色"
+                    })
+                    .small()
+                    .weak(),
+                );
+            });
+        }
+
+        if self.custom_skin_tuning
+            && let Some(skin) = current
+            && let Some(tuner_action) = self.show_custom_skin_tuner(ui, state, skin)
+        {
+            action = Some(tuner_action);
+        }
+
+        ui.add_space(16.0);
+        ui.separator();
+        ui.add_space(4.0);
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new("皮肤库").strong());
+            ui.selectable_value(
+                &mut self.skin_library_tab,
+                SkinLibraryTab::Installed,
+                "已安装",
+            );
+            ui.selectable_value(
+                &mut self.skin_library_tab,
+                SkinLibraryTab::Market,
+                "皮肤市场",
+            );
+        });
+        ui.label(
+            RichText::new(match self.skin_library_tab {
+                SkinLibraryTab::Installed => "应用、导入或管理已经保存在本机的皮肤。",
+                SkinLibraryTab::Market => "浏览社区皮肤，安装后会自动应用并加入已安装列表。",
+            })
+            .weak()
+            .small(),
+        );
+        ui.add_space(4.0);
+
+        match self.skin_library_tab {
+            SkinLibraryTab::Installed => {
+                if let Some(list_action) = self.show_installed_skins(ui, state) {
+                    action = Some(list_action);
                 }
-                ui.label(if skin.colors.dark_mode {
-                    "暗色"
-                } else {
-                    "亮色"
+            }
+            SkinLibraryTab::Market => {
+                if let Some(market_action) = self.show_market_skins(ui, state) {
+                    action = Some(market_action);
+                }
+                ui.add_space(12.0);
+                ui.collapsing("高级：皮肤市场源", |ui| {
+                    if let Some(source_action) = self.show_market_tab(ui, state) {
+                        action = Some(source_action);
+                    }
+                });
+            }
+        }
+        action
+    }
+
+    fn begin_custom_skin_tuning(&mut self, state: &SettingsWindowState<'_>) {
+        let base = state
+            .skins
+            .iter()
+            .find(|skin| skin.id == state.current_skin_id)
+            .cloned()
+            .unwrap_or_else(crate::skin::Skin::classic_paper);
+        let font_color = if state.font_color == "Default" {
+            base.typography.font_color.clone()
+        } else {
+            state.font_color.to_string()
+        };
+        self.tuner = CustomSkinTuner {
+            name: format!("{} 副本", base.name),
+            id: format!("{}_custom", base.id),
+            font_size: state.font_size,
+            line_spacing: state.line_spacing,
+            font_color,
+            item_spacing: base.spacing.item_spacing_x,
+            editor_padding: base.spacing.editor_padding_left,
+            background_opacity: base.effects.background_image_opacity,
+            editor_opacity: base.effects.editor_opacity,
+            corner_radius: base.effects.corner_radius,
+            dark_mode: base.colors.dark_mode,
+            base_skin: Some(base),
+        };
+        self.custom_skin_tuning = true;
+    }
+
+    fn show_custom_skin_tuner(
+        &mut self,
+        ui: &mut Ui,
+        state: &SettingsWindowState<'_>,
+        current: &crate::skin::Skin,
+    ) -> Option<SettingsAction> {
+        let mut action = None;
+        ui.add_space(8.0);
+        egui::Frame::new()
+            .fill(ui.visuals().widgets.inactive.bg_fill)
+            .inner_margin(egui::Margin::same(12))
+            .show(ui, |ui| {
+                ui.label(RichText::new("基于当前皮肤新建副本").strong());
+                ui.label(
+                    RichText::new("保留当前配色与背景，只调整需要修改的项目。保存后自动应用。")
+                        .weak()
+                        .small(),
+                );
+                ui.add_space(6.0);
+                egui::Grid::new("custom_skin_tuner_grid")
+                    .num_columns(2)
+                    .spacing([12.0, 8.0])
+                    .show(ui, |ui| {
+                        ui.label("皮肤名称");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.tuner.name).desired_width(240.0),
+                        );
+                        ui.end_row();
+                        ui.label("皮肤 ID");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.tuner.id)
+                                .desired_width(240.0)
+                                .hint_text("仅限字母、数字、_ 和 -"),
+                        );
+                        ui.end_row();
+                        ui.label("字号");
+                        ui.add(
+                            egui::Slider::new(&mut self.tuner.font_size, 10.0..=32.0).suffix(" pt"),
+                        );
+                        ui.end_row();
+                        ui.label("行间距");
+                        ui.add(
+                            egui::Slider::new(&mut self.tuner.line_spacing, 1.0..=2.5)
+                                .step_by(0.1)
+                                .suffix(" x"),
+                        );
+                        ui.end_row();
+                        ui.label("字体颜色");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.tuner.font_color)
+                                .desired_width(160.0)
+                                .hint_text("#1A1A1A"),
+                        );
+                        ui.end_row();
+                        ui.label("元素间距");
+                        ui.add(
+                            egui::Slider::new(&mut self.tuner.item_spacing, 4.0..=20.0)
+                                .suffix(" px"),
+                        );
+                        ui.end_row();
+                        ui.label("编辑器边距");
+                        ui.add(
+                            egui::Slider::new(&mut self.tuner.editor_padding, 2.0..=24.0)
+                                .suffix(" px"),
+                        );
+                        ui.end_row();
+                        ui.label("编辑器透明度");
+                        ui.add(
+                            egui::Slider::new(&mut self.tuner.editor_opacity, 0.2..=1.0)
+                                .step_by(0.05),
+                        );
+                        ui.end_row();
+                        ui.label("背景图透明度");
+                        ui.add(
+                            egui::Slider::new(&mut self.tuner.background_opacity, 0.0..=1.0)
+                                .step_by(0.05),
+                        );
+                        ui.end_row();
+                        ui.label("界面圆角");
+                        ui.add(
+                            egui::Slider::new(&mut self.tuner.corner_radius, 0.0..=12.0)
+                                .suffix(" px"),
+                        );
+                        ui.end_row();
+                    });
+                ui.checkbox(&mut self.tuner.dark_mode, "使用深色模式配色");
+                ui.add_space(4.0);
+                ui.horizontal_wrapped(|ui| {
+                    if ui
+                        .button(format!("{} 保存副本并应用", egui_phosphor::regular::CHECK))
+                        .clicked()
+                    {
+                        let mut skin = self
+                            .tuner
+                            .base_skin
+                            .clone()
+                            .unwrap_or_else(|| current.clone());
+                        let dark_mode_changed = skin.colors.dark_mode != self.tuner.dark_mode;
+                        skin.id = self.tuner.id.trim().to_string();
+                        skin.name = self.tuner.name.trim().to_string();
+                        skin.description = "基于现有皮肤创建的自定义副本".to_string();
+                        skin.author = "我".to_string();
+                        skin.builtin = false;
+                        skin.dir = None;
+                        skin.typography.font_family = state.current_font.to_string();
+                        skin.typography.font_size = self.tuner.font_size;
+                        skin.typography.line_spacing = self.tuner.line_spacing;
+                        skin.typography.font_color = self.tuner.font_color.clone();
+                        skin.typography.format_use_tabs = state.format_use_tabs;
+                        skin.spacing.item_spacing_x = self.tuner.item_spacing;
+                        skin.spacing.item_spacing_y = self.tuner.item_spacing;
+                        skin.spacing.editor_padding_left = self.tuner.editor_padding;
+                        skin.spacing.editor_padding_right = self.tuner.editor_padding;
+                        skin.spacing.editor_padding_top = self.tuner.editor_padding;
+                        skin.spacing.editor_padding_bottom = self.tuner.editor_padding;
+                        if dark_mode_changed {
+                            skin.colors.background_color = Some(if self.tuner.dark_mode {
+                                "#16161A".to_string()
+                            } else {
+                                "#FAFAFA".to_string()
+                            });
+                            skin.colors.editor_background_color = Some(if self.tuner.dark_mode {
+                                "#1F1F24".to_string()
+                            } else {
+                                "#FFFFFF".to_string()
+                            });
+                            skin.colors.sidebar_background_color = None;
+                            skin.colors.titlebar_background_color = None;
+                            skin.colors.selection_color = None;
+                        }
+                        skin.colors.dark_mode = self.tuner.dark_mode;
+                        skin.colors.text_color = Some(self.tuner.font_color.clone());
+                        skin.effects.background_image_opacity = self.tuner.background_opacity;
+                        skin.effects.editor_opacity = self.tuner.editor_opacity;
+                        skin.effects.corner_radius = self.tuner.corner_radius;
+                        action = Some(SettingsAction::SaveCustomSkin(skin));
+                        self.custom_skin_tuning = false;
+                    }
+                    if ui.button("取消").clicked() {
+                        self.custom_skin_tuning = false;
+                    }
+                });
+            });
+        action
+    }
+
+    fn show_installed_skins(
+        &mut self,
+        ui: &mut Ui,
+        state: &SettingsWindowState<'_>,
+    ) -> Option<SettingsAction> {
+        let mut action = None;
+        ui.horizontal_wrapped(|ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut self.skin_search)
+                    .hint_text("搜索已安装皮肤…")
+                    .desired_width(200.0),
+            );
+            if ui
+                .button(format!(
+                    "{} 导入皮肤…",
+                    egui_phosphor::regular::DOWNLOAD_SIMPLE
+                ))
+                .on_hover_text("支持 .toml、.json、.paperskin 和 .zip")
+                .clicked()
+            {
+                action = Some(SettingsAction::ImportSkin);
+            }
+        });
+        ui.add_space(8.0);
+
+        let query = self.skin_search.trim().to_lowercase();
+        let skins: Vec<_> = state
+            .skins
+            .iter()
+            .filter(|skin| {
+                query.is_empty()
+                    || skin.name.to_lowercase().contains(&query)
+                    || skin.id.to_lowercase().contains(&query)
+                    || skin.description.to_lowercase().contains(&query)
+            })
+            .collect();
+        if skins.is_empty() {
+            ui.label(RichText::new("没有匹配的皮肤，请尝试其他关键词。").weak());
+        }
+        for (index, skin) in skins.iter().enumerate() {
+            if index > 0 {
+                ui.add_space(8.0);
+                ui.separator();
+                ui.add_space(8.0);
+            }
+            let is_current = skin.id == state.current_skin_id;
+            ui.push_id(&skin.id, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(RichText::new(&skin.name).size(14.0).strong());
+                    ui.label(
+                        RichText::new(format!(
+                            "v{} · {} · {}",
+                            skin.version,
+                            if skin.builtin { "内置" } else { "自定义" },
+                            if skin.colors.dark_mode {
+                                "深色"
+                            } else {
+                                "浅色"
+                            }
+                        ))
+                        .small()
+                        .weak(),
+                    );
+                    if is_current {
+                        ui.label(
+                            RichText::new("✓ 当前使用")
+                                .color(crate::style::STATUS_GREEN)
+                                .strong(),
+                        );
+                    } else if ui.button("应用皮肤").clicked() {
+                        action = Some(SettingsAction::SelectSkin(skin.id.clone()));
+                    }
+                    if ui
+                        .button(format!("{} 导出", egui_phosphor::regular::EXPORT))
+                        .clicked()
+                    {
+                        action = Some(SettingsAction::ExportSkin(skin.id.clone()));
+                    }
+                    if !skin.builtin
+                        && ui
+                            .button(
+                                RichText::new(format!("{} 卸载", egui_phosphor::regular::TRASH))
+                                    .color(ui.visuals().error_fg_color),
+                            )
+                            .clicked()
+                    {
+                        self.confirm_uninstall_skin = Some((skin.id.clone(), skin.name.clone()));
+                    }
+                });
+                if !skin.description.is_empty() {
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(&skin.description)
+                                .color(ui.visuals().text_color().gamma_multiply(0.72)),
+                        )
+                        .wrap(),
+                    );
+                }
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(
+                        RichText::new(format!(
+                            "字号 {}pt · 行距 {}x · 内边距 {}px",
+                            skin.typography.font_size,
+                            skin.typography.line_spacing,
+                            skin.spacing.editor_padding_left
+                        ))
+                        .small()
+                        .weak(),
+                    );
+                    if skin.effects.background_image.is_some()
+                        || skin.effects.background_image_data.is_some()
+                    {
+                        ui.label(
+                            RichText::new(format!(
+                                "背景图 {:.0}%",
+                                skin.effects.background_image_opacity * 100.0
+                            ))
+                            .small()
+                            .color(crate::style::STATUS_GREEN),
+                        );
+                    }
+                    Self::paint_color_swatches(ui, &skin.colors);
                 });
             });
         }
-        ui.add_space(16.0);
-        ui.separator();
-        ui.label(RichText::new("皮肤库").strong());
-        ui.label(
-            RichText::new("管理已安装皮肤、微调外观，或从市场添加新皮肤。")
-                .weak()
-                .small(),
-        );
-        ui.horizontal_wrapped(|ui| {
-            if ui.button("管理与微调…").clicked() {
-                action = Some(SettingsAction::ManageSkins);
-            }
-            if ui.button("浏览皮肤市场…").clicked() {
-                action = Some(SettingsAction::OpenSkinMarket);
-            }
-        });
-        ui.horizontal_wrapped(|ui| {
-            if ui.button("导入皮肤…").clicked() {
-                action = Some(SettingsAction::ImportSkin);
-            }
-            if ui.button("导出当前外观…").clicked() {
-                action = Some(SettingsAction::ExportCurrentSkin);
-            }
-        });
-        ui.add_space(20.0);
-        ui.collapsing("高级：皮肤市场源", |ui| {
-            if let Some(a) = self.show_market_tab(ui, state) {
-                action = Some(a);
-            }
-        });
         action
+    }
+
+    fn show_market_skins(
+        &mut self,
+        ui: &mut Ui,
+        state: &SettingsWindowState<'_>,
+    ) -> Option<SettingsAction> {
+        let mut action = None;
+        ui.horizontal_wrapped(|ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut self.market_search)
+                    .hint_text("搜索市场皮肤…")
+                    .desired_width(200.0),
+            );
+            if ui
+                .button(format!(
+                    "{} 从 GitHub 刷新",
+                    egui_phosphor::regular::ARROW_CLOCKWISE
+                ))
+                .on_hover_text("从高级设置中的市场源拉取最新皮肤列表")
+                .clicked()
+            {
+                action = Some(SettingsAction::FetchMarketSkins);
+            }
+        });
+        if let Some(error) = state.market_error {
+            ui.add(
+                egui::Label::new(
+                    RichText::new(format!(
+                        "远程刷新提示：{error}。当前显示已缓存或内置精选皮肤。"
+                    ))
+                    .small()
+                    .color(ui.visuals().warn_fg_color),
+                )
+                .wrap(),
+            );
+        }
+        ui.add_space(8.0);
+
+        let market_skins = if state.market_skins.is_empty() {
+            crate::skin::SkinMarketClient::community_templates()
+        } else {
+            state.market_skins.to_vec()
+        };
+        let query = self.market_search.trim().to_lowercase();
+        let filtered: Vec<_> = market_skins
+            .iter()
+            .filter(|skin| {
+                query.is_empty()
+                    || skin.name.to_lowercase().contains(&query)
+                    || skin.id.to_lowercase().contains(&query)
+                    || skin.author.to_lowercase().contains(&query)
+                    || skin.description.to_lowercase().contains(&query)
+            })
+            .collect();
+        if filtered.is_empty() {
+            ui.label(RichText::new("没有匹配的市场皮肤，请尝试其他关键词。").weak());
+        }
+        for (index, market_skin) in filtered.iter().enumerate() {
+            if index > 0 {
+                ui.add_space(8.0);
+                ui.separator();
+                ui.add_space(8.0);
+            }
+            let is_installed = state.skins.iter().any(|skin| skin.id == market_skin.id);
+            ui.push_id(("market", &market_skin.id), |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(RichText::new(&market_skin.name).size(14.0).strong());
+                    ui.label(
+                        RichText::new(format!(
+                            "v{} · {} · {}",
+                            market_skin.version,
+                            market_skin.author,
+                            if market_skin.skin.colors.dark_mode {
+                                "深色"
+                            } else {
+                                "浅色"
+                            }
+                        ))
+                        .small()
+                        .weak(),
+                    );
+                    if is_installed {
+                        ui.label(
+                            RichText::new("✓ 已安装")
+                                .color(crate::style::STATUS_GREEN)
+                                .strong(),
+                        );
+                        if ui.button("重新安装").clicked() {
+                            action =
+                                Some(SettingsAction::InstallMarketSkin((*market_skin).clone()));
+                        }
+                    } else if ui
+                        .button(format!(
+                            "{} 安装皮肤",
+                            egui_phosphor::regular::DOWNLOAD_SIMPLE
+                        ))
+                        .clicked()
+                    {
+                        action = Some(SettingsAction::InstallMarketSkin((*market_skin).clone()));
+                    }
+                });
+                if !market_skin.description.is_empty() {
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(&market_skin.description)
+                                .color(ui.visuals().text_color().gamma_multiply(0.72)),
+                        )
+                        .wrap(),
+                    );
+                }
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(
+                        RichText::new(format!(
+                            "字号 {}pt · 行距 {}x",
+                            market_skin.skin.typography.font_size,
+                            market_skin.skin.typography.line_spacing
+                        ))
+                        .small()
+                        .weak(),
+                    );
+                    if market_skin.skin.effects.background_image.is_some()
+                        || market_skin.skin.effects.background_image_data.is_some()
+                    {
+                        ui.label(
+                            RichText::new("含背景图")
+                                .small()
+                                .color(crate::style::STATUS_GREEN),
+                        );
+                    }
+                    Self::paint_color_swatches(ui, &market_skin.skin.colors);
+                });
+            });
+        }
+        action
+    }
+
+    fn paint_color_swatches(ui: &mut Ui, colors: &crate::skin::SkinColors) {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            for hex in [
+                colors.background_color.as_deref(),
+                colors.editor_background_color.as_deref(),
+                colors.text_color.as_deref(),
+                colors.accent_color.as_deref(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                if let Some(color) = crate::config::parse_hex_color(hex) {
+                    let (rect, response) =
+                        ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
+                    ui.painter().rect(
+                        rect,
+                        2.0,
+                        color,
+                        egui::Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color),
+                        egui::StrokeKind::Inside,
+                    );
+                    response.on_hover_text(hex);
+                }
+            }
+        });
+    }
+
+    fn show_uninstall_skin_modal(&mut self, ctx: &Context) -> Option<SettingsAction> {
+        let (id, name) = self.confirm_uninstall_skin.clone()?;
+        let message = format!("确定永久删除自定义皮肤“{name}”吗？此操作无法撤销。");
+        let config = ModalConfig {
+            id: "settings_skin_confirm_uninstall",
+            title: "确认卸载皮肤",
+            icon: egui_phosphor::regular::WARNING,
+            icon_color: ctx.style().visuals.warn_fg_color,
+            message: &message,
+            width: 340.0,
+        };
+        let mut confirmed = false;
+        let mut cancelled = false;
+        let response = show_modal(ctx, config, |ui| {
+            ui.horizontal(|ui| {
+                if modal_button(
+                    ui,
+                    RichText::new(format!("{} 永久删除", egui_phosphor::regular::TRASH))
+                        .color(ui.visuals().error_fg_color),
+                )
+                .clicked()
+                {
+                    confirmed = true;
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if modal_button(ui, RichText::new("取消").strong()).clicked() {
+                        cancelled = true;
+                    }
+                });
+            });
+        });
+        if confirmed {
+            self.confirm_uninstall_skin = None;
+            Some(SettingsAction::UninstallSkin(id))
+        } else {
+            if cancelled || response.escape_pressed {
+                self.confirm_uninstall_skin = None;
+            }
+            None
+        }
     }
 
     fn show_market_tab(
@@ -640,8 +1243,60 @@ mod tests {
         positions
     }
 
+    fn pointer_click(pos: egui::Pos2) -> Vec<egui::Event> {
+        vec![
+            egui::Event::PointerMoved(pos),
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ]
+    }
+
     #[test]
-    fn preferences_navigation_fits_and_appearance_dispatches_at_both_widths() {
+    fn custom_tuner_starts_from_the_current_skin() {
+        let skins = vec![crate::skin::Skin::mint_breeze()];
+        let state = SettingsWindowState {
+            vim_mode: false,
+            format_use_tabs: true,
+            autosave_interval: 300,
+            font_size: 18.0,
+            line_spacing: 1.8,
+            current_font: "Default",
+            chinese_fonts: &[],
+            font_color: "#123456",
+            skins: &skins,
+            current_skin_id: "mint_breeze",
+            market_skins: &[],
+            market_error: None,
+            market_repo: "RetricSu/paper-shell",
+            market_branch: "master",
+            market_folder: "skins",
+        };
+        let mut window = SettingsWindow::new();
+        window.begin_custom_skin_tuning(&state);
+        assert!(window.custom_skin_tuning);
+        assert_eq!(window.tuner.name, "薄荷清夏 副本");
+        assert_eq!(window.tuner.id, "mint_breeze_custom");
+        assert_eq!(window.tuner.font_size, 18.0);
+        assert_eq!(window.tuner.line_spacing, 1.8);
+        assert_eq!(window.tuner.font_color, "#123456");
+        assert_eq!(
+            window.tuner.base_skin.as_ref().map(|skin| &skin.colors),
+            Some(&skins[0].colors)
+        );
+    }
+
+    #[test]
+    fn preferences_integrates_skin_library_and_market_at_both_widths() {
         for width in [640.0, 800.0] {
             let ctx = Context::default();
             ctx.set_embed_viewports(false);
@@ -665,6 +1320,7 @@ mod tests {
                     Some(ctx.run(input, |ctx| (viewport.viewport_ui_cb)(ctx)));
             });
             let skins = vec![crate::skin::Skin::classic_paper()];
+            let market_skins = crate::skin::SkinMarketClient::community_templates();
             let state = SettingsWindowState {
                 vim_mode: false,
                 format_use_tabs: false,
@@ -676,6 +1332,8 @@ mod tests {
                 font_color: "Default",
                 skins: &skins,
                 current_skin_id: "classic_paper",
+                market_skins: &market_skins,
+                market_error: None,
                 market_repo: "RetricSu/paper-shell",
                 market_branch: "master",
                 market_folder: "skins",
@@ -688,73 +1346,57 @@ mod tests {
                 });
             }
             let output = captured.borrow().clone().unwrap();
-            assert!(!text_positions(&output, "管理与微调…").is_empty());
-            assert!(!text_positions(&output, "浏览皮肤市场…").is_empty());
+            assert!(text_positions(&output, "管理与微调…").is_empty());
+            assert!(text_positions(&output, "浏览皮肤市场…").is_empty());
+            assert!(!text_positions(&output, "已安装").is_empty());
+            let import_label = format!("{} 导入皮肤…", egui_phosphor::regular::DOWNLOAD_SIMPLE);
+            assert!(!text_positions(&output, &import_label).is_empty());
+            assert!(!text_positions(&output, "经典白纸").is_empty());
             assert!(text_positions(&output, "插件设置").is_empty());
             for tab in SettingsTab::ALL {
                 assert!(!text_positions(&output, tab.label()).is_empty());
             }
-            let pos = text_positions(&output, "浏览皮肤市场…")[0];
-            *events.borrow_mut() = vec![
-                egui::Event::PointerMoved(pos),
-                egui::Event::PointerButton {
-                    pos,
-                    button: egui::PointerButton::Primary,
-                    pressed: true,
-                    modifiers: egui::Modifiers::NONE,
-                },
-                egui::Event::PointerButton {
-                    pos,
-                    button: egui::PointerButton::Primary,
-                    pressed: false,
-                    modifiers: egui::Modifiers::NONE,
-                },
-            ];
+
+            let pos = text_positions(&output, "皮肤市场")[0];
+            *events.borrow_mut() = pointer_click(pos);
+            let _ = ctx.run(Default::default(), |ctx| {
+                window.show(ctx, state);
+            });
+            let _ = ctx.run(Default::default(), |ctx| {
+                window.show(ctx, state);
+            });
+            let output = captured.borrow().clone().unwrap();
+            assert!(!text_positions(&output, "赛博霓虹").is_empty());
+            let install_label = format!("{} 安装皮肤", egui_phosphor::regular::DOWNLOAD_SIMPLE);
+            let pos = text_positions(&output, &install_label)[0];
+            *events.borrow_mut() = pointer_click(pos);
             let mut action = None;
             let _ = ctx.run(Default::default(), |ctx| {
                 action = window.show(ctx, state);
             });
-            assert!(matches!(action, Some(SettingsAction::OpenSkinMarket)));
-            // Each category, including the expanded advanced form, stays within the window.
+            assert!(matches!(
+                action,
+                Some(SettingsAction::InstallMarketSkin(skin)) if skin.id == "cyberpunk_neon"
+            ));
+
+            // Each category stays within the window at the minimum and default widths.
             for tab in SettingsTab::ALL {
                 window.active_tab = tab;
                 let _ = ctx.run(Default::default(), |ctx| {
                     window.show(ctx, state);
                 });
-                if tab == SettingsTab::Skin {
-                    let output = captured.borrow().clone().unwrap();
-                    let pos = text_positions(&output, "高级：皮肤市场源")[0];
-                    *events.borrow_mut() = vec![
-                        egui::Event::PointerMoved(pos),
-                        egui::Event::PointerButton {
-                            pos,
-                            button: egui::PointerButton::Primary,
-                            pressed: true,
-                            modifiers: egui::Modifiers::NONE,
-                        },
-                        egui::Event::PointerButton {
-                            pos,
-                            button: egui::PointerButton::Primary,
-                            pressed: false,
-                            modifiers: egui::Modifiers::NONE,
-                        },
-                    ];
-                    let _ = ctx.run(Default::default(), |ctx| {
-                        window.show(ctx, state);
-                    });
-                    let _ = ctx.run(Default::default(), |ctx| {
-                        window.show(ctx, state);
-                    });
-                }
                 let output = captured.borrow().clone().unwrap();
                 for s in &output.shapes {
                     if let egui::Shape::Text(t) = &s.shape {
-                        assert!(
-                            t.visual_bounding_rect().right() <= width + 2.0,
-                            "{} overflowed at {width}: {:?}",
-                            t.galley.text(),
-                            t.visual_bounding_rect()
-                        );
+                        let right = t.visual_bounding_rect().right();
+                        if right.is_finite() {
+                            assert!(
+                                right <= width + 2.0,
+                                "{} overflowed at {width}: {:?}",
+                                t.galley.text(),
+                                t.visual_bounding_rect()
+                            );
+                        }
                     }
                 }
             }

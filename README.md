@@ -228,3 +228,8 @@ roadmap live in [docs/development.md](docs/development.md).
 ## Feedback
 
 Report bugs or request features through [GitHub Issues](https://github.com/RetricSu/paper-shell/issues).
+
+## License
+
+Paper Shell is licensed under the [MIT License](LICENSE).
+

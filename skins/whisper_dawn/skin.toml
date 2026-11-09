@@ -1,0 +1,40 @@
+id = "whisper_dawn"
+name = "侧耳倾听 · 破晓晨曦"
+description = "《侧耳倾听》(1995) 官方剧照，远山薄雾与破晓晨光。背景以 18% 柔光呈现，文字清晰浮现，内边距与排版完全贴合经典白纸。"
+author = "Paper Shell · 图片 © 1995 Aoi Hiiragi/Shueisha - Studio Ghibli - NH"
+version = "1.0.0"
+
+[typography]
+font_family = "Default"
+font_size = 14.0
+line_spacing = 1.5
+font_color = "#182026"
+format_use_tabs = false
+
+[spacing]
+window_margin = 12.0
+editor_padding_left = 2.0
+editor_padding_right = 6.0
+editor_padding_top = 6.0
+editor_padding_bottom = 6.0
+item_spacing_x = 8.0
+item_spacing_y = 8.0
+
+[colors]
+dark_mode = false
+background_color = "#F6F4ED"
+editor_background_color = "#F6F4ED"
+sidebar_background_color = "#EBE8DD"
+titlebar_background_color = "#EBE8DD"
+text_color = "#182026"
+selection_color = "#D1E0E8"
+accent_color = "#C2783E"
+
+[effects]
+background_image = "background.jpg"
+background_image_opacity = 0.18
+background_image_fit = "cover"
+window_opacity = 1.0
+editor_opacity = 1.0
+corner_radius = 2.0
+shadow = false

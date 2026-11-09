@@ -611,6 +611,64 @@ mod tests {
     }
 
     #[test]
+    fn whisper_dawn_skin_preserves_classic_paper_spacing_and_loads_background() {
+        let source = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("skins/whisper_dawn/skin.toml");
+        let destination = tempfile::tempdir().unwrap();
+        let skin = crate::skin::Skin::import_from_file(&source, destination.path()).unwrap();
+        assert_eq!(skin.id, "whisper_dawn");
+
+        // Verify padding matches classic paper defaults
+        let classic = crate::skin::Skin::classic_paper();
+        assert_eq!(
+            skin.spacing.editor_padding_left,
+            classic.spacing.editor_padding_left
+        );
+        assert_eq!(
+            skin.spacing.editor_padding_right,
+            classic.spacing.editor_padding_right
+        );
+        assert_eq!(
+            skin.spacing.editor_padding_top,
+            classic.spacing.editor_padding_top
+        );
+        assert_eq!(
+            skin.spacing.editor_padding_bottom,
+            classic.spacing.editor_padding_bottom
+        );
+
+        // Verify typography matches classic paper defaults
+        assert_eq!(skin.typography.font_size, classic.typography.font_size);
+        assert_eq!(
+            skin.typography.line_spacing,
+            classic.typography.line_spacing
+        );
+
+        // Verify subtle background opacity
+        assert_eq!(skin.effects.background_image_opacity, 0.18);
+
+        // Verify background texture loads cleanly
+        let image_path = skin.dir.as_ref().unwrap().join("background.jpg");
+        let bytes = std::fs::read(image_path).unwrap();
+        let image = image::load_from_memory(&bytes).unwrap();
+        assert_eq!((image.width(), image.height()), (1920, 1038));
+
+        let mut renderer = crate::skin::SkinRenderer::new();
+        let ctx = egui::Context::default();
+        assert!(renderer.get_or_load_texture(&ctx, &skin).is_some());
+
+        // Verify package export and re-import roundtrip
+        let package = destination.path().join("whisper_dawn.paperskin");
+        skin.export_to_file(&package).unwrap();
+        let reimported = tempfile::tempdir().unwrap();
+        let restored = crate::skin::Skin::import_from_file(&package, reimported.path()).unwrap();
+        assert!(renderer.get_or_load_texture(&ctx, &restored).is_some());
+        assert_eq!(
+            std::fs::read(restored.dir.unwrap().join("background.jpg")).unwrap(),
+            bytes
+        );
+    }
+
+    #[test]
     fn repository_skins_folder_contains_valid_skins() {
         let repo_skins = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("skins");
         assert!(repo_skins.is_dir(), "skins folder must exist in repo");
@@ -626,6 +684,8 @@ mod tests {
             "deep_sea",
             "cherry_blossom",
             "summer_platform",
+            "megazone_ride",
+            "whisper_dawn",
         ] {
             let skin_toml = repo_skins.join(skin_id).join("skin.toml");
             assert!(skin_toml.is_file(), "skin file {:?} must exist", skin_toml);

@@ -339,7 +339,7 @@
     /* Showcase Window */
     .showcase-wrapper {
       margin: 0 auto;
-      max-width: 980px;
+      max-width: 1020px;
       border-radius: var(--radius-lg);
       background: var(--bg-card);
       border: 1px solid var(--border-color);
@@ -350,71 +350,90 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 12px 18px;
+      padding: 14px 24px;
       background: #fbfaf6;
       border-bottom: 1px solid var(--border-color);
     }
-    .window-dots {
+    .showcase-title-hint {
       display: flex;
-      gap: 6px;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      color: var(--ink-secondary);
+      font-weight: 500;
     }
-    .window-dots span {
-      width: 10px;
-      height: 10px;
+    .showcase-title-hint .dot {
+      width: 7px;
+      height: 7px;
       border-radius: 50%;
-      background: #e2dfd4;
+      background: var(--brand);
     }
     .showcase-tabs {
       display: flex;
-      gap: 4px;
-      background: #eceae1;
-      padding: 3px;
+      gap: 5px;
+      background: #eae7dd;
+      padding: 4px;
       border-radius: var(--radius-sm);
     }
     .tab-btn {
       border: none;
       background: transparent;
-      padding: 6px 14px;
+      padding: 6px 16px;
       font-size: 13px;
       color: var(--ink-secondary);
       border-radius: 4px;
       cursor: pointer;
       font-family: inherit;
       transition: all 0.12s ease;
+      font-weight: 500;
     }
     .tab-btn.active {
       background: #ffffff;
-      color: var(--ink-primary);
-      font-weight: 500;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+      color: var(--brand);
+      font-weight: 600;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
     }
     .showcase-body {
-      background: #141416;
+      background: #eae7dc;
+      background-image: radial-gradient(#dcd8cb 1px, transparent 1px);
+      background-size: 20px 20px;
       position: relative;
       display: flex;
       align-items: center;
       justify-content: center;
-      min-height: 480px;
+      padding: 44px 48px;
     }
-    .showcase-body img {
+    .screenshot-frame {
+      width: 100%;
+      max-width: 900px;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 24px 56px rgba(28, 25, 20, 0.18), 0 4px 16px rgba(28, 25, 20, 0.08);
+      border: 1px solid rgba(0, 0, 0, 0.1);
+      background: #ffffff;
+      line-height: 0;
+    }
+    .screenshot-frame img {
       width: 100%;
       height: auto;
       display: block;
-      transition: opacity 0.25s ease;
+      transition: opacity 0.22s ease;
     }
     .showcase-caption {
-      padding: 14px 20px;
+      padding: 16px 24px;
       background: var(--bg-card);
-      border-top: 1px solid var(--border-light);
+      border-top: 1px solid var(--border-color);
       font-size: 14px;
       color: var(--ink-secondary);
       display: flex;
       align-items: center;
       justify-content: space-between;
+      gap: 16px;
     }
     .showcase-caption span.title {
-      font-weight: 500;
+      font-weight: 600;
       color: var(--ink-primary);
+      white-space: nowrap;
     }
 
     /* Core Pillars (4 Cards) */
@@ -803,6 +822,8 @@
       .features-grid { grid-template-columns: 1fr; }
       .showcase-header { flex-direction: column; gap: 12px; align-items: flex-start; }
       .showcase-tabs { width: 100%; overflow-x: auto; }
+      .showcase-body { padding: 20px 16px; }
+      .showcase-caption { flex-direction: column; align-items: flex-start; gap: 6px; }
       header.site-header nav.header-nav { display: none; }
       .quick-download-pills { flex-direction: column; align-items: center; }
     }
@@ -909,10 +930,9 @@
       <!-- Showcase Viewer -->
       <div id="showcase" class="showcase-wrapper">
         <div class="showcase-header">
-          <div class="window-dots">
-            <span></span>
-            <span></span>
-            <span></span>
+          <div class="showcase-title-hint">
+            <span class="dot"></span>
+            <span>界面体验 · 随时随心切换</span>
           </div>
           <div class="showcase-tabs">
             <button class="tab-btn active" data-img="assets/screenshots/classic-paper.png" data-title="经典白纸 (Classic Paper)" data-desc="默认极简编辑界面，只保留纯白稿纸、舒适边距与纯粹字句。">经典白纸</button>
@@ -922,7 +942,9 @@
           </div>
         </div>
         <div class="showcase-body">
-          <img id="showcase-img" src="assets/screenshots/classic-paper.png" alt="Paper Shell 界面预览">
+          <div class="screenshot-frame">
+            <img id="showcase-img" src="assets/screenshots/classic-paper.png" alt="Paper Shell 界面预览">
+          </div>
         </div>
         <div class="showcase-caption">
           <span id="caption-title" class="title">经典白纸 (Classic Paper)</span>

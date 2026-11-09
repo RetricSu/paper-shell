@@ -65,8 +65,6 @@
 - 🌐 **[访问官方网站](https://retricsu.github.io/paper-shell/)**：在线体验产品画廊与平台自动检测下载。
 - 💡 **[问题反馈与建议](https://github.com/RetricSu/paper-shell/issues)**：欢迎提交 Issue 或 Pull Request。
 
----
+## 📄 开源许可 (License)
 
-<div align="center">
-  <sub>Paper Shell is open source software released under the <a href="LICENSE">MIT License</a>.</sub>
-</div>
+Paper Shell is open source software licensed under the [MIT License](LICENSE).

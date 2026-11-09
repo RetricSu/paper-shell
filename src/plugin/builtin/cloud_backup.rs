@@ -23,8 +23,10 @@ use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use std::time::Duration;
 use url::Url;
+use zeroize::Zeroizing;
 
-const PBKDF2_ROUNDS: u32 = 100_000;
+const LEGACY_PBKDF2_ROUNDS: u32 = 100_000;
+const PBKDF2_ROUNDS: u32 = 600_000;
 const SALT_LEN: usize = 16;
 const NONCE_LEN: usize = 12;
 
@@ -52,26 +54,36 @@ const PATH_SEGMENT_ENCODE_SET: &AsciiSet = &CONTROLS
     .add(b'|');
 
 /// Persistent configuration for the Cloud Backup plugin.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CloudBackupConfig {
     /// Server URL (e.g. WebDAV endpoint: https://example.com/dav/papershell/ or http://192.168.1.100:8080/backups/)
     pub server_url: String,
     /// Username for HTTP Basic Auth (optional)
     pub username: String,
-    /// Password or Bearer Token (optional)
-    pub password: String,
+    /// Session-only password or Bearer Token. Ignore legacy plaintext on disk.
+    #[serde(skip)]
+    pub password: Zeroizing<String>,
     /// Remote filename template (e.g. "{stem}_{doc_id}.backup" or "{filename}.backup")
     pub remote_filename: String,
     /// Whether end-to-end encryption is enabled
     pub enable_encryption: bool,
-    /// Encryption password / passphrase, saved in the local app config only.
-    /// Remote backups serialize BackupEnvelope instead and never include this field.
-    pub encryption_password: String,
+    /// Session-only passphrase, never serialized or loaded from legacy config.
+    #[serde(skip)]
+    pub encryption_password: Zeroizing<String>,
     /// Last backup timestamp (for UI display)
     pub last_backup_time: Option<String>,
     /// Last backup status message
     pub last_backup_status: Option<String>,
+}
+
+impl std::fmt::Debug for CloudBackupConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CloudBackupConfig")
+            .field("credentials", &"[REDACTED]")
+            .field("enable_encryption", &self.enable_encryption)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Default for CloudBackupConfig {
@@ -79,10 +91,10 @@ impl Default for CloudBackupConfig {
         Self {
             server_url: String::new(),
             username: String::new(),
-            password: String::new(),
+            password: Zeroizing::new(String::new()),
             remote_filename: "{stem}_{doc_id}.backup".to_string(),
             enable_encryption: false,
-            encryption_password: String::new(),
+            encryption_password: Zeroizing::new(String::new()),
             last_backup_time: None,
             last_backup_status: None,
         }
@@ -94,6 +106,7 @@ impl Default for CloudBackupConfig {
 pub struct BackupPayload {
     pub version: u32,
     pub doc_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_path: Option<String>,
     pub filename: String,
     pub content: String,
@@ -250,8 +263,7 @@ pub fn resolve_target_url(
         .replace("{stem}", stem)
         .replace("{filename}", filename);
 
-    let mut base_url = Url::parse(server_url)
-        .map_err(|e| PluginError::Config(format!("无效的服务器 URL: {}", e)))?;
+    let mut base_url = validate_endpoint(server_url)?;
 
     if !base_url.path().ends_with('/') {
         let new_path = format!("{}/", base_url.path());
@@ -264,6 +276,37 @@ pub fn resolve_target_url(
         .map_err(|e| PluginError::Config(format!("无法构建目标 URL: {}", e)))?;
 
     Ok(target.to_string())
+}
+
+/// Only literal loopback hosts are exempt; private LAN addresses still use plaintext.
+pub fn insecure_http_endpoint(endpoint: &str) -> bool {
+    Url::parse(endpoint.trim()).is_ok_and(|url| {
+        url.scheme() == "http"
+            && !match url.host() {
+                Some(url::Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),
+                Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+                Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+                None => false,
+            }
+    })
+}
+
+fn validate_endpoint(endpoint: &str) -> Result<Url, PluginError> {
+    let url = Url::parse(endpoint.trim())
+        .map_err(|_| PluginError::Config("无效的服务器 URL".to_string()))?;
+    if !matches!(url.scheme(), "http" | "https")
+        || url.host().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(PluginError::Config(
+            "请使用 HTTP(S) 目录地址，不含用户名、密码、查询参数或片段；凭据请填写在密码栏。"
+                .to_string(),
+        ));
+    }
+    Ok(url)
 }
 
 /// Encrypts a payload into a `BackupEnvelope` using the specified password.
@@ -285,14 +328,16 @@ pub fn encrypt_payload(
     getrandom::fill(&mut nonce_bytes)
         .map_err(|e| PluginError::Execution(format!("生成随机 Nonce 失败: {}", e)))?;
 
-    let mut key = [0u8; 32];
-    pbkdf2_hmac::<Sha256>(password.as_bytes(), &salt, PBKDF2_ROUNDS, &mut key);
+    let mut key = Zeroizing::new([0u8; 32]);
+    pbkdf2_hmac::<Sha256>(password.as_bytes(), &salt, PBKDF2_ROUNDS, &mut *key);
 
-    let cipher = Aes256Gcm::new_from_slice(&key)
+    let cipher = Aes256Gcm::new_from_slice(&*key)
         .map_err(|e| PluginError::Execution(format!("初始化 AES-GCM 密码器失败: {}", e)))?;
 
-    let plaintext = serde_json::to_vec(payload)
-        .map_err(|e| PluginError::Execution(format!("序列化备份数据失败: {}", e)))?;
+    let plaintext = Zeroizing::new(
+        serde_json::to_vec(payload)
+            .map_err(|e| PluginError::Execution(format!("序列化备份数据失败: {}", e)))?,
+    );
 
     let nonce = Nonce::try_from(nonce_bytes.as_slice())
         .map_err(|e| PluginError::Execution(format!("构造 Nonce 失败: {}", e)))?;
@@ -301,7 +346,7 @@ pub fn encrypt_payload(
         .map_err(|e| PluginError::Execution(format!("加密数据失败: {}", e)))?;
 
     Ok(BackupEnvelope {
-        version: 1,
+        version: 2,
         doc_id: payload.doc_id.clone(),
         encrypted: true,
         salt: Some(BASE64.encode(salt)),
@@ -316,7 +361,7 @@ pub fn decrypt_envelope(
     envelope: &BackupEnvelope,
     password: &str,
 ) -> Result<BackupPayload, PluginError> {
-    if envelope.version != 1 {
+    if !matches!(envelope.version, 1 | 2) {
         return Err(PluginError::Execution(format!(
             "不支持的备份信封版本: {}",
             envelope.version
@@ -379,17 +424,25 @@ pub fn decrypt_envelope(
         )));
     }
 
-    let mut key = [0u8; 32];
-    pbkdf2_hmac::<Sha256>(password.as_bytes(), &salt, PBKDF2_ROUNDS, &mut key);
+    let mut key = Zeroizing::new([0u8; 32]);
+    if salt.len() != SALT_LEN {
+        return Err(PluginError::Execution("盐值长度非法".to_string()));
+    }
+    let rounds = if envelope.version == 1 {
+        LEGACY_PBKDF2_ROUNDS
+    } else {
+        PBKDF2_ROUNDS
+    };
+    pbkdf2_hmac::<Sha256>(password.as_bytes(), &salt, rounds, &mut *key);
 
-    let cipher = Aes256Gcm::new_from_slice(&key)
+    let cipher = Aes256Gcm::new_from_slice(&*key)
         .map_err(|e| PluginError::Execution(format!("初始化 AES-GCM 密码器失败: {}", e)))?;
 
     let nonce = Nonce::try_from(nonce_bytes.as_slice())
         .map_err(|e| PluginError::Execution(format!("构造 Nonce 失败: {}", e)))?;
-    let decrypted = cipher.decrypt(&nonce, ciphertext.as_ref()).map_err(|_| {
+    let decrypted = Zeroizing::new(cipher.decrypt(&nonce, ciphertext.as_ref()).map_err(|_| {
         PluginError::Execution("解密失败：密码错误或云端备份数据已损坏".to_string())
-    })?;
+    })?);
 
     let payload: BackupPayload = serde_json::from_slice(&decrypted)
         .map_err(|e| PluginError::Execution(format!("反序列化解密数据失败: {}", e)))?;
@@ -413,6 +466,7 @@ pub fn decrypt_envelope(
 /// Creates a new HTTP agent with timeout settings.
 fn build_http_agent() -> ureq::Agent {
     let config = ureq::config::Config::builder()
+        .max_redirects(0)
         .timeout_global(Some(Duration::from_secs(25)))
         .build();
     ureq::Agent::new_with_config(config)
@@ -425,12 +479,11 @@ fn apply_auth<B>(
     password: &str,
 ) -> ureq::RequestBuilder<B> {
     let username = username.trim();
-    let password = password.trim();
 
     if !username.is_empty() {
-        let auth_str = format!("{}:{}", username, password);
-        let encoded = BASE64.encode(auth_str);
-        req = req.header("Authorization", format!("Basic {}", encoded));
+        let auth_str = Zeroizing::new(format!("{}:{}", username, password));
+        let encoded = Zeroizing::new(BASE64.encode(auth_str.as_bytes()));
+        req = req.header("Authorization", format!("Basic {}", encoded.as_str()));
     } else if !password.is_empty() {
         req = req.header("Authorization", format!("Bearer {}", password));
     }
@@ -444,6 +497,7 @@ pub fn test_connection(config: &CloudBackupConfig) -> Result<String, PluginError
         return Err(PluginError::Config("云端服务器地址为空".to_string()));
     }
 
+    validate_endpoint(url)?;
     let agent = build_http_agent();
     let req = agent.head(url);
     let req = apply_auth(req, &config.username, &config.password);
@@ -481,16 +535,32 @@ pub fn upload_backup(
 ) -> Result<String, PluginError> {
     let agent = build_http_agent();
 
-    // Never silently overwrite a foreign or unrecognized remote object.
-    let check_req = agent.get(target_url);
-    let check_req = apply_auth(check_req, &config.username, &config.password);
-    if let Ok(mut resp) = check_req.call()
-        && resp.status().is_success()
-    {
-        let body_str = resp
-            .body_mut()
-            .read_to_string()
-            .map_err(|e| PluginError::Execution(format!("读取已有云端备份失败: {}", e)))?;
+    validate_endpoint(target_url)?;
+    // A conditional PUT closes the GET/PUT race on servers implementing HTTP preconditions.
+    // Fail closed for unavailable objects and for objects without a strong validator.
+    let check_req = apply_auth(agent.get(target_url), &config.username, &config.password);
+    let mut existing = match check_req.call() {
+        Ok(resp) if resp.status().is_success() => Some(resp),
+        Err(ureq::Error::StatusCode(404)) => None,
+        _ => {
+            return Err(PluginError::Execution(
+                "无法安全检查云端目标，已拒绝覆盖".to_string(),
+            ));
+        }
+    };
+    let mut etag = None;
+    if let Some(resp) = existing.as_mut() {
+        etag = resp
+            .headers()
+            .get("ETag")
+            .and_then(|value| value.to_str().ok())
+            .filter(|value| value.starts_with('"') && value.ends_with('"') && value.len() >= 2)
+            .map(str::to_owned);
+        let body_str = Zeroizing::new(
+            resp.body_mut()
+                .read_to_string()
+                .map_err(|e| PluginError::Execution(format!("读取已有云端备份失败: {}", e)))?,
+        );
         let existing_envelope: BackupEnvelope = serde_json::from_str(&body_str).map_err(|_| {
             PluginError::Execution(
                 "覆盖冲突警告：目标地址已存在无法识别的内容，已拒绝覆盖。请更换远程文件名。"
@@ -503,6 +573,9 @@ pub fn upload_backup(
                 existing_envelope.doc_id
             )));
         }
+        if etag.is_none() {
+            return Err(PluginError::Execution("服务器未提供强 ETag，无法安全覆盖已有备份；请更换文件名或使用支持条件请求的 WebDAV 服务。".to_string()));
+        }
     }
 
     let word_count = content.chars().count();
@@ -511,7 +584,8 @@ pub fn upload_backup(
     let payload = BackupPayload {
         version: 1,
         doc_id: identity.doc_id.clone(),
-        source_path: identity.source_path.clone(),
+        // Absolute paths are local identity inputs, never remote metadata.
+        source_path: None,
         filename: identity.filename.clone(),
         content: content.to_string(),
         timestamp: timestamp.clone(),
@@ -532,16 +606,26 @@ pub fn upload_backup(
         }
     };
 
-    let body_bytes = serde_json::to_vec_pretty(&envelope)
-        .map_err(|e| PluginError::Execution(format!("序列化备份信封失败: {}", e)))?;
+    let body_bytes = Zeroizing::new(
+        serde_json::to_vec_pretty(&envelope)
+            .map_err(|e| PluginError::Execution(format!("序列化备份信封失败: {}", e)))?,
+    );
 
     let req = agent.put(target_url);
     let req = apply_auth(req, &config.username, &config.password);
     let req = req.header("Content-Type", "application/json");
+    let req = if let Some(etag) = etag {
+        req.header("If-Match", etag)
+    } else {
+        req.header("If-None-Match", "*")
+    };
 
-    let response = req
-        .send(&body_bytes)
-        .map_err(|e| PluginError::Execution(format!("上传到云端失败 ({}): {}", target_url, e)))?;
+    let response = req.send(body_bytes.as_slice()).map_err(|e| match e {
+        ureq::Error::StatusCode(412) => PluginError::Execution(
+            "覆盖冲突：云端备份在检查后已变化，请重新拉取或更换远程文件名。".to_string(),
+        ),
+        other => PluginError::Execution(format!("上传到云端失败 ({}): {}", target_url, other)),
+    })?;
 
     let status = response.status();
     if status.is_success() {
@@ -570,6 +654,7 @@ pub fn download_backup(
     config: &CloudBackupConfig,
     target_url: &str,
 ) -> Result<BackupPayload, PluginError> {
+    validate_endpoint(target_url)?;
     let agent = build_http_agent();
     let req = agent.get(target_url);
     let req = apply_auth(req, &config.username, &config.password);
@@ -586,10 +671,12 @@ pub fn download_backup(
         )));
     }
 
-    let body_str = response
-        .body_mut()
-        .read_to_string()
-        .map_err(|e| PluginError::Execution(format!("读取云端响应数据失败: {}", e)))?;
+    let body_str = Zeroizing::new(
+        response
+            .body_mut()
+            .read_to_string()
+            .map_err(|e| PluginError::Execution(format!("读取云端响应数据失败: {}", e)))?,
+    );
 
     // Strictly validate Paper Shell BackupEnvelope
     let envelope: BackupEnvelope = serde_json::from_str(&body_str).map_err(|e| {
@@ -606,6 +693,281 @@ pub fn download_backup(
 mod tests {
     use super::*;
     use std::path::Path;
+
+    #[test]
+    fn credentials_are_session_only_and_debug_is_redacted() {
+        let config = CloudBackupConfig {
+            password: Zeroizing::new("webdav-secret".into()),
+            encryption_password: Zeroizing::new("master-secret".into()),
+            ..Default::default()
+        };
+        for encoded in [
+            toml::to_string(&config).unwrap(),
+            serde_json::to_string(&config).unwrap(),
+            format!("{config:?}"),
+        ] {
+            assert!(!encoded.contains("webdav-secret"));
+            assert!(!encoded.contains("master-secret"));
+        }
+        let legacy: CloudBackupConfig = toml::from_str(
+            "password = 'webdav-secret'\nencryption_password = 'master-secret'\nenable_encryption = true"
+        ).unwrap();
+        assert!(legacy.password.is_empty());
+        assert!(legacy.encryption_password.is_empty());
+        assert!(legacy.enable_encryption);
+        let saved = toml::to_string(&legacy).unwrap();
+        assert!(!saved.contains("password"));
+    }
+
+    #[test]
+    fn transport_warning_and_endpoint_validation() {
+        for endpoint in [
+            "http://example.com/dav",
+            "http://192.168.1.1/",
+            "http://localhost.evil/",
+            "http://[::ffff:192.168.1.1]/",
+        ] {
+            assert!(insecure_http_endpoint(endpoint), "{endpoint}");
+        }
+        for endpoint in [
+            "https://example.com/",
+            "http://localhost/",
+            "http://127.0.0.2/",
+            "http://[::1]/",
+        ] {
+            assert!(!insecure_http_endpoint(endpoint), "{endpoint}");
+            assert!(validate_endpoint(endpoint).is_ok());
+        }
+        for endpoint in [
+            "ftp://example.com/",
+            "https://user:secret@example.com/",
+            "https://example.com/?token=secret",
+            "https://example.com/#secret",
+        ] {
+            assert!(validate_endpoint(endpoint).is_err());
+        }
+    }
+
+    #[test]
+    fn legacy_v1_encrypted_backup_remains_readable() {
+        // Construct the original v1 format independently of the v2 writer.
+        let payload = BackupPayload {
+            version: 1,
+            doc_id: "legacy".into(),
+            source_path: Some("/Users/old/doc.md".into()),
+            filename: "doc.md".into(),
+            content: "old content".into(),
+            timestamp: "old".into(),
+            word_count: 11,
+        };
+        let salt = [7u8; SALT_LEN];
+        let nonce_bytes = [9u8; NONCE_LEN];
+        let mut key = Zeroizing::new([0u8; 32]);
+        pbkdf2_hmac::<Sha256>(b"old password", &salt, 100_000, &mut *key);
+        let cipher = Aes256Gcm::new_from_slice(&*key).unwrap();
+        let nonce = Nonce::try_from(nonce_bytes.as_slice()).unwrap();
+        let ciphertext = cipher
+            .encrypt(&nonce, serde_json::to_vec(&payload).unwrap().as_slice())
+            .unwrap();
+        let envelope = BackupEnvelope {
+            version: 1,
+            doc_id: payload.doc_id.clone(),
+            encrypted: true,
+            salt: Some(BASE64.encode(salt)),
+            nonce: Some(BASE64.encode(nonce_bytes)),
+            ciphertext: Some(BASE64.encode(ciphertext)),
+            payload: None,
+        };
+        assert_eq!(
+            decrypt_envelope(&envelope, "old password").unwrap(),
+            payload
+        );
+    }
+
+    // A small HTTP fixture exercising actual GET and conditional PUT wire behavior.
+    fn mock_upload(
+        get_status: &str,
+        get_body: &str,
+        etag: Option<&str>,
+        expected_condition: Option<&str>,
+        put_status: &str,
+    ) -> (String, std::thread::JoinHandle<Option<BackupEnvelope>>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/backup", listener.local_addr().unwrap());
+        let get_response = format!(
+            "HTTP/1.1 {get_status}\r\nContent-Length: {}\r\nConnection: close\r\n{}\r\n{get_body}",
+            get_body.len(),
+            etag.map(|tag| format!("ETag: {tag}\r\n"))
+                .unwrap_or_default()
+        );
+        let expected_condition = expected_condition.map(str::to_owned);
+        let put_status = put_status.to_string();
+        let server = std::thread::spawn(move || {
+            let read_headers = |stream: &mut std::net::TcpStream| {
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(10)))
+                    .unwrap();
+                let mut headers = Vec::new();
+                while !headers.ends_with(b"\r\n\r\n") {
+                    let mut byte = [0];
+                    stream.read_exact(&mut byte).unwrap();
+                    headers.push(byte[0]);
+                }
+                String::from_utf8(headers).unwrap()
+            };
+            let (mut stream, _) = listener.accept().unwrap();
+            assert!(read_headers(&mut stream).starts_with("GET "));
+            stream.write_all(get_response.as_bytes()).unwrap();
+            drop(stream);
+            let condition = expected_condition?;
+            let (mut stream, _) = listener.accept().unwrap();
+            let headers = read_headers(&mut stream).to_ascii_lowercase();
+            assert!(headers.starts_with("put "));
+            assert!(
+                headers.contains(&condition.to_ascii_lowercase()),
+                "{headers}"
+            );
+            let length: usize = headers
+                .lines()
+                .find_map(|line| line.strip_prefix("content-length:"))
+                .unwrap()
+                .trim()
+                .parse()
+                .unwrap();
+            let mut body = vec![0; length];
+            stream.read_exact(&mut body).unwrap();
+            stream
+                .write_all(
+                    format!(
+                        "HTTP/1.1 {put_status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    )
+                    .as_bytes(),
+                )
+                .unwrap();
+            Some(serde_json::from_slice(&body).unwrap())
+        });
+        (url, server)
+    }
+
+    #[test]
+    fn conditional_create_redacts_source_path() {
+        let (url, server) = mock_upload(
+            "404 Not Found",
+            "",
+            None,
+            Some("if-none-match: *"),
+            "201 Created",
+        );
+        let identity = DocumentIdentity::new(
+            Some(Path::new("/Users/private-name/private-folder/doc.md")),
+            "draft",
+        );
+        upload_backup(
+            &CloudBackupConfig::default(),
+            &url,
+            &identity,
+            "plain document",
+        )
+        .unwrap();
+        let envelope = server.join().unwrap().unwrap();
+        let json = serde_json::to_string(&envelope).unwrap();
+        assert!(!json.contains("private-name"));
+        assert!(!json.contains("private-folder"));
+        assert!(!json.contains("source_path"));
+        assert_eq!(envelope.payload.unwrap().content, "plain document");
+    }
+
+    #[test]
+    fn conditional_put_rejects_racing_create_and_update() {
+        let identity = DocumentIdentity::new(None, "test");
+        let existing = serde_json::to_string(&BackupEnvelope {
+            version: 1,
+            doc_id: identity.doc_id.clone(),
+            encrypted: false,
+            salt: None,
+            nonce: None,
+            ciphertext: None,
+            payload: None,
+        })
+        .unwrap();
+        for (status, body, etag, condition) in [
+            ("404 Not Found", "", None, "if-none-match: *"),
+            (
+                "200 OK",
+                existing.as_str(),
+                Some("\"revision-1\""),
+                "if-match: \"revision-1\"",
+            ),
+        ] {
+            let (url, server) = mock_upload(
+                status,
+                body,
+                etag,
+                Some(condition),
+                "412 Precondition Failed",
+            );
+            assert!(
+                upload_backup(&CloudBackupConfig::default(), &url, &identity, "content").is_err()
+            );
+            assert!(server.join().unwrap().is_some());
+        }
+    }
+
+    #[test]
+    fn conditional_update_succeeds_with_strong_etag() {
+        let identity = DocumentIdentity::new(None, "update");
+        let existing = serde_json::to_string(&BackupEnvelope {
+            version: 1,
+            doc_id: identity.doc_id.clone(),
+            encrypted: false,
+            salt: None,
+            nonce: None,
+            ciphertext: None,
+            payload: None,
+        })
+        .unwrap();
+        let (url, server) = mock_upload(
+            "200 OK",
+            &existing,
+            Some("\"revision-1\""),
+            Some("if-match: \"revision-1\""),
+            "200 OK",
+        );
+        upload_backup(&CloudBackupConfig::default(), &url, &identity, "updated").unwrap();
+        assert_eq!(
+            server.join().unwrap().unwrap().payload.unwrap().content,
+            "updated"
+        );
+    }
+
+    #[test]
+    fn upload_fails_closed_without_strong_validator_or_successful_check() {
+        let identity = DocumentIdentity::new(None, "test");
+        let existing = serde_json::to_string(&BackupEnvelope {
+            version: 1,
+            doc_id: identity.doc_id.clone(),
+            encrypted: false,
+            salt: None,
+            nonce: None,
+            ciphertext: None,
+            payload: None,
+        })
+        .unwrap();
+        for (status, etag) in [
+            ("200 OK", None),
+            ("200 OK", Some("W/\"weak\"")),
+            ("302 Found", None),
+            ("403 Forbidden", None),
+            ("500 Internal Server Error", None),
+        ] {
+            let (url, server) = mock_upload(status, &existing, etag, None, "200 OK");
+            assert!(
+                upload_backup(&CloudBackupConfig::default(), &url, &identity, "content").is_err()
+            );
+            assert!(server.join().unwrap().is_none());
+        }
+    }
 
     #[test]
     fn document_identity_separates_same_names_and_unsaved_drafts() {
@@ -637,6 +999,7 @@ mod tests {
         let password = "super_secret_password_123!";
         let envelope = encrypt_payload(&payload, password).unwrap();
         assert!(envelope.encrypted);
+        assert_eq!(envelope.version, 2);
         assert!(envelope.salt.is_some());
         assert!(envelope.nonce.is_some());
         assert!(envelope.ciphertext.is_some());
@@ -886,10 +1249,10 @@ mod tests {
         let config = CloudBackupConfig {
             server_url: format!("http://127.0.0.1:{}/", port),
             username: "testuser".to_string(),
-            password: "testpass".to_string(),
+            password: Zeroizing::new("testpass".to_string()),
             remote_filename: "backup.json".to_string(),
             enable_encryption: true,
-            encryption_password: "my_password".to_string(),
+            encryption_password: Zeroizing::new("my_password".to_string()),
             last_backup_time: None,
             last_backup_status: None,
         };
@@ -917,14 +1280,16 @@ mod tests {
         assert!(
             !String::from_utf8(body)
                 .unwrap()
-                .contains(&config.encryption_password)
+                .contains(config.encryption_password.as_str())
         );
 
-        // An existing remote backup remains readable after saving and reloading
-        // the local password, without uploading or re-encrypting it again.
+        // Session secrets must be re-entered after reloading settings.
         let saved = toml::to_string(&config).unwrap();
-        let reloaded: CloudBackupConfig = toml::from_str(&saved).unwrap();
+        let mut reloaded: CloudBackupConfig = toml::from_str(&saved).unwrap();
+        assert!(reloaded.encryption_password.is_empty());
+        reloaded.encryption_password = config.encryption_password.clone();
         let downloaded = download_backup(&reloaded, &target_url).unwrap();
+        assert_eq!(downloaded.source_path, None);
         assert_eq!(downloaded.filename, "doc.md");
         assert_eq!(downloaded.doc_id, "doc123");
         assert_eq!(

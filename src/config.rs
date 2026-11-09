@@ -429,7 +429,7 @@ mod tests {
 
         settings.cloud_backup.server_url = "https://dav.example.com/papershell/".to_string();
         settings.cloud_backup.enable_encryption = true;
-        settings.cloud_backup.encryption_password = "test_pass".to_string();
+        settings.cloud_backup.encryption_password = "test_pass".to_string().into();
 
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("config.toml");
@@ -440,7 +440,12 @@ mod tests {
             "https://dav.example.com/papershell/"
         );
         assert!(reloaded.cloud_backup.enable_encryption);
-        assert_eq!(reloaded.cloud_backup.encryption_password, "test_pass");
+        assert!(reloaded.cloud_backup.encryption_password.is_empty());
+        assert!(
+            !std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("test_pass")
+        );
 
         // Older versions omitted the password: ask for it once, retaining the
         // existing server and encryption settings.

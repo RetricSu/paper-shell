@@ -4,8 +4,8 @@
 //! target URL. Responses that no longer match the active operation are ignored.
 
 use crate::plugin::builtin::cloud_backup::{
-    BackupPayload, CloudBackupConfig, DocumentIdentity, download_backup, resolve_target_url,
-    test_connection, upload_backup,
+    BackupPayload, CloudBackupConfig, DocumentIdentity, download_backup, insecure_http_endpoint,
+    resolve_target_url, test_connection, upload_backup,
 };
 use egui::{Color32, Context, RichText, Ui, Vec2};
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -286,7 +286,10 @@ impl CloudBackupDialog {
     }
 
     pub fn notify_save_success(&mut self) {
-        self.set_status(false, "云端备份配置已保存".to_string());
+        self.set_status(
+            false,
+            "配置已保存；密码仅本次运行有效，重启后需重新输入".to_string(),
+        );
     }
 
     pub fn notify_save_error(&mut self, error: String) {
@@ -456,6 +459,11 @@ impl CloudBackupDialog {
                 egui::TextEdit::singleline(&mut self.config.server_url)
                     .hint_text("例如: https://dav.example.com/papershell/"),
             );
+            if insecure_http_endpoint(&self.config.server_url) {
+                ui.colored_label(Color32::from_rgb(180, 100, 40),
+                    "安全风险：HTTP 会明文传输登录凭据及未加密正文。即使启用端到端加密也无法保护登录凭据，请使用 HTTPS。");
+            }
+            ui.label(RichText::new("密码 / Token 仅本次运行有效，不写入配置；重启后需重新输入。旧版配置中的明文密码将于下次保存时移除。").small().weak());
             ui.add_space(4.0);
 
             ui.horizontal(|ui| {
@@ -483,7 +491,7 @@ impl CloudBackupDialog {
                         }
                     });
                     ui.add(
-                        egui::TextEdit::singleline(&mut self.config.password)
+                        egui::TextEdit::singleline(&mut *self.config.password)
                             .password(!self.show_password)
                             .hint_text("密码或 Bearer Token"),
                     );
@@ -513,9 +521,9 @@ impl CloudBackupDialog {
                 ui.horizontal(|ui| {
                     ui.label("加密密码：");
                     ui.add(
-                        egui::TextEdit::singleline(&mut self.config.encryption_password)
+                        egui::TextEdit::singleline(&mut *self.config.encryption_password)
                             .password(!self.show_enc_password)
-                            .hint_text("输入原密码，保存后本机记住"),
+                            .hint_text("输入原密码，仅本次运行有效"),
                     );
                     if ui
                         .button(if self.show_enc_password {
@@ -531,7 +539,7 @@ impl CloudBackupDialog {
                 });
                 ui.label(
                     RichText::new(
-                        "点击「保存配置」后，密码会以明文保存在本机配置中，不会上传到备份服务器。已有备份请使用原密码；请另行妥善保管密码。",
+                        "密码仅在本次运行中保留，不写入配置；重启后需重新输入。已有备份请使用原密码，请另行妥善保管。",
                     )
                     .small()
                     .color(Color32::from_rgb(180, 140, 60)),

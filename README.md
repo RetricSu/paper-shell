@@ -27,6 +27,45 @@ history, and understanding your writing habits—without turning the editor into
 > Paper Shell is under active development. Download a packaged release below, or
 > [build from source](docs/development.md#build-from-source).
 
+## Highlights
+
+### Vim mode that understands Chinese
+
+Use familiar Insert, Normal, and Visual modes without giving up normal Chinese IME input.
+Chinese word motions and operators use [Jieba](https://github.com/messense/jieba-rs)
+segmentation, so commands such as `w`, `b`, `dw`, and `yw` follow word boundaries in
+Chinese prose instead of treating an entire paragraph as one token. Common motions,
+operators, counts, registers, and system-clipboard integration are supported.
+
+Enable it via **编辑 → Vim 模式 (Esc)**. Press `Esc` to enter Normal mode and `i` to return
+to Chinese input in Insert mode.
+
+### Git-like branching history for every document
+
+Saved versions form a local, content-addressed history with parent links. Inspect the
+branching tree and content diffs, compare any version with its parent or the current
+document, and pin or label important milestones. Restoring an older version does not
+delete later saves; continuing from it creates a sibling branch.
+
+It feels like the useful part of Git for a writer, without requiring a repository, staging,
+or the command line.
+
+## A quiet page, made yours
+
+The default **Classic Paper (经典白纸)** workspace keeps everything out of the way except
+the page.
+
+![Paper Shell's default Classic Paper workspace with a blank document](assets/screenshots/classic-paper.png)
+
+Choose a different atmosphere without giving up a readable writing surface. Here, the
+**无限地带 · 双人疾驰 (`megazone_ride`)** skin combines a background illustration with a
+Chinese essay in the editor.
+
+![Paper Shell using the Megazone Ride skin while editing a Chinese essay](assets/screenshots/megazone-ride-chinese.png)
+
+Paper Shell includes built-in skins, adjustable Chinese typography, and portable custom
+skin packages. See [Appearance & skin library](#appearance--skin-library-外观与皮肤库).
+
 ## Download
 
 Prebuilt packages are available for macOS, Linux, and Windows.
@@ -84,8 +123,14 @@ Drafts, prereleases, and older versions are skipped.
 - Search and replace, match highlighting, clipboard actions, and a selection toolbar.
 - Adjustable Chinese fonts, font size, line spacing, and paragraph indentation.
 - Optional Vim modal editing via **编辑 → Vim 模式 (Esc)**. Press `Esc` to switch between
-  Insert and Normal modes; Visual mode and common motions, operators, and counts are supported.
+  Insert and Normal modes; Visual mode, Chinese word segmentation, common motions,
+  operators, and counts are supported.
 - Unsaved-change confirmation when switching articles or closing a window.
+
+Adjust font size, line spacing, font family, text color, and paragraph indentation directly
+from the **排版** menu. Changes are immediately visible on the current document.
+
+![Paper Shell's typography controls over a Chinese document](assets/screenshots/typography.png)
 
 ### Workspace files
 
@@ -142,6 +187,8 @@ Paper Shell also includes **Print**, **Cloud Backup**, and **GitHub Publish** pl
 **插件 → 管理插件…** to enable or configure built-ins, discover external plugins, or inspect
 manifest errors. External plugins can be installed by placing a folder containing a
 `plugin.toml` manifest and its command in the plugin directory, then choosing **重新扫描**.
+
+![Paper Shell's plugin menu with Print, Cloud Backup, and GitHub Publish](assets/screenshots/plugins.png)
 
 Export results, plugin output, GitHub configuration and publishing, and external plugin
 settings open in separate resizable desktop windows. Use the window's close button or

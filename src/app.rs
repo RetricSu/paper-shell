@@ -1478,6 +1478,7 @@ impl eframe::App for PaperShellApp {
             if let Some(action) = crate::ui::title_bar::TitleBar::show(
                 ui,
                 crate::ui::title_bar::TitleBarState {
+                    backup_status: self.cloud_backup_dialog.backup_status(),
                     update_available: self.updater.has_update(),
                     title: crate::constant::DEFAULT_WINDOW_TITLE,
                     word_count: total_words,
@@ -1600,8 +1601,13 @@ impl eframe::App for PaperShellApp {
                         if self.plugin_manager.get(&id).is_none() {
                             self.file_error = Some(format!("插件“{id}”不存在或已禁用"));
                         } else if id == "cloud_backup" {
-                            self.cloud_backup_dialog
-                                .open(ctx, &self.config.settings.cloud_backup);
+                            let identity = self.cloud_document_identity();
+                            self.cloud_backup_dialog.backup_now(
+                                ctx,
+                                &self.config.settings.cloud_backup,
+                                &identity,
+                                &self.editor.get_content(),
+                            );
                         } else if id == "github_publish" {
                             if self.config.settings.github_publish.repo.trim().is_empty() {
                                 self.plugin_config_window

@@ -1,5 +1,6 @@
 use crate::export::ExportFormat;
 use crate::plugin::PluginMetadata;
+use crate::ui::plugins::cloud_backup::BackupStatus;
 use egui::{Align, Layout, Ui};
 use std::path::PathBuf;
 
@@ -53,6 +54,7 @@ pub struct TitleBarState<'a> {
     pub format_use_tabs: bool,
     pub recent_files: &'a [PathBuf],
     pub plugins: &'a [PluginMetadata],
+    pub backup_status: BackupStatus,
     pub vim_mode: bool,
     pub vim_mode_label: Option<&'a str>,
 }
@@ -79,6 +81,7 @@ impl TitleBar {
             format_use_tabs,
             recent_files,
             plugins,
+            backup_status,
             vim_mode,
             vim_mode_label,
         } = state;
@@ -685,35 +688,61 @@ impl TitleBar {
                     });
 
                     if ui.available_width() >= 55.0 {
-                        ui.menu_button(
-                            format!("{} 插件", egui_phosphor::regular::PUZZLE_PIECE),
-                            |ui| {
-                                ui.set_min_width(220.0);
-                                if plugins.is_empty() {
-                                    ui.add_enabled(false, egui::Button::new("暂无已启用插件"));
-                                }
-                                for plugin in plugins {
+                        egui::containers::menu::MenuButton::new(format!(
+                            "{} 插件",
+                            egui_phosphor::regular::PUZZLE_PIECE
+                        ))
+                        .config(
+                            egui::containers::menu::MenuConfig::default()
+                                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside),
+                        )
+                        .ui(ui, |ui| {
+                            ui.set_min_width(220.0);
+                            if plugins.is_empty() {
+                                ui.add_enabled(false, egui::Button::new("暂无已启用插件"));
+                            }
+                            for plugin in plugins {
+                                let is_backup = plugin.id == "cloud_backup";
+                                ui.horizontal(|ui| {
                                     if ui
-                                        .button(&plugin.name)
+                                        .add_enabled(
+                                            !is_backup || backup_status != BackupStatus::Running,
+                                            egui::Button::new(&plugin.name),
+                                        )
                                         .on_hover_text(&plugin.description)
                                         .clicked()
                                     {
                                         action = Some(TitleBarAction::RunPlugin(plugin.id.clone()));
-                                        ui.close();
+                                        if !is_backup {
+                                            ui.close();
+                                        }
                                     }
-                                }
-                                ui.separator();
+                                    if is_backup {
+                                        match backup_status {
+                                            BackupStatus::Running => {
+                                                ui.add(egui::Spinner::new().size(14.0))
+                                                    .on_hover_text("正在备份到云端…");
+                                            }
+                                            BackupStatus::Succeeded => {
+                                                ui.label(egui_phosphor::regular::CHECK)
+                                                    .on_hover_text("备份成功");
+                                            }
+                                            BackupStatus::Idle => {}
+                                        }
+                                    }
+                                });
+                            }
+                            ui.separator();
 
-                                if ui
-                                    .button("管理插件…")
-                                    .on_hover_text("启用、禁用、刷新或卸载插件")
-                                    .clicked()
-                                {
-                                    action = Some(TitleBarAction::ManagePlugins);
-                                    ui.close();
-                                }
-                            },
-                        );
+                            if ui
+                                .button("管理插件…")
+                                .on_hover_text("启用、禁用、刷新或卸载插件")
+                                .clicked()
+                            {
+                                action = Some(TitleBarAction::ManagePlugins);
+                                ui.close();
+                            }
+                        });
                     }
                 });
             });
@@ -975,6 +1004,33 @@ mod tests {
         font_color: &str,
         format_use_tabs: bool,
     ) -> (egui::FullOutput, Option<TitleBarAction>) {
+        render_title_bar_with_plugins(
+            ctx,
+            events,
+            fonts,
+            current_font,
+            font_size,
+            line_spacing,
+            font_color,
+            format_use_tabs,
+            &[],
+            BackupStatus::Idle,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_title_bar_with_plugins(
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+        fonts: &[String],
+        current_font: &str,
+        font_size: f32,
+        line_spacing: f32,
+        font_color: &str,
+        format_use_tabs: bool,
+        plugins: &[PluginMetadata],
+        backup_status: BackupStatus,
+    ) -> (egui::FullOutput, Option<TitleBarAction>) {
         let mut action = None;
         let output = ctx.run(
             egui::RawInput {
@@ -1012,7 +1068,8 @@ mod tests {
                             font_color,
                             format_use_tabs,
                             recent_files: &[],
-                            plugins: &[],
+                            plugins,
+                            backup_status,
                             sidebar_expanded: true,
                             vim_mode: false,
                             vim_mode_label: None,
@@ -1067,6 +1124,57 @@ mod tests {
             line_spacing,
             font_color,
         )
+    }
+
+    #[test]
+    fn backup_menu_stays_open_and_disables_repeated_uploads() {
+        let ctx = egui::Context::default();
+        crate::style::configure_style(&ctx);
+        let plugins = [PluginMetadata {
+            id: "cloud_backup".into(),
+            name: "云端备份".into(),
+            description: "备份当前文档".into(),
+            version: "1.0.0".into(),
+            author: "Paper Shell".into(),
+            source: crate::plugin::PluginSource::Builtin,
+            enabled: true,
+            has_settings: true,
+            dir: None,
+        }];
+        let render = |events, status| {
+            render_title_bar_with_plugins(
+                &ctx,
+                events,
+                &[],
+                "Default",
+                14.0,
+                1.5,
+                "Default",
+                false,
+                &plugins,
+                status,
+            )
+        };
+        let (initial, _) = render(vec![], BackupStatus::Idle);
+        let _ = render(
+            click_events(text_position(&initial, "插件").unwrap()),
+            BackupStatus::Idle,
+        );
+        let (menu, _) = render(vec![], BackupStatus::Idle);
+        let (clicked, action) = render(
+            click_events(text_position(&menu, "云端备份").unwrap()),
+            BackupStatus::Idle,
+        );
+        assert!(matches!(action, Some(TitleBarAction::RunPlugin(id)) if id == "cloud_backup"));
+        assert!(has_text(&clicked, "云端备份"));
+        let (running, _) = render(vec![], BackupStatus::Running);
+        let (_, action) = render(
+            click_events(text_position(&running, "云端备份").unwrap()),
+            BackupStatus::Running,
+        );
+        assert!(action.is_none());
+        let (success, _) = render(vec![], BackupStatus::Succeeded);
+        assert!(has_text(&success, egui_phosphor::regular::CHECK));
     }
 
     #[test]
@@ -1206,6 +1314,7 @@ mod tests {
                         format_use_tabs: false,
                         recent_files: &[],
                         plugins: &[],
+                        backup_status: BackupStatus::Idle,
                         sidebar_expanded: false,
                         vim_mode: false,
                         vim_mode_label: None,
@@ -1255,6 +1364,7 @@ mod tests {
                             format_use_tabs: false,
                             recent_files: &[],
                             plugins: &[],
+                            backup_status: BackupStatus::Idle,
                             sidebar_expanded: false,
                             vim_mode: false,
                             vim_mode_label: None,
@@ -1363,6 +1473,7 @@ mod tests {
                         format_use_tabs: false,
                         recent_files: &[],
                         plugins: &[],
+                        backup_status: BackupStatus::Idle,
                         sidebar_expanded: true,
                         vim_mode: false,
                         vim_mode_label: None,
@@ -1402,6 +1513,7 @@ mod tests {
                         format_use_tabs: false,
                         recent_files: &[],
                         plugins: &[],
+                        backup_status: BackupStatus::Idle,
                         sidebar_expanded: true,
                         vim_mode: false,
                         vim_mode_label: None,
@@ -1438,6 +1550,7 @@ mod tests {
                         format_use_tabs: false,
                         recent_files: &[],
                         plugins: &[],
+                        backup_status: BackupStatus::Idle,
                         sidebar_expanded: true,
                         vim_mode: false,
                         vim_mode_label: None,

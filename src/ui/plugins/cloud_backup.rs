@@ -9,6 +9,15 @@ use crate::plugin::builtin::cloud_backup::{
 };
 use egui::{Color32, Context, RichText, Ui, Vec2};
 use std::sync::mpsc::{Receiver, Sender, channel};
+use std::time::{Duration, Instant};
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum BackupStatus {
+    #[default]
+    Idle,
+    Running,
+    Succeeded,
+}
 
 pub enum CloudBackupAction {
     SaveConfig(CloudBackupConfig),
@@ -51,6 +60,8 @@ struct RestoredBackup {
 
 pub struct CloudBackupDialog {
     open: bool,
+    inline_upload: bool,
+    success_until: Option<Instant>,
     viewport_id: egui::ViewportId,
     config: CloudBackupConfig,
     show_password: bool,
@@ -75,6 +86,8 @@ impl CloudBackupDialog {
         let (tx, rx) = channel();
         Self {
             open: false,
+            inline_upload: false,
+            success_until: None,
             viewport_id: egui::ViewportId::from_hash_of("cloud_backup_window"),
             config: CloudBackupConfig::default(),
             show_password: false,
@@ -87,6 +100,46 @@ impl CloudBackupDialog {
             tx,
             rx,
         }
+    }
+
+    pub fn backup_status(&self) -> BackupStatus {
+        if self.inline_upload && self.active_operation.is_some() {
+            BackupStatus::Running
+        } else if self
+            .success_until
+            .is_some_and(|until| Instant::now() < until)
+        {
+            BackupStatus::Succeeded
+        } else {
+            BackupStatus::Idle
+        }
+    }
+
+    pub fn backup_now(
+        &mut self,
+        ctx: &Context,
+        config: &CloudBackupConfig,
+        identity: &DocumentIdentity,
+        content: &str,
+    ) {
+        self.sync_document(identity);
+        if self.active_operation.is_some() {
+            return;
+        }
+        self.config = config.clone();
+        self.success_until = None;
+        if self.config.server_url.trim().is_empty() {
+            self.open(ctx, config);
+            self.set_status(true, "请先配置云端地址并保存，再执行备份".into());
+            return;
+        }
+        self.inline_upload = true;
+        self.spawn_upload(identity, content);
+        if self.active_operation.is_none() {
+            self.inline_upload = false;
+            self.open = true;
+        }
+        ctx.request_repaint();
     }
 
     pub fn viewport_id(&self) -> egui::ViewportId {
@@ -119,6 +172,8 @@ impl CloudBackupDialog {
         }
 
         let invalidated = self.active_operation.is_some() || self.restored.is_some();
+        self.inline_upload = false;
+        self.success_until = None;
         self.current_doc_id = Some(identity.doc_id.clone());
         self.active_operation = None;
         self.restored = None;
@@ -172,8 +227,18 @@ impl CloudBackupDialog {
                         self.config.last_backup_time = Some(timestamp);
                         self.config.last_backup_status = Some(message.clone());
                         self.set_status(false, message);
+                        if self.inline_upload {
+                            self.success_until = Some(Instant::now() + Duration::from_secs(2));
+                        }
+                        self.inline_upload = false;
                     }
-                    Err(error) => self.set_status(true, error),
+                    Err(error) => {
+                        if self.inline_upload {
+                            self.open = true;
+                        }
+                        self.inline_upload = false;
+                        self.set_status(true, error);
+                    }
                 },
                 CloudOpResult::Download(result) => match result {
                     Ok(payload) if payload.doc_id != response.doc_id => {
@@ -303,7 +368,22 @@ impl CloudBackupDialog {
         current_content: &str,
     ) -> Option<CloudBackupAction> {
         self.sync_document(identity);
+        let previous_status = self.backup_status();
         self.process_responses();
+        if self.backup_status() != previous_status {
+            ctx.request_repaint();
+        }
+        if self.active_operation.is_some() {
+            ctx.request_repaint_after(Duration::from_millis(50));
+        }
+        if let Some(until) = self.success_until {
+            if let Some(remaining) = until.checked_duration_since(Instant::now()) {
+                ctx.request_repaint_after(remaining);
+            } else {
+                self.success_until = None;
+                ctx.request_repaint();
+            }
+        }
 
         if !self.open {
             return None;
@@ -717,6 +797,108 @@ mod tests {
             doc_id: id.to_string(),
             source_path: Some(format!("/tmp/{id}.md")),
         }
+    }
+
+    #[test]
+    fn inline_backup_completion_is_processed_while_closed_and_expires() {
+        let ctx = Context::default();
+        let mut dialog = CloudBackupDialog::new();
+        let doc = identity("doc-a");
+        dialog.sync_document(&doc);
+        dialog.inline_upload = true;
+        let operation_id = dialog.begin_operation(&doc, "https://example/a".into(), "upload");
+        assert_eq!(dialog.backup_status(), BackupStatus::Running);
+
+        // Repeated clicks cannot replace the in-flight upload.
+        dialog.backup_now(&ctx, &CloudBackupConfig::default(), &doc, "new content");
+        assert_eq!(
+            dialog.active_operation.as_ref().unwrap().operation_id,
+            operation_id
+        );
+        dialog
+            .tx
+            .send(OperationResponse {
+                operation_id,
+                doc_id: doc.doc_id.clone(),
+                target_url: "https://example/a".into(),
+                result: CloudOpResult::Upload(Ok("uploaded".into()), "now".into()),
+            })
+            .unwrap();
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            assert!(dialog.show(ctx, &doc, "content").is_none());
+        });
+        assert_eq!(dialog.backup_status(), BackupStatus::Succeeded);
+        assert_eq!(dialog.config.last_backup_time.as_deref(), Some("now"));
+        assert_eq!(dialog.status_message, Some((false, "uploaded".into())));
+
+        dialog.success_until = Some(Instant::now() - Duration::from_millis(1));
+        assert_eq!(dialog.backup_status(), BackupStatus::Idle);
+    }
+
+    #[test]
+    fn inline_backup_failure_shows_actionable_error() {
+        let mut dialog = CloudBackupDialog::new();
+        let doc = identity("doc-a");
+        dialog.sync_document(&doc);
+        dialog.inline_upload = true;
+        let operation_id = dialog.begin_operation(&doc, "https://example/a".into(), "upload");
+        dialog
+            .tx
+            .send(OperationResponse {
+                operation_id,
+                doc_id: doc.doc_id.clone(),
+                target_url: "https://example/a".into(),
+                result: CloudOpResult::Upload(Err("服务器拒绝访问".into()), "now".into()),
+            })
+            .unwrap();
+        dialog.process_responses();
+        assert!(dialog.open);
+        assert_eq!(dialog.backup_status(), BackupStatus::Idle);
+        assert_eq!(dialog.status_message, Some((true, "服务器拒绝访问".into())));
+    }
+
+    #[test]
+    fn inline_backup_requires_configuration_and_resets_on_document_switch() {
+        let mut dialog = CloudBackupDialog::new();
+        let doc = identity("doc-a");
+        dialog.backup_now(
+            &Context::default(),
+            &CloudBackupConfig::default(),
+            &doc,
+            "content",
+        );
+        assert!(dialog.open);
+        assert!(
+            dialog
+                .status_message
+                .as_ref()
+                .unwrap()
+                .1
+                .contains("请先配置")
+        );
+
+        dialog.inline_upload = true;
+        let operation_id = dialog.begin_operation(&doc, "https://example/a".into(), "upload");
+        dialog.sync_document(&identity("doc-b"));
+        dialog
+            .tx
+            .send(OperationResponse {
+                operation_id,
+                doc_id: doc.doc_id.clone(),
+                target_url: "https://example/a".into(),
+                result: CloudOpResult::Upload(Ok("stale upload".into()), "now".into()),
+            })
+            .unwrap();
+        dialog.process_responses();
+        assert_eq!(dialog.backup_status(), BackupStatus::Idle);
+        assert!(
+            dialog
+                .status_message
+                .as_ref()
+                .unwrap()
+                .1
+                .contains("当前文档已切换")
+        );
     }
 
     #[test]

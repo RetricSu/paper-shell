@@ -2,11 +2,13 @@
 
 ## 凭据与升级
 
-WebDAV 密码、Bearer Token 和端到端加密主密码只保留在本次进程内，TOML/JSON 序列化均省略；旧版配置中的密码字段不再读入。点击「保存配置」后，连接配置持久化，密码供本次运行使用；重启后必须重新输入。请先确认自己保管了原主密码，再升级或清理旧配置，否则无法解密已有备份。
+WebDAV 密码、Bearer Token 和端到端加密主密码在点击「保存配置」后保存在系统凭据库：macOS Keychain、Windows Credential Manager、Linux Secret Service。重启自动读取；TOML/JSON 中只保存随机凭据引用，不保存密码。清空相应字段再保存即可移除该密码，两个密码都清空则删除凭据引用及旧条目。加密开关关闭不删除原主密码，以便读取已有加密备份。
 
-旧配置文件直到下一次成功保存才移除明文密码。应用不能擦除旧文件副本、文件系统快照或历史备份，应按需自行清理；已暴露的 WebDAV 凭据应轮换。不要在 URL 中嵌入凭据，URL 仅允许 HTTP(S) 目录地址，不接受 userinfo、query 或 fragment。
+凭据库锁定、拒绝访问或条目丢失时会明确报错，不回退到明文保存。Linux 需要桌面环境提供持久化 Secret Service；不使用会话 keyutils 或 mock 后端。凭据与云端地址、用户名绑定，手动修改配置文件里的地址或用户名后需重新输入。系统凭据库不随配置文件导出，请另行保管原主密码以便换机或恢复。以前版本已经丢失的密码无法由本次升级找回，需要重新输入一次并保存。
 
-已调研 [keyring 3.6.3](https://docs.rs/keyring/3.6.3/keyring/) 的 macOS Keychain、Windows Credential Manager 和 Linux Secret Service 后端。本次采用跨平台会话存储，未接入系统凭据库，也没有把加密密钥与密文一起存盘。后续接入应采用独立的服务/账户命名空间、明确的用户授权及锁定/不可用错误处理；不允许失败后退回明文。Linux 应验证持久化 Secret Service 的可用性，不能把 mock 或会话 keyutils 当作持久存储。
+保存时先创建独立的新凭据条目，再提交配置引用；失败时保留旧引用和旧凭据。成功后清理旧条目，清理失败会提示用户到系统凭据管理器处理。使用 [keyring 3.6.3](https://docs.rs/keyring/3.6.3/keyring/) 的原生 Apple/Windows 后端与 Linux Secret Service 后端。
+
+旧版配置中的明文密码仍不读入，并于下一次成功保存配置时移除。应用不能擦除旧文件副本、文件系统快照或历史备份，应按需自行清理；已暴露的 WebDAV 凭据应轮换。不要在 URL 中嵌入凭据，URL 仅允许 HTTP(S) 目录地址，不接受 userinfo、query 或 fragment。
 
 ## 传输与元数据
 
@@ -23,6 +25,8 @@ WebDAV 密码、Bearer Token 和端到端加密主密码只保留在本次进程
 密码字段及其工作线程副本、派生密钥、序列化加密明文、解密缓冲和 HTTP 正文缓冲由 `Zeroizing` 在释放时擦除，启用 aes-gcm 的 zeroize 功能清理 AES/GHASH 内部状态。配置 Debug 输出脱敏。参见 [zeroize 的保证与限制](https://docs.rs/zeroize/latest/zeroize/)：它不能保证擦除重分配前的副本、寄存器、GUI 编辑/撤销缓存、HTTP 头副本、交换区或崩溃转储；这是尽力防护，并非内存隔离。返回给编辑器的文档正文需继续使用，不自动清除。
 
 ## 覆盖与竞态
+
+默认远程文件名为 `{stem}_{doc_id}.backup`，同一文档每次写入同一个文件，覆盖上一份，不自动保留历史版本。不同本地路径的同名文档通过 doc_id 区分；移动或重命名本地文件可能改变备份地址。服务端是否另行保留版本取决于服务端配置。
 
 上传先 GET 检查文档身份。仅 404 视为不存在，随后 PUT 带 `If-None-Match: *`；已存在且文档身份一致时必须有强 ETag，PUT 带 `If-Match`。权限错误、重定向、网络错误、无法识别的数据、其他文档以及缺失/弱 ETag 均停止覆盖。412 作为覆盖冲突报告。
 

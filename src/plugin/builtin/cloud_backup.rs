@@ -61,16 +61,20 @@ pub struct CloudBackupConfig {
     pub server_url: String,
     /// Username for HTTP Basic Auth (optional)
     pub username: String,
-    /// Session-only password or Bearer Token. Ignore legacy plaintext on disk.
+    /// Password or Bearer Token, persisted separately in the OS credential store.
     #[serde(skip)]
     pub password: Zeroizing<String>,
     /// Remote filename template (e.g. "{stem}_{doc_id}.backup" or "{filename}.backup")
     pub remote_filename: String,
     /// Whether end-to-end encryption is enabled
     pub enable_encryption: bool,
-    /// Session-only passphrase, never serialized or loaded from legacy config.
+    /// Passphrase, never serialized or loaded from legacy config.
     #[serde(skip)]
     pub encryption_password: Zeroizing<String>,
+    /// Opaque reference to an OS credential store entry (contains no secrets).
+    pub credential_id: Option<String>,
+    #[serde(skip)]
+    pub credential_error: Option<String>,
     /// Last backup timestamp (for UI display)
     pub last_backup_time: Option<String>,
     /// Last backup status message
@@ -95,6 +99,8 @@ impl Default for CloudBackupConfig {
             remote_filename: "{stem}_{doc_id}.backup".to_string(),
             enable_encryption: false,
             encryption_password: Zeroizing::new(String::new()),
+            credential_id: None,
+            credential_error: None,
             last_backup_time: None,
             last_backup_status: None,
         }
@@ -695,7 +701,7 @@ mod tests {
     use std::path::Path;
 
     #[test]
-    fn credentials_are_session_only_and_debug_is_redacted() {
+    fn credentials_stay_out_of_settings_and_debug_is_redacted() {
         let config = CloudBackupConfig {
             password: Zeroizing::new("webdav-secret".into()),
             encryption_password: Zeroizing::new("master-secret".into()),
@@ -1253,6 +1259,8 @@ mod tests {
             remote_filename: "backup.json".to_string(),
             enable_encryption: true,
             encryption_password: Zeroizing::new("my_password".to_string()),
+            credential_id: None,
+            credential_error: None,
             last_backup_time: None,
             last_backup_status: None,
         };
@@ -1283,7 +1291,7 @@ mod tests {
                 .contains(config.encryption_password.as_str())
         );
 
-        // Session secrets must be re-entered after reloading settings.
+        // Settings alone contain no secrets; OS-store restoration is tested separately.
         let saved = toml::to_string(&config).unwrap();
         let mut reloaded: CloudBackupConfig = toml::from_str(&saved).unwrap();
         assert!(reloaded.encryption_password.is_empty());

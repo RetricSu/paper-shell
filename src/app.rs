@@ -1815,20 +1815,21 @@ impl eframe::App for PaperShellApp {
         {
             match action {
                 CloudBackupAction::SaveConfig(new_config) => {
-                    let previous = std::mem::replace(
-                        &mut self.config.settings.cloud_backup,
-                        new_config.clone(),
-                    );
-                    match self.config.save() {
-                        Ok(()) => {
-                            self.plugin_manager
-                                .update_builtin_configs(None, Some(new_config));
-                            self.cloud_backup_dialog.notify_save_success();
+                    match self.config.save_cloud_backup(new_config) {
+                        Ok(warning) => {
+                            self.plugin_manager.update_builtin_configs(
+                                None,
+                                Some(self.config.settings.cloud_backup.clone()),
+                            );
+                            self.cloud_backup_dialog
+                                .notify_save_success(&self.config.settings.cloud_backup);
+                            if let Some(warning) = warning {
+                                self.cloud_backup_dialog
+                                    .set_status(true, format!("配置已保存；{warning}"));
+                            }
                         }
                         Err(error) => {
-                            self.config.settings.cloud_backup = previous;
-                            self.cloud_backup_dialog
-                                .notify_save_error(format!("无法保存云端备份设置：{error}"));
+                            self.cloud_backup_dialog.notify_save_error(error);
                         }
                     }
                 }

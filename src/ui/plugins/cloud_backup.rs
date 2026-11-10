@@ -128,6 +128,11 @@ impl CloudBackupDialog {
         }
         self.config = config.clone();
         self.success_until = None;
+        if let Some(error) = &config.credential_error {
+            self.open(ctx, config);
+            self.set_status(true, error.clone());
+            return;
+        }
         if self.config.server_url.trim().is_empty() {
             self.open(ctx, config);
             self.set_status(true, "请先配置云端地址并保存，再执行备份".into());
@@ -155,9 +160,15 @@ impl CloudBackupDialog {
         }
         if self.active_operation.is_none() {
             self.status_message = config
-                .last_backup_status
+                .credential_error
                 .as_ref()
-                .map(|status| (false, status.clone()));
+                .map(|error| (true, error.clone()))
+                .or_else(|| {
+                    config
+                        .last_backup_status
+                        .as_ref()
+                        .map(|status| (false, status.clone()))
+                });
         }
         ctx.request_repaint();
     }
@@ -350,10 +361,16 @@ impl CloudBackupDialog {
         });
     }
 
-    pub fn notify_save_success(&mut self) {
+    pub fn notify_save_success(&mut self, config: &CloudBackupConfig) {
+        self.config = config.clone();
         self.set_status(
             false,
-            "配置已保存；密码仅本次运行有效，重启后需重新输入".to_string(),
+            if config.credential_id.is_some() {
+                "配置已保存；密码已交由系统凭据库保存，重启后自动读取（清空密码并保存可移除）"
+            } else {
+                "配置已保存；未记住任何密码"
+            }
+            .to_string(),
         );
     }
 
@@ -543,7 +560,7 @@ impl CloudBackupDialog {
                 ui.colored_label(Color32::from_rgb(180, 100, 40),
                     "安全风险：HTTP 会明文传输登录凭据及未加密正文。即使启用端到端加密也无法保护登录凭据，请使用 HTTPS。");
             }
-            ui.label(RichText::new("密码 / Token 仅本次运行有效，不写入配置；重启后需重新输入。旧版配置中的明文密码将于下次保存时移除。").small().weak());
+            ui.label(RichText::new("点击保存配置后，密码 / Token 和加密密码保存在系统凭据库，重启后自动读取；不写入配置文件。清空后保存可移除已记住的密码。").small().weak());
             ui.add_space(4.0);
 
             ui.horizontal(|ui| {
@@ -584,6 +601,7 @@ impl CloudBackupDialog {
                 egui::TextEdit::singleline(&mut self.config.remote_filename)
                     .hint_text("{stem}_{doc_id}.backup"),
             );
+            ui.label(RichText::new("同一文档备份到同一远程文件，后续备份覆盖上一份，不自动保留历史版本。").small().weak());
         });
 
         ui.add_space(8.0);
@@ -603,7 +621,7 @@ impl CloudBackupDialog {
                     ui.add(
                         egui::TextEdit::singleline(&mut *self.config.encryption_password)
                             .password(!self.show_enc_password)
-                            .hint_text("输入原密码，仅本次运行有效"),
+                            .hint_text("输入原密码，保存后自动记住"),
                     );
                     if ui
                         .button(if self.show_enc_password {
@@ -619,7 +637,7 @@ impl CloudBackupDialog {
                 });
                 ui.label(
                     RichText::new(
-                        "密码仅在本次运行中保留，不写入配置；重启后需重新输入。已有备份请使用原密码，请另行妥善保管。",
+                        "保存配置后由系统凭据库记住。已有备份请使用原密码，并另行妥善保管，以便换机或恢复。",
                     )
                     .small()
                     .color(Color32::from_rgb(180, 140, 60)),
@@ -797,6 +815,32 @@ mod tests {
             doc_id: id.to_string(),
             source_path: Some(format!("/tmp/{id}.md")),
         }
+    }
+
+    #[test]
+    fn unavailable_credentials_open_settings_and_save_refreshes_reference() {
+        let ctx = Context::default();
+        let mut dialog = CloudBackupDialog::new();
+        let mut config = CloudBackupConfig {
+            server_url: "https://example.com/dav/".into(),
+            credential_error: Some("请解锁系统凭据库".into()),
+            ..Default::default()
+        };
+        dialog.backup_now(&ctx, &config, &identity("doc-a"), "text");
+        assert!(dialog.open);
+        assert!(dialog.active_operation.is_none());
+        assert_eq!(
+            dialog.status_message,
+            Some((true, "请解锁系统凭据库".into()))
+        );
+        config.credential_id = Some("new-reference".into());
+        config.credential_error = None;
+        dialog.notify_save_success(&config);
+        assert_eq!(
+            dialog.config.credential_id.as_deref(),
+            Some("new-reference")
+        );
+        assert!(dialog.config.credential_error.is_none());
     }
 
     #[test]

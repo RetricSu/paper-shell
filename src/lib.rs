@@ -4,6 +4,7 @@
 
 pub mod app;
 pub mod backend;
+mod backup_credentials;
 pub mod comments;
 pub mod config;
 pub mod constant;

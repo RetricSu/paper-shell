@@ -36,7 +36,24 @@ impl Config {
             tracing::warn!("Could not persist skin market source migration: {error}");
         }
         info!("Load config from {:?}", Self::config_path()?);
+        crate::backup_credentials::restore(&mut settings.cloud_backup);
         Ok(Self { settings })
+    }
+
+    pub fn save_cloud_backup(
+        &mut self,
+        config: crate::plugin::builtin::cloud_backup::CloudBackupConfig,
+    ) -> Result<Option<String>, String> {
+        let (saved, warning) = crate::backup_credentials::save(config, |new_config| {
+            let previous = std::mem::replace(&mut self.settings.cloud_backup, new_config.clone());
+            if let Err(error) = self.save() {
+                self.settings.cloud_backup = previous;
+                return Err(format!("无法保存云端备份设置：{error}"));
+            }
+            Ok(())
+        })?;
+        self.settings.cloud_backup = saved;
+        Ok(warning)
     }
 
     /// Save current configuration to disk

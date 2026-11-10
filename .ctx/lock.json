@@ -6,7 +6,7 @@
       "claim_hash": "sha256:d5dd51c15adb3131a6625e9e54028d1796d7fe85803602db4e387ea7a4aadefa",
       "semantic_hash": "sha256:b607e1e9149db929f72af125731c3b19dd2767ef6e47f64b77aaa260193163de",
       "anchors": {
-        "file:src/app.rs": "sha256:e7a85afff22a8df68ff00e255ef7e2cccc039c8bd1ab7504ce42c5847ade2249",
+        "file:src/app.rs": "sha256:93b023b06ed1798392c6fa8f63ab184db9ab358304dd30bceb18ad5f87044b87",
         "file:src/ui/editor.rs": "sha256:98a38ee76317fa156d2b6af965fe38425b63afaa27fd1a7c832e374b6aab3266",
         "file:src/ui/mod.rs": "sha256:305b1d4ad1289fdf91833327cff9a1f698eb6874bffd226ef011ea4773d047d4",
         "file:src/ui/settings.rs": "sha256:8ebab80b941d228c56d5a134b619cebbe1cd49f9318a6f30847770e8c8c59225",

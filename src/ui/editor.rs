@@ -457,7 +457,7 @@ impl Editor {
                 ui.fonts_mut(|f| f.layout_job(layout_job))
             };
 
-            let output = egui::TextEdit::multiline(&mut content)
+            let mut output = egui::TextEdit::multiline(&mut content)
                 .id(id)
                 .frame(false)
                 .margin(egui::Margin::symmetric(2, 2))
@@ -506,6 +506,15 @@ impl Editor {
             self.draw_underline_decoration_at_focus_line(&output, ui);
             let context_edit = self.add_context_menu(&output, &mut content);
             let selection_edit = self.show_selection_comment_button(&output, ui, &mut content);
+            if context_edit.is_some() || selection_edit.is_some() {
+                // Menu edits happen after TextEdit has returned. Refresh its snapshot
+                // so decorations and cursor bookkeeping use the collapsed selection.
+                if let Some(state) = egui::text_edit::TextEditState::load(ui.ctx(), id) {
+                    output.cursor_range = state.cursor.char_range();
+                    output.state = state;
+                    self.cursor_index = output.cursor_range.map(|range| range.primary.index);
+                }
+            }
 
             if content != previous_content {
                 let edit = context_edit.or(selection_edit).or_else(|| {
@@ -881,6 +890,7 @@ impl Editor {
             state.store(ctx, editor_id);
         }
         ctx.memory_mut(|memory| memory.request_focus(editor_id));
+        ctx.request_repaint();
         EditOperation {
             start,
             end,
@@ -1764,35 +1774,24 @@ impl Editor {
             {
                 if let Some(selected) = &selected_text {
                     ui.ctx().copy_text(selected.clone());
-                    // Remove selected text
-                    if let Some(cursor_range) = output.cursor_range {
-                        let start = cursor_range.primary.index.min(cursor_range.secondary.index);
-                        let end = cursor_range.primary.index.max(cursor_range.secondary.index);
-                        context_edit = Some(EditOperation {
+                    if let Some((start, end)) = Self::selected_range(output) {
+                        context_edit = Some(Self::delete_selection(
+                            ui.ctx(),
+                            output.response.id,
+                            content,
                             start,
                             end,
-                            inserted_len: 0,
-                        });
-                        let start_byte = content
-                            .char_indices()
-                            .nth(start)
-                            .map(|(i, _)| i)
-                            .unwrap_or(0);
-                        let end_byte = content
-                            .char_indices()
-                            .nth(end)
-                            .map(|(i, _)| i)
-                            .unwrap_or(content.len());
-                        content.replace_range(start_byte..end_byte, "");
+                        ));
                     }
                 } else {
                     ui.ctx().copy_text(content.clone());
-                    context_edit = Some(EditOperation {
-                        start: 0,
-                        end: content.chars().count(),
-                        inserted_len: 0,
-                    });
-                    content.clear();
+                    context_edit = Some(Self::delete_selection(
+                        ui.ctx(),
+                        output.response.id,
+                        content,
+                        0,
+                        content.chars().count(),
+                    ));
                 }
                 ui.close();
             }
@@ -2438,7 +2437,7 @@ mod tests {
         let ctx = egui::Context::default();
         crate::style::configure_style(&ctx);
         let mut editor = Editor::default();
-        editor.set_content("hello world".into());
+        editor.set_content("hello world remains intact".into());
         assert!(editor.add_comment(6, 11, "keep world".into()));
         editor.focus();
 
@@ -2485,12 +2484,50 @@ mod tests {
             None,
         );
         render_editor(&ctx, &mut editor, vec![pointer(delete_button, false)], None);
-        assert_eq!(editor.get_content(), "world");
+        assert_eq!(editor.get_content(), "world remains intact");
+        assert_eq!(editor.cursor_index, Some(0));
         assert_eq!(
             (editor.comments()[0].start, editor.comments()[0].end),
             (0, 5)
         );
         assert!(!render_comment_tool(&ctx, &mut editor, vec![], None));
+        assert!(editor.selection.is_none());
+        assert_eq!(editor.cursor_index, Some(0));
+        render_editor(&ctx, &mut editor, vec![Event::Text("new ".into())], None);
+        assert_eq!(editor.get_content(), "new world remains intact");
+    }
+
+    #[test]
+    fn deleting_selected_text_collapses_cursor_before_next_input() {
+        use egui::{Event, Key, Modifiers};
+
+        for key in [Key::Backspace, Key::Delete] {
+            for selection in [(1, 3), (3, 1)] {
+                let ctx = egui::Context::default();
+                let mut editor = Editor::default();
+                editor.set_content("甲乙丙丁戊己庚辛".into());
+                render_editor(&ctx, &mut editor, vec![], None);
+                render_editor(&ctx, &mut editor, vec![], Some(selection));
+                render_editor(
+                    &ctx,
+                    &mut editor,
+                    vec![Event::Key {
+                        key,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: Modifiers::NONE,
+                    }],
+                    None,
+                );
+                assert_eq!(editor.get_content(), "甲丁戊己庚辛");
+                render_editor(&ctx, &mut editor, vec![], None);
+                assert!(editor.selection.is_none());
+                assert_eq!(editor.cursor_index, Some(1));
+                render_editor(&ctx, &mut editor, vec![Event::Text("新".into())], None);
+                assert_eq!(editor.get_content(), "甲新丁戊己庚辛");
+            }
+        }
     }
 
     fn gutter_circles(output: &egui::FullOutput) -> Vec<egui::epaint::CircleShape> {

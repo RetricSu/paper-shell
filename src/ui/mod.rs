@@ -8,5 +8,6 @@ pub mod settings;
 pub mod sidebar;
 pub mod statistics;
 pub mod title_bar;
+pub mod toast;
 pub mod viewport;
 pub mod vim;

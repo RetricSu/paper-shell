@@ -77,6 +77,7 @@ pub struct PaperShellApp {
     cloud_backup_dialog: CloudBackupDialog,
     publish_dialog: PublishDialog,
     unsaved_dialog: UnsavedChangesDialog,
+    toasts: crate::ui::toast::ToastManager,
     allow_close_once: bool,
     #[cfg(not(target_os = "macos"))]
     print_dialog: PrintDialog,
@@ -167,6 +168,7 @@ impl Default for PaperShellApp {
             cloud_backup_dialog: CloudBackupDialog::new(),
             publish_dialog: PublishDialog::new(),
             unsaved_dialog: UnsavedChangesDialog::new(),
+            toasts: crate::ui::toast::ToastManager::new(),
             allow_close_once: false,
             #[cfg(not(target_os = "macos"))]
             print_dialog: PrintDialog::new(),
@@ -1315,6 +1317,7 @@ impl PaperShellApp {
         match decision {
             DocumentChangeDecision::Save => {
                 if self.save_file() {
+                    self.toasts.success("保存成功");
                     self.unsaved_dialog.close();
                     self.execute_pending_document_action(ctx, action);
                 }
@@ -1516,7 +1519,9 @@ impl eframe::App for PaperShellApp {
                         }
                     }
                     crate::ui::title_bar::TitleBarAction::Save => {
-                        self.save_file();
+                        if self.save_file() {
+                            self.toasts.success("保存成功");
+                        }
                     }
                     crate::ui::title_bar::TitleBarAction::Export(format) => {
                         self.export_document(format);
@@ -1991,6 +1996,8 @@ impl eframe::App for PaperShellApp {
         if let Some(decision) = self.unsaved_dialog.show(ctx) {
             self.handle_unsaved_dialog_decision(ctx, decision);
         }
+
+        self.toasts.show(ctx);
 
         self.sidebar.save_if_dirty(&self.config.data_dir());
     }
@@ -2650,5 +2657,117 @@ mod final_integration_tests {
         // Editor opened a new document
         assert!(app.editor.get_current_file().is_none());
         assert_eq!(app.document_uuid, None);
+    }
+
+    #[test]
+    fn test_save_action_shows_success_toast() {
+        let mut app = PaperShellApp::default();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file_path = temp_dir.path().join("saved_article.txt");
+        std::fs::write(&file_path, "原始内容").unwrap();
+        app.editor.set_current_file(Some(file_path.clone()));
+        app.editor.set_content("修改后的正文".into());
+
+        assert!(app.toasts.is_empty());
+
+        // Performing save via save_file succeeds
+        assert!(app.save_file());
+        app.toasts.success("保存成功");
+
+        assert_eq!(app.toasts.count(), 1);
+        assert_eq!(app.toasts.toasts()[0].message, "保存成功");
+        assert_eq!(
+            app.toasts.toasts()[0].kind,
+            crate::ui::toast::ToastKind::Success
+        );
+
+        // Deduplication on rapid consecutive saves
+        app.toasts.success("保存成功");
+        assert_eq!(app.toasts.count(), 1);
+    }
+
+    #[test]
+    fn test_save_shortcut_triggers_save_toast_in_app_update() {
+        let mut app = PaperShellApp::default();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file_path = temp_dir.path().join("shortcut_save.txt");
+        std::fs::write(&file_path, "原始内容").unwrap();
+        app.editor.set_current_file(Some(file_path.clone()));
+        app.editor.set_content("新内容".into());
+
+        let ctx = egui::Context::default();
+        let mut frame = eframe::Frame::_new_kittest();
+
+        // Frame 1: initial render
+        let _ = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(800.0, 600.0),
+                )),
+                focused: true,
+                ..Default::default()
+            },
+            |ctx| {
+                eframe::App::update(&mut app, ctx, &mut frame);
+            },
+        );
+
+        assert!(app.toasts.is_empty());
+
+        // Frame 2: trigger Save shortcut (Cmd+S / Ctrl+S)
+        let _ = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(800.0, 600.0),
+                )),
+                focused: true,
+                events: vec![egui::Event::Key {
+                    key: egui::Key::S,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::COMMAND,
+                }],
+                ..Default::default()
+            },
+            |ctx| {
+                eframe::App::update(&mut app, ctx, &mut frame);
+            },
+        );
+
+        // Toast was added
+        assert_eq!(app.toasts.count(), 1);
+        assert_eq!(app.toasts.toasts()[0].message, "保存成功");
+
+        // Frame 3: verify toast is painted into output shapes
+        let output = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(800.0, 600.0),
+                )),
+                focused: true,
+                ..Default::default()
+            },
+            |ctx| {
+                eframe::App::update(&mut app, ctx, &mut frame);
+            },
+        );
+
+        let found_toast = output.shapes.iter().any(|clipped| match &clipped.shape {
+            egui::Shape::Text(text) => text.galley.text().contains("保存成功"),
+            egui::Shape::Vec(shapes) => shapes.iter().any(|s| match s {
+                egui::Shape::Text(text) => text.galley.text().contains("保存成功"),
+                _ => false,
+            }),
+            _ => false,
+        });
+
+        assert!(
+            found_toast,
+            "Expected '保存成功' toast in painted output shapes"
+        );
     }
 }

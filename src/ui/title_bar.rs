@@ -1190,6 +1190,21 @@ mod tests {
     }
 
     #[test]
+    fn file_menu_save_dispatches_action() {
+        let ctx = egui::Context::default();
+        crate::style::configure_style(&ctx);
+        let fonts = [];
+        let (initial, _) = render_typography_title_bar(&ctx, vec![], &fonts, "Default", 14.0, 1.5);
+
+        let _ = click_text(&ctx, &initial, "文件", &fonts, "Default", 14.0, 1.5);
+        let (menu, _) = render_typography_title_bar(&ctx, vec![], &fonts, "Default", 14.0, 1.5);
+        assert!(has_text(&menu, "保存"));
+
+        let (_, action) = click_text(&ctx, &menu, "保存", &fonts, "Default", 14.0, 1.5);
+        assert!(matches!(action, Some(TitleBarAction::Save)));
+    }
+
+    #[test]
     fn file_menu_settings_dispatches_action() {
         let ctx = egui::Context::default();
         crate::style::configure_style(&ctx);

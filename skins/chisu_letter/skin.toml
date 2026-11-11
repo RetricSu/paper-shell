@@ -1,0 +1,42 @@
+id = "chisu_letter"
+name = "尺素 · 梅影"
+description = "暖白宣纸、淡墨梅枝与一方朱印，配思源宋体，留一方安静的古典信纸。"
+author = "Paper Shell"
+version = "1.0.0"
+
+[typography]
+font_family = "Noto Serif CJK SC"
+font_size = 15.5
+line_spacing = 1.8
+font_color = "#332E28"
+format_use_tabs = false
+
+[spacing]
+window_margin = 12.0
+editor_padding_left = 28.0
+editor_padding_right = 28.0
+editor_padding_top = 22.0
+editor_padding_bottom = 22.0
+item_spacing_x = 9.0
+item_spacing_y = 9.0
+button_padding_x = 7.0
+button_padding_y = 4.0
+
+[colors]
+dark_mode = false
+background_color = "#E9E1D2"
+editor_background_color = "#F5F0E4"
+sidebar_background_color = "#EAE2D4"
+titlebar_background_color = "#EEE7DA"
+text_color = "#332E28"
+selection_color = "#DDC9A6"
+accent_color = "#8C3B32"
+
+[effects]
+background_image = "background.png"
+background_image_opacity = 0.90
+background_image_fit = "cover"
+window_opacity = 1.0
+editor_opacity = 1.0
+corner_radius = 1.0
+shadow = false

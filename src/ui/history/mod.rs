@@ -476,88 +476,54 @@ impl HistoryWindow {
         version: &HistoryVersionData,
     ) {
         let muted = ui.visuals().text_color().gamma_multiply(0.65);
-        ui.horizontal_wrapped(|ui| {
-            ui.label(
-                RichText::new(&version.branch_name)
-                    .strong()
-                    .color(branch_color(version.branch_id)),
-            );
-            if version.is_current {
-                ui.label(RichText::new("当前版本").color(crate::style::STATUS_GREEN));
-            }
-            if version.is_fork_point {
-                ui.label(RichText::new("分叉点").color(Color32::from_rgb(173, 120, 24)));
-            }
-            if version.is_branch_head {
-                ui.label(RichText::new("分支末端").small().color(muted));
-            }
-            ui.label(
-                RichText::new(format!("+{}", version.added_count))
-                    .color(crate::style::STATUS_GREEN),
-            );
-            ui.label(
-                RichText::new(format!("-{}", version.removed_count))
-                    .color(Color32::from_rgb(145, 64, 64)),
-            );
-            let seconds = version.entry.time_spent.unwrap_or(0);
-            ui.label(
-                RichText::new(format!(
-                    "{} {:02}:{:02}",
-                    egui_phosphor::regular::CLOCK,
-                    seconds / 60,
-                    seconds % 60
-                ))
-                .small()
-                .color(muted),
-            );
-            ui.label(
-                RichText::new(format!("#{}", version.entry.hash))
-                    .monospace()
-                    .small()
-                    .color(muted),
-            );
-        });
-        ui.label(
-            RichText::new(
-                version
-                    .entry
-                    .timestamp
-                    .with_timezone(&Local)
-                    .format("%Y-%m-%d %H:%M:%S")
-                    .to_string(),
-            )
-            .small()
-            .color(muted),
-        );
-        ui.add_space(4.0);
-
-        if self
+        let destructive = Color32::from_rgb(145, 64, 64);
+        let green = crate::style::STATUS_GREEN;
+        let timestamp = version
+            .entry
+            .timestamp
+            .with_timezone(&Local)
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
+        let seconds = version.entry.time_spent.unwrap_or(0);
+        let writing_time = if seconds >= 3600 {
+            format!("{}小时{:02}分", seconds / 3600, (seconds % 3600) / 60)
+        } else {
+            format!("{}分{:02}秒", seconds / 60, seconds % 60)
+        };
+        let editing = self
             .editing_label
             .as_ref()
-            .is_some_and(|(id, _)| id == &version.id)
-        {
+            .is_some_and(|(id, _)| id == &version.id);
+
+        // Lead with the writer's own name for the version. Writing time and
+        // change volume are the primary summary; save metadata stays secondary.
+        if editing {
             let mut save = false;
             let mut cancel = false;
             let mut clear = false;
             if let Some((_, text)) = &mut self.editing_label {
                 ui.horizontal(|ui| {
-                    ui.label("备注");
+                    ui.label(RichText::new("备注").strong());
+                    let width = (ui.available_width() - 150.0).max(120.0);
                     let response = ui.add(
                         egui::TextEdit::singleline(text)
-                            .desired_width(240.0)
+                            .desired_width(width)
                             .hint_text("例如：人物线、第三章初稿"),
                     );
                     if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                         save = true;
                     }
-                    if ui.button("保存").clicked() {
-                        save = true;
-                    }
-                    if ui.button("清除").clicked() {
+                    if history_quiet_button(ui, RichText::new("清除").small().color(destructive))
+                        .clicked()
+                    {
                         clear = true;
                     }
-                    if ui.button("取消").clicked() {
+                    if history_quiet_button(ui, RichText::new("取消").small()).clicked() {
                         cancel = true;
+                    }
+                    if history_quiet_button(ui, RichText::new("保存").small().strong()).clicked()
+                    {
+                        save = true;
                     }
                 });
             }
@@ -580,95 +546,223 @@ impl HistoryWindow {
             }
         } else {
             ui.horizontal(|ui| {
-                ui.label(
-                    RichText::new(version.label().map_or("未添加备注", |label| label)).color(
-                        if version.label().is_some() {
-                            ui.visuals().text_color()
-                        } else {
-                            muted
-                        },
-                    ),
-                );
-                if ui
-                    .button(format!(
-                        "{} 编辑备注",
-                        egui_phosphor::regular::PENCIL_SIMPLE
-                    ))
+                let title = version.label().unwrap_or("未添加备注");
+                ui.add(egui::Label::new(RichText::new(title).size(17.0).strong()).truncate())
+                    .on_hover_text(title);
+                let edit_text = if version.label().is_some() {
+                    egui_phosphor::regular::PENCIL_SIMPLE.to_string()
+                } else {
+                    format!("{} 添加备注", egui_phosphor::regular::PENCIL_SIMPLE)
+                };
+                if history_quiet_button(ui, RichText::new(edit_text).small().color(muted))
+                    .on_hover_text("编辑备注")
                     .clicked()
                 {
                     self.editing_label =
                         Some((version.id.clone(), version.label().unwrap_or("").into()));
                 }
+
+                ui.add_space(12.0);
+                ui.label(
+                    RichText::new(format!("{} {writing_time}", egui_phosphor::regular::CLOCK))
+                        .size(17.0)
+                        .strong(),
+                )
+                .on_hover_text("此版本累计记录的写作时长");
+                ui.label(
+                    RichText::new(format!("+{}", version.added_count))
+                        .size(17.0)
+                        .monospace()
+                        .strong()
+                        .color(green),
+                )
+                .on_hover_text(format!("本版本新增 {} 字", version.added_count));
+                ui.label(
+                    RichText::new(format!("-{}", version.removed_count))
+                        .size(17.0)
+                        .monospace()
+                        .strong()
+                        .color(destructive),
+                )
+                .on_hover_text(format!("本版本删除 {} 字", version.removed_count));
+
+                // The primary action belongs beside the version identity. Keep
+                // destructive actions quiet, and omit irrelevant disabled actions
+                // when the selected version is already current.
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.spacing_mut().item_spacing.x = 4.0;
+                    if version.can_delete_branch
+                        && history_quiet_button(
+                            ui,
+                            RichText::new(format!(
+                                "{} 删除此分叉",
+                                egui_phosphor::regular::GIT_FORK
+                            ))
+                            .small()
+                            .color(destructive),
+                        )
+                        .on_hover_text(format!(
+                            "删除此节点及其 {} 个后代版本",
+                            version.subtree_size - 1
+                        ))
+                        .clicked()
+                    {
+                        self.pending_delete = Some(PendingDelete {
+                            version_id: version.id.clone(),
+                            delete_branch: true,
+                            subtree_size: version.subtree_size,
+                        });
+                    }
+                    if !version.is_current
+                        && history_quiet_button(
+                            ui,
+                            RichText::new(format!("{} 删除版本", egui_phosphor::regular::TRASH))
+                                .small()
+                                .color(destructive),
+                        )
+                        .on_hover_text("只删除此版本，子版本会连接到它的父版本")
+                        .clicked()
+                    {
+                        self.pending_delete = Some(PendingDelete {
+                            version_id: version.id.clone(),
+                            delete_branch: false,
+                            subtree_size: version.subtree_size,
+                        });
+                    }
+
+                    let is_pinned = self.compare_mode == DiffCompareMode::Pinned
+                        && self.pinned_base_id.as_deref() == Some(version.id.as_str());
+                    let pin_text = if is_pinned {
+                        format!("{} 当前对比基准", egui_phosphor::regular::CHECK)
+                    } else {
+                        format!("{} 设为对比基准", egui_phosphor::regular::PUSH_PIN)
+                    };
+                    if history_quiet_button(ui, RichText::new(pin_text).small())
+                        .on_hover_text("在下方“自选基准”中与此版本对比")
+                        .clicked()
+                    {
+                        self.pinned_base_id = Some(version.id.clone());
+                        self.compare_mode = DiffCompareMode::Pinned;
+                    }
+
+                    if !version.is_current {
+                        let rollback = egui::Button::new(
+                            RichText::new(format!(
+                                "{} 回滚到此版本",
+                                egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE
+                            ))
+                            .strong()
+                            .color(green),
+                        )
+                        .fill(green.gamma_multiply(0.10))
+                        .stroke(egui::Stroke::new(1.0_f32, green.gamma_multiply(0.30)));
+                        if ui
+                            .add(rollback)
+                            .on_hover_text("将编辑器内容恢复到此版本；已有版本不会丢失")
+                            .clicked()
+                        {
+                            self.confirm_rollback = Some(version.id.clone());
+                        }
+                    }
+                });
             });
         }
+        ui.add_space(6.0);
 
+        // One scannable metadata line replaces the previous stack of unrelated
+        // labels and buttons. Badges communicate state; the rest stays quiet.
         ui.horizontal_wrapped(|ui| {
-            if let Some(parent) = &version.parent_id
-                && ui.small_button("↑ 父版本").clicked()
-            {
-                self.selected_id = Some(parent.clone());
+            ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
+            if version.is_current {
+                history_badge(
+                    ui,
+                    &format!("{} 当前版本", egui_phosphor::regular::CHECK),
+                    green,
+                );
             }
-            for child in &version.children_ids {
-                if ui.small_button("↓ 子版本").on_hover_text(child).clicked() {
-                    self.selected_id = Some(child.clone());
-                }
+            history_badge(ui, &version.branch_name, branch_color(version.branch_id));
+            if version.is_fork_point {
+                history_badge(ui, "分叉点", Color32::from_rgb(173, 120, 24));
             }
-            if let Some(fork_parent) = tree
-                .branches
-                .iter()
-                .find(|branch| branch.id == version.branch_id)
-                .and_then(|branch| branch.fork_parent_id.as_ref())
-                && ui
-                    .small_button("分叉起点")
-                    .on_hover_text(fork_parent)
-                    .clicked()
+            if version.is_branch_head {
+                history_badge(ui, "分支末端", muted);
+            }
+            ui.label(RichText::new(&timestamp).small().color(muted));
+            let short_hash: String = version.entry.hash.chars().take(8).collect();
+            if history_quiet_button(
+                ui,
+                RichText::new(format!("#{short_hash}"))
+                    .monospace()
+                    .small()
+                    .color(muted),
+            )
+            .on_hover_text(format!("{}\n点击复制完整哈希", version.entry.hash))
+            .clicked()
             {
-                self.selected_id = Some(fork_parent.clone());
+                ui.ctx().copy_text(version.entry.hash.clone());
             }
         });
-        ui.add_space(4.0);
-        ui.horizontal_wrapped(|ui| {
-            ui.add_enabled_ui(!version.is_current, |ui| {
-                if ui
-                    .button(format!(
-                        "{} 回滚到此版本",
-                        egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE
-                    ))
+
+        let fork_parent = tree
+            .branches
+            .iter()
+            .find(|branch| branch.id == version.branch_id)
+            .and_then(|branch| branch.fork_parent_id.as_ref());
+        if version.parent_id.is_some() || !version.children_ids.is_empty() || fork_parent.is_some()
+        {
+            ui.add_space(2.0);
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(4.0, 2.0);
+                ui.label(RichText::new("跳转").small().color(muted));
+                let node_name = |id: &str| {
+                    tree.nodes
+                        .iter()
+                        .find(|node| node.id == id)
+                        .map(short_node_name)
+                        .unwrap_or_else(|| id.to_string())
+                };
+                if let Some(parent) = &version.parent_id
+                    && history_quiet_button(
+                        ui,
+                        RichText::new(format!(
+                            "{} 父版本",
+                            egui_phosphor::regular::ARROW_U_UP_LEFT
+                        ))
+                        .small()
+                        .color(muted),
+                    )
+                    .on_hover_text(node_name(parent))
                     .clicked()
                 {
-                    self.confirm_rollback = Some(version.id.clone());
+                    self.selected_id = Some(parent.clone());
                 }
-            });
-            if ui.button("设为对比基准").clicked() {
-                self.pinned_base_id = Some(version.id.clone());
-                self.compare_mode = DiffCompareMode::Pinned;
-            }
-            ui.add_enabled_ui(!version.is_current, |ui| {
-                if ui.button("删除版本").clicked() {
-                    self.pending_delete = Some(PendingDelete {
-                        version_id: version.id.clone(),
-                        delete_branch: false,
-                        subtree_size: version.subtree_size,
-                    });
+                for (index, child) in version.children_ids.iter().enumerate() {
+                    let text = if version.children_ids.len() == 1 {
+                        "↘ 子版本".to_string()
+                    } else {
+                        format!("↘ 子版本 {}", index + 1)
+                    };
+                    if history_quiet_button(ui, RichText::new(text).small().color(muted))
+                        .on_hover_text(node_name(child))
+                        .clicked()
+                    {
+                        self.selected_id = Some(child.clone());
+                    }
                 }
-            });
-            ui.add_enabled_ui(version.can_delete_branch, |ui| {
-                if ui
-                    .button("删除此分叉")
-                    .on_hover_text(format!(
-                        "删除此节点及其 {} 个后代版本",
-                        version.subtree_size - 1
-                    ))
+                if let Some(fork_parent) = fork_parent
+                    && history_quiet_button(
+                        ui,
+                        RichText::new(format!("{} 分叉起点", egui_phosphor::regular::GIT_FORK))
+                            .small()
+                            .color(muted),
+                    )
+                    .on_hover_text(node_name(fork_parent))
                     .clicked()
                 {
-                    self.pending_delete = Some(PendingDelete {
-                        version_id: version.id.clone(),
-                        delete_branch: true,
-                        subtree_size: version.subtree_size,
-                    });
+                    self.selected_id = Some(fork_parent.clone());
                 }
             });
-        });
+        }
         ui.add_space(6.0);
         ui.separator();
         ui.horizontal_wrapped(|ui| {
@@ -879,6 +973,25 @@ fn comparison_diff<'a>(
             }
         }
     }
+}
+
+fn history_badge(ui: &mut Ui, text: &str, color: Color32) {
+    egui::Frame::new()
+        .fill(color.gamma_multiply(0.08))
+        .stroke(egui::Stroke::new(1.0_f32, color.gamma_multiply(0.20)))
+        .inner_margin(egui::Margin::symmetric(5, 2))
+        .corner_radius(egui::CornerRadius::same(2))
+        .show(ui, |ui| {
+            ui.label(RichText::new(text).small().strong().color(color));
+        });
+}
+
+fn history_quiet_button(ui: &mut Ui, text: impl Into<egui::WidgetText>) -> egui::Response {
+    ui.add(
+        egui::Button::new(text)
+            .frame(false)
+            .min_size(egui::vec2(0.0, 20.0)),
+    )
 }
 
 fn short_node_name(node: &HistoryVersionData) -> String {

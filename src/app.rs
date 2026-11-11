@@ -2765,6 +2765,9 @@ mod final_integration_tests {
             _ => false,
         });
 
-        assert!(found_toast, "Expected '保存成功' toast in painted output shapes");
+        assert!(
+            found_toast,
+            "Expected '保存成功' toast in painted output shapes"
+        );
     }
 }

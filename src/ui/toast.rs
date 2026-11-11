@@ -80,7 +80,10 @@ impl Toast {
         }
 
         let total = self.created_at.elapsed();
-        let current_pause = self.pause_start.map(|s| s.elapsed()).unwrap_or(Duration::ZERO);
+        let current_pause = self
+            .pause_start
+            .map(|s| s.elapsed())
+            .unwrap_or(Duration::ZERO);
         total.saturating_sub(self.paused_duration + current_pause)
     }
 
@@ -250,11 +253,8 @@ impl ToastManager {
                         });
                     });
 
-                    let interact_response = ui.interact(
-                        frame_res.response.rect,
-                        toast.id,
-                        egui::Sense::click(),
-                    );
+                    let interact_response =
+                        ui.interact(frame_res.response.rect, toast.id, egui::Sense::click());
 
                     if interact_response.hovered() {
                         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
@@ -309,8 +309,8 @@ mod tests {
 
     #[test]
     fn test_toast_alpha_fade() {
-        let mut toast = Toast::new(ToastKind::Success, "保存成功")
-            .with_duration(Duration::from_millis(2000));
+        let mut toast =
+            Toast::new(ToastKind::Success, "保存成功").with_duration(Duration::from_millis(2000));
 
         // Start: alpha >= 0.15 and ramping up
         toast.set_test_elapsed(Duration::from_millis(0));

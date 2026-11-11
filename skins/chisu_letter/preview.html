@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>尺素 · 梅影 · Paper Shell 主题预览</title>
+<style>
+:root {
+  color-scheme: light;
+  font-family: "Noto Serif CJK SC", "Songti SC", "STSong", serif;
+  color: #332e28;
+  background: #e9e1d2;
+  --opacity: .9;
+}
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; }
+.window { min-height: 100vh; display: grid; grid-template-rows: auto 1fr; }
+.titlebar {
+  min-height: 68px; padding: 14px 24px; background: #eee7da;
+  border-bottom: 1px solid #cfc4b1; display: flex; align-items: center;
+  justify-content: space-between; gap: 18px; flex-wrap: wrap;
+}
+.identity { display: flex; align-items: center; gap: 14px; }
+.seal {
+  display: grid; place-items: center; width: 34px; height: 34px;
+  color: #f5f0e4; background: #8c3b32; font-size: 15px; line-height: 1;
+}
+h1 { margin: 0; font-size: 18px; font-weight: 500; letter-spacing: .12em; }
+.subtitle { margin: 4px 0 0; color: #756b5e; font-size: 12px; letter-spacing: .06em; }
+label { display: flex; align-items: center; gap: 10px; color: #655b4e; font-size: 12px; }
+input { width: 130px; accent-color: #8c3b32; }
+output { min-width: 3ch; font-variant-numeric: tabular-nums; }
+.workspace { display: grid; grid-template-columns: 190px minmax(0, 1fr); min-height: calc(100vh - 68px); }
+.sidebar { padding: 28px 20px; background: #eae2d4; border-right: 1px solid #cfc4b1; }
+.sidebar-title { margin: 0 0 22px; color: #756b5e; font-size: 12px; letter-spacing: .16em; }
+.file { padding: 9px 10px; margin: 2px 0; color: #6b6154; font-size: 13px; }
+.file.active { color: #6f2e28; background: #ddcfb9; border-left: 2px solid #8c3b32; }
+.paper { position: relative; isolation: isolate; overflow: hidden; background: #f5f0e4; }
+.paper::before {
+  content: ""; position: absolute; z-index: -1; inset: 0;
+  background: url("background.png") center / cover no-repeat; opacity: var(--opacity);
+}
+article { max-width: 710px; padding: 56px 64px 80px; font-size: 16px; line-height: 1.9; }
+.date { margin: 0 0 42px; text-align: right; color: #766c5e; font-size: 13px; letter-spacing: .1em; }
+.salutation { margin: 0 0 24px; font-size: 18px; }
+article p { margin: 0 0 22px; }
+.closing { margin-top: 38px; text-align: right; }
+.hint { margin-top: 44px; padding-top: 16px; border-top: 1px solid #d7cbb8; color: #7a7062; font-size: 12px; line-height: 1.7; }
+@media (max-width: 700px) {
+  .workspace { grid-template-columns: 1fr; }
+  .sidebar { display: none; }
+  article { padding: 36px 28px 60px; font-size: 15px; }
+  .titlebar { padding: 14px 18px; }
+}
+</style>
+<div class="window">
+  <header class="titlebar">
+    <div class="identity">
+      <span class="seal">尺</span>
+      <div><h1>尺素 · 梅影</h1><p class="subtitle">一纸素心，落墨生香</p></div>
+    </div>
+    <label for="opacity">背景强度 <input id="opacity" type="range" min="0" max="100" value="90"><output id="value" for="opacity">90%</output></label>
+  </header>
+  <div class="workspace">
+    <aside class="sidebar" aria-label="文稿列表示意">
+      <p class="sidebar-title">文稿</p>
+      <div class="file active">冬日书简.txt</div>
+      <div class="file">山间来信.txt</div>
+      <div class="file">旧年札记.txt</div>
+    </aside>
+    <main class="paper" id="paper">
+      <article>
+        <p class="date">冬月廿三 · 灯下</p>
+        <p class="salutation">见字如晤：</p>
+        <p>窗前梅影渐深，案上茶烟未散。展信时，愿你也有一刻清闲。</p>
+        <p>近来重读旧书，翻到从前夹入的一枚落叶。墨色依旧，叶脉已薄，忽然觉得，许多未曾写下的话，也被时光妥善收藏了。</p>
+        <p>今日换了新纸，只想与你慢慢说些寻常事。院里风清，夜色温和，一切都好，不必挂念。</p>
+        <p class="closing">纸短情长，余言后叙。<br>珍重。</p>
+        <p class="hint">主题示意：思源宋体 · 15.5 px · 1.8 倍行距<br>背景为原创宣纸纹理与梅影；实际写作效果以应用导入后为准。</p>
+      </article>
+    </main>
+  </div>
+</div>
+<script>
+const slider = document.querySelector('#opacity');
+slider.addEventListener('input', () => {
+  document.querySelector('#paper').style.setProperty('--opacity', slider.value / 100);
+  document.querySelector('#value').value = slider.value + '%';
+});
+</script>
+</html>

@@ -1,18 +1,18 @@
 id = "megazone_ride"
 name = "无限地带 · 双人疾驰"
-description = "《无限地带23》省吾载唯骑乘红色摩托的剧照。背景铺满编辑区，暖灰底与青绿点缀，保留清晰的写作文字。"
+description = "《无限地带23》省吾载唯骑乘红色摩托的剧照。背景以 18% 柔光呈现，字号、行距与内边距贴合侧耳倾听主题，保留清晰的写作文字。"
 author = "Paper Shell · 剧照版权归原权利人所有"
 version = "1.0.0"
 
 [typography]
 font_family = "Default"
-font_size = 16.0
-line_spacing = 1.8
+font_size = 14.0
+line_spacing = 1.5
 font_color = "#273536"
 format_use_tabs = false
 
 [spacing]
-window_margin = 0.0
+window_margin = 12.0
 editor_padding_left = 2.0
 editor_padding_right = 6.0
 editor_padding_top = 6.0
@@ -32,7 +32,7 @@ accent_color = "#427C77"
 
 [effects]
 background_image = "background.jpg"
-background_image_opacity = 0.24
+background_image_opacity = 0.18
 background_image_fit = "cover"
 window_opacity = 1.0
 editor_opacity = 1.0

@@ -1,22 +1,22 @@
 id = "summer_platform"
 name = "夏日站台"
-description = "《听到涛声》(1993) 官方剧照，胶片颗粒与灰蓝站台。背景以 24% 强度呈现，保留清晰的写作文字。"
+description = "《听到涛声》(1993) 官方剧照，胶片颗粒与灰蓝站台。背景以 18% 柔光呈现，字号、行距与内边距贴合侧耳倾听主题，保留清晰的写作文字。"
 author = "Paper Shell · 图片 © 1993 Saeko Himuro/Keiko Niwa/Studio Ghibli, N"
 version = "1.0.0"
 
 [typography]
 font_family = "Default"
-font_size = 16.0
-line_spacing = 1.8
+font_size = 14.0
+line_spacing = 1.5
 font_color = "#263441"
 format_use_tabs = false
 
 [spacing]
-window_margin = 0.0
-editor_padding_left = 36.0
-editor_padding_right = 36.0
-editor_padding_top = 28.0
-editor_padding_bottom = 28.0
+window_margin = 12.0
+editor_padding_left = 2.0
+editor_padding_right = 6.0
+editor_padding_top = 6.0
+editor_padding_bottom = 6.0
 item_spacing_x = 8.0
 item_spacing_y = 8.0
 
@@ -32,7 +32,7 @@ accent_color = "#557B8C"
 
 [effects]
 background_image = "background.jpg"
-background_image_opacity = 0.24
+background_image_opacity = 0.18
 background_image_fit = "cover"
 window_opacity = 1.0
 editor_opacity = 1.0

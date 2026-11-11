@@ -14,16 +14,16 @@ header p, footer { font-size: 13px; color: #46545e; }
 label { display: flex; gap: 12px; align-items: center; }
 input { accent-color: #557b8c; width: 150px; }
 output { font-variant-numeric: tabular-nums; min-width: 3ch; }
-main { position: relative; isolation: isolate; min-height: 72vh; padding: 28px 36px; background: #f2f0e9; }
-main::before { content: ''; position: absolute; z-index: -1; inset: 0; background: url('background.jpg') center / cover no-repeat; opacity: var(--opacity, .24); }
-article { font-size: 16px; line-height: 1.8; white-space: pre-wrap; max-width: 70ch; }
+main { position: relative; isolation: isolate; min-height: 72vh; padding: 6px 6px 6px 2px; background: #f2f0e9; }
+main::before { content: ''; position: absolute; z-index: -1; inset: 0; background: url('background.jpg') center / cover no-repeat; opacity: var(--opacity, .18); }
+article { font-size: 14px; line-height: 1.5; white-space: pre-wrap; }
 footer { padding: 16px 28px; line-height: 1.7; }
 a { color: #365e72; }
-@media (max-width: 600px) { main { padding: 24px; } header, footer { padding: 16px 24px; } }
+@media (max-width: 600px) { header, footer { padding: 16px 24px; } }
 </style>
 <header>
   <div><h1>夏日站台</h1><p>图片与文字的合成示意。实际效果请导入 skin.toml。</p></div>
-  <label for="opacity">背景强度 <input id="opacity" type="range" min="0" max="100" value="24"><output id="value" for="opacity">24%</output></label>
+  <label for="opacity">背景强度 <input id="opacity" type="range" min="0" max="100" value="18"><output id="value" for="opacity">18%</output></label>
 </header>
 <main id="canvas"><article>夏日站台
 

@@ -633,6 +633,37 @@ mod tests {
     }
 
     #[test]
+    fn anime_skins_match_whisper_dawn_readability_settings() {
+        let repo_skins = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("skins");
+        let load_skin = |skin_id: &str| {
+            let content = std::fs::read_to_string(repo_skins.join(skin_id).join("skin.toml"))
+                .expect("anime skin should be readable");
+            crate::skin::Skin::from_toml_str(&content).expect("anime skin should be valid")
+        };
+        let reference = load_skin("whisper_dawn");
+
+        for skin_id in ["summer_platform", "megazone_ride"] {
+            let skin = load_skin(skin_id);
+            assert_eq!(
+                skin.typography.font_size, reference.typography.font_size,
+                "{skin_id} should use Whisper Dawn's font size"
+            );
+            assert_eq!(
+                skin.typography.line_spacing, reference.typography.line_spacing,
+                "{skin_id} should use Whisper Dawn's line spacing"
+            );
+            assert_eq!(
+                skin.spacing, reference.spacing,
+                "{skin_id} should use Whisper Dawn's spacing"
+            );
+            assert_eq!(
+                skin.effects.background_image_opacity, reference.effects.background_image_opacity,
+                "{skin_id} should use Whisper Dawn's background opacity"
+            );
+        }
+    }
+
+    #[test]
     fn whisper_dawn_skin_preserves_classic_paper_spacing_and_loads_background() {
         let source = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("skins/whisper_dawn/skin.toml");
         let destination = tempfile::tempdir().unwrap();

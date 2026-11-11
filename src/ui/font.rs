@@ -3,6 +3,9 @@
 /// Handles system font loading with CJK (Chinese, Japanese, Korean) support
 use eframe::egui::{FontData, FontDefinitions, FontFamily};
 
+const DEFAULT_FONT_Y_OFFSET_FACTOR: f32 = 0.3;
+const CUSTOM_FONT_Y_OFFSET_FACTOR: f32 = 0.0;
+
 /// Setup fonts for the application with CJK support
 ///
 /// This function attempts to load system fonts with CJK support based on the current OS.
@@ -28,7 +31,7 @@ pub fn setup_fonts() -> FontDefinitions {
     // Try to find one of the preferred fonts
     let mut found_font = false;
     for font_name in font_names {
-        if try_load_font(&mut fonts, &source, font_name) {
+        if try_load_font(&mut fonts, &source, font_name, DEFAULT_FONT_Y_OFFSET_FACTOR) {
             tracing::info!("Using system font '{}' for CJK support", font_name);
             found_font = true;
             break;
@@ -67,6 +70,7 @@ fn try_load_font(
     fonts: &mut FontDefinitions,
     source: &font_kit::source::SystemSource,
     font_name: &str,
+    y_offset_factor: f32,
 ) -> bool {
     // Get family by name
     if let Ok(family_handle) = source.select_family_by_name(font_name)
@@ -82,7 +86,7 @@ fn try_load_font(
             SYSTEM_FONT_NAME.to_owned(),
             FontData::from_owned(font_data)
                 .tweak(eframe::egui::FontTweak {
-                    y_offset_factor: 0.3, // Adjust this value to fix vertical alignment (e.g. -0.2 or 0.2)
+                    y_offset_factor,
                     ..Default::default()
                 })
                 .into(),
@@ -255,8 +259,9 @@ pub fn apply_font(font_name: &str) -> FontDefinitions {
     let mut fonts = FontDefinitions::default();
     let source = font_kit::source::SystemSource::new();
 
-    // Try to load the requested font
-    if try_load_font(&mut fonts, &source, font_name) {
+    // The default CJK font needs a vertical correction, but other fonts have
+    // their own metrics and must not inherit that font-specific adjustment.
+    if try_load_font(&mut fonts, &source, font_name, CUSTOM_FONT_Y_OFFSET_FACTOR) {
         tracing::info!("Applied font: {}", font_name);
     } else {
         // If the specific font fails, try fallback
